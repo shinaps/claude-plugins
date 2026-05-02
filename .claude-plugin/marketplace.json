@@ -1,0 +1,34 @@
+{
+  "name": "shinaps",
+  "owner": {
+    "name": "shinaps",
+    "email": "ryuta@shinaps.jp"
+  },
+  "metadata": {
+    "description": "shinaps の Claude Code プラグインマーケットプレイス"
+  },
+  "plugins": [
+    {
+      "name": "zeus",
+      "source": "./plugins/zeus",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装プラグイン。タスク性質に応じて専門エージェントを動的選択し、並列議論で最強の実装計画を作る (/zeus:plan) → plan に基づいて実装＋セルフレビューを行う (/zeus:dev)。18体のzeus専用エージェント同梱。",
+      "version": "0.1.0",
+      "author": {
+        "name": "shinaps",
+        "email": "ryuta@shinaps.jp"
+      },
+      "homepage": "https://github.com/shinaps/claude-plugins",
+      "repository": "https://github.com/shinaps/claude-plugins",
+      "license": "MIT",
+      "category": "development",
+      "keywords": [
+        "planning",
+        "architecture",
+        "code-review",
+        "agents",
+        "ultraplan",
+        "feature-dev"
+      ]
+    }
+  ]
+}
