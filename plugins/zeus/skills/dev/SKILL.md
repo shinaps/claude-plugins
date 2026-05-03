@@ -118,14 +118,31 @@ plan の「ビルド順序」に従ってフェーズ順に実装する。
 - {scope 外として残した項目}
 ```
 
-### Phase 5: セルフレビュー
+### Phase 5: 動作確認（型チェック・ビルド・テスト）
+
+実装後、コードが実際に動く状態かを **自動検証** する。
+プロジェクトに応じて以下のコマンドを順に試す（プロジェクトの package.json / Makefile / pyproject.toml 等から検出）:
+
+- 型チェック: `tsc --noEmit` / `mypy` / `cargo check` 等
+- リント: `eslint` / `ruff` / `golangci-lint` 等
+- ビルド: `npm run build` / `cargo build` 等（必要な場合）
+- テスト: `npm test` / `pytest` / `cargo test` 等（plan で言及があれば）
+
+**検出方針**:
+- 利用可能なコマンドを試す。存在しないものは skip
+- 失敗があれば `implementation.md` の「動作確認結果」セクションに記録
+- **Critical な失敗（型エラー・テスト失敗等）は自動修正対象** → Phase 7 の修正ループへ繰り込む
+
+実行できるコマンドが何もないプロジェクトの場合は、その旨を `implementation.md` に記録してスキップ。
+
+### Phase 6: セルフレビュー
 
 `zeus-reviewer` を 1 体起動する。
 
 プロンプトには以下を含める:
 
 - **plan.md の全文**
-- **implementation.md の全文**
+- **implementation.md の全文**（動作確認結果も含む）
 - **変更ファイル一覧と diff**（`git diff` の出力。git 管理されていないファイルは Read 結果）
 
 `zeus-reviewer` は出力ガイダンスに従って Critical / Warning / Info を返す。
@@ -137,17 +154,29 @@ plan の「ビルド順序」に従ってフェーズ順に実装する。
 .claude/zeus/{ts}-{slug}/review.md
 ```
 
-### Phase 6: 修正ループ
+### Phase 7: 修正ループ
 
 - **Critical があれば必ず修正**（自動進行、承認不要）
+- **Phase 5 で検出された動作確認の失敗** も Critical として修正
 - **Warning がある場合のみ** `AskUserQuestion` で「修正する / スコープ外として記録 / 一部のみ修正」を確認
 - **Info は記録のみで修正しない**
 
 修正を行った場合:
 - `fix-log.md` に「指摘 → 修正内容 → 該当ファイル」を記録
-- 修正後の再レビューは行わない（無限ループ回避）
 
-### Phase 7: 完了報告と次アクション案内
+### Phase 8: 修正後の再レビュー（Critical 修正時のみ）
+
+Phase 7 で **Critical を修正した場合のみ**、もう一度 `zeus-reviewer` を起動する。
+これは「修正で別バグを生むリスク」を検出するため。
+
+- プロンプトには「修正後の差分」「修正前の指摘」「修正内容」を渡す
+- 応答は `review-2nd.md` として保存
+- 再レビューでさらに Critical が出た場合は **1 回だけ追加修正** する（無限ループ防止）
+- 2 回目の再レビューは行わない
+
+Critical 修正がなかった場合は再レビューをスキップして Phase 9 へ。
+
+### Phase 9: 完了報告と次アクション案内
 
 ユーザーに以下を報告:
 
@@ -157,6 +186,7 @@ plan の「ビルド順序」に従ってフェーズ順に実装する。
 - plan: .claude/zeus/{ts}-{slug}/plan.md
 - 実装ログ: .claude/zeus/{ts}-{slug}/implementation.md
 - レビュー: .claude/zeus/{ts}-{slug}/review.md
+- 再レビュー: .claude/zeus/{ts}-{slug}/review-2nd.md（Critical 修正があった場合）
 - 修正履歴: .claude/zeus/{ts}-{slug}/fix-log.md（修正があった場合）
 
 ### 次のステップ

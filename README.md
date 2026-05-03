@@ -64,6 +64,6 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
         ├── skills/
         │   ├── plan/SKILL.md   # /zeus:plan
         │   └── dev/SKILL.md    # /zeus:dev
-        └── agents/             # 18体のzeus専用エージェント
+        └── agents/             # 4体のzeus専用エージェント
             └── zeus-*.md
 ```

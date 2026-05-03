@@ -10,14 +10,15 @@
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 
-## 同梱エージェント (3 体)
+## 同梱エージェント (4 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
 | エージェント | 役割 |
 |---|---|
-| `zeus-explorer` | コードベース探索、必読ファイル抽出（haiku, 読み取り専用） |
-| `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言） |
+| `zeus-explorer` | コードベース探索、必読ファイル抽出 |
+| `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言、self-critique も担当） |
+| `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー（confidence ≥ 80 でフィルタ） |
 
 ## インストール
@@ -51,9 +52,11 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 2. `zeus-explorer` を起動してコードベース探索（領域が広ければ複数並列）
 3. 主体が必読ファイルを直接 Read して文脈構築
 4. `zeus-architect` を起動して実装ブループリント策定（複数観点を内部で検討した単一案）
-5. 各エージェントの生レポートを `.claude/zeus/{ts}-{slug}/raw/` に全文保存
-6. 統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に作成
-7. `EnterPlanMode` で承認 UI 表示
+5. `zeus-architect` を再起動して **self-critique**（自己批判で盲点を炙り出し）
+6. `zeus-plan-reviewer` で **第三者プランレビュー**（視点固定バイアスを破る）
+7. 各エージェントの生レポートを `.claude/zeus/{ts}-{slug}/raw/` に全文保存
+8. レビュー指摘を反映した統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に作成
+9. `EnterPlanMode` で承認 UI 表示
 
 承認後、次のステップが案内される:
 
@@ -72,10 +75,12 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 1. plan 検証 + 関連ファイル事前 Read
 2. plan のビルド順序に従って実装
 3. `implementation.md` に実装ログ保存
-4. `zeus-reviewer` を起動してセルフレビュー
-5. レビューの生レポートを `.claude/zeus/{ts}-{slug}/review.md` に保存
-6. **Critical は自動修正、Warning は確認、Info は記録のみ**
-7. 完了報告（次のステップは `/commit` `/create-pr` を案内）
+4. **動作確認**（型チェック・リント・ビルド・テストを利用可能なものから自動実行）
+5. `zeus-reviewer` を起動してセルフレビュー
+6. レビューの生レポートを `.claude/zeus/{ts}-{slug}/review.md` に保存
+7. **Critical は自動修正**（動作確認の失敗も Critical 扱い）、Warning は確認、Info は記録のみ
+8. **Critical 修正があれば再レビュー**（修正で生んだ別バグを検出、最大 1 回）
+9. 完了報告（次のステップは `/commit` `/create-pr` を案内）
 
 ## 出力ディレクトリ
 
@@ -86,9 +91,13 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ├── plan.md                 ← /zeus:plan が作成
 ├── raw/                    ← 計画フェーズの生レポート
 │   ├── explorer.md
-│   └── architect.md
-├── implementation.md       ← /zeus:dev が作成
+│   ├── architect-initial.md
+│   ├── architect-critique.md
+│   ├── plan-review.md
+│   └── architect-revised.md  ← 差し戻し時のみ
+├── implementation.md       ← /zeus:dev が作成（動作確認結果も含む）
 ├── review.md               ← /zeus:dev が作成
+├── review-2nd.md           ← Critical 修正後の再レビュー（あれば）
 └── fix-log.md              ← 修正ループの履歴
 ```
 

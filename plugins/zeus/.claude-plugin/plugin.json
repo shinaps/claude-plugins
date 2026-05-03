@@ -1,7 +1,7 @@
 {
   "name": "zeus",
-  "description": "feature-dev の上位互換となる計画策定 + 実装プラグイン。zeus-explorer でコードベースを調査し zeus-architect で実装計画を作る (/zeus:plan) → plan に基づいて実装し zeus-reviewer でセルフレビューする (/zeus:dev)。3体のzeus専用エージェント同梱。",
-  "version": "0.1.0",
+  "description": "feature-dev の上位互換となる計画策定 + 実装プラグイン。zeus-explorer で調査・zeus-architect で計画策定・self-critique・zeus-plan-reviewer で第三者レビューを経て plan.md を作る (/zeus:plan) → 実装後に動作確認 + zeus-reviewer でセルフレビュー (/zeus:dev)。4体のzeus専用エージェント同梱。",
+  "version": "0.2.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"

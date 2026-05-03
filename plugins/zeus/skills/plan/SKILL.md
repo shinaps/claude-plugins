@@ -27,7 +27,8 @@ zeus プラグインは計画と実装で 2 スキルに分かれている:
 | エージェント | subagent_type | 役割 |
 |---|---|---|
 | Zeus Explorer | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
-| Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定 |
+| Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定（初回 + self-critique） |
+| Zeus Plan Reviewer | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー |
 
 ## 実行フロー
 
@@ -47,7 +48,7 @@ zeus プラグインは計画と実装で 2 スキルに分かれている:
 `zeus-explorer` は出力ガイダンスに従って **必読ファイル一覧 5-10 件** を返す。
 返ってきたファイル一覧は **主体（あなた）が直接 Read** して深い文脈を作る。
 
-### Phase 3: 実装ブループリント策定
+### Phase 3: 実装ブループリント策定（初回）
 
 `zeus-architect` を 1 体起動する。
 プロンプトには以下を含める:
@@ -55,29 +56,65 @@ zeus プラグインは計画と実装で 2 スキルに分かれている:
 - 実装したいタスク内容
 - Phase 2 で得た主要ファイル一覧と要点サマリ
 - 制約・優先度（あれば）
+- **「作業前に必ず CLAUDE.md / プロジェクト規約を Read せよ」と再強調**
 
 `zeus-architect` は複数観点を内部で検討した上で **唯一最強の単一案** を返す。
-出力形式はエージェント定義に従う（既に明示済み）。
 
-### Phase 4: 生レポート保存
+### Phase 4: Self-Critique（盲点炙り出し）
 
-`zeus-explorer` と `zeus-architect` の返答を **省略せず全文** 以下に保存:
+Phase 3 の結果を踏まえ、`zeus-architect` を **もう一度起動** する。
+プロンプトには以下を含める:
+
+- Phase 3 で出力された案の全文
+- 「上記案を **批判的に再評価** せよ。盲点・落とし穴・トレードオフを徹底的に列挙し、修正が必要なら修正版を出せ」
+
+`zeus-architect` は自分の前案を批判し、必要なら修正案を返す。
+これにより初回の単一最強案では見落としていた論点を炙り出す。
+
+### Phase 5: 第三者プランレビュー
+
+Phase 4 までの成果（初回案 + self-critique）を踏まえ、`zeus-plan-reviewer` を起動する。
+self-critique は同じ architect による自己批判のため **視点固定バイアス** が残る。
+別人格のレビュアーで破る。
+
+プロンプトには以下を含める:
+
+- 元のタスク内容
+- Phase 2 の `zeus-explorer` 結果（必読ファイルと要点）
+- Phase 3 の初回案
+- Phase 4 の self-critique 結果
+- 「第三者視点で批判的にレビューせよ」
+
+`zeus-plan-reviewer` は総合判定（承認 / 条件付き承認 / 差し戻し）と Critical / Warning / Info を返す。
+
+**判定別の対応**:
+- **差し戻し**: Phase 3 に戻り、レビュー指摘を渡して `zeus-architect` を再起動して plan を作り直す（**最大 1 回まで**。無限ループ回避）
+- **条件付き承認**: 指摘箇所を反映して plan を作成（Phase 6 へ）
+- **承認**: そのまま Phase 6 へ
+
+### Phase 6: 生レポート保存
+
+これまでのエージェント返答を **省略せず全文** 以下に保存:
 
 ```
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/explorer.md
-.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect.md
+.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-initial.md
+.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-critique.md
+.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/plan-review.md
+.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-revised.md  ← 差し戻しで再策定した場合のみ
 ```
 
 - `slug` はタスク内容の短い英語スラッグ（kebab-case, 30 文字以内）
 - 複数 explorer を並列起動した場合は `explorer-1.md` `explorer-2.md` ...
 - ディレクトリが存在しなければ作成
 
-### Phase 5: 統合プラン作成
+### Phase 7: 統合プラン作成
 
-主体（あなた）が `zeus-architect` の出力を中心に、`zeus-explorer` の発見も統合した
+主体（あなた）が `zeus-architect` の出力を中心に、`zeus-explorer` の発見・`zeus-plan-reviewer` の指摘も統合した
 **最終的な実装プラン** を作成する。
 
-- `zeus-architect` の単一案を基本構造として採用
+- `zeus-architect` の最終案（self-critique 反映済み・差し戻し時は再策定版）を基本構造として採用
+- `zeus-plan-reviewer` の Critical / Warning 指摘を必ず反映
 - 必要に応じてユーザーの追加要件を反映
 - ユーザー判断が必要な重大トレードオフが残った場合のみ `AskUserQuestion` で確認
 
@@ -87,12 +124,12 @@ zeus プラグインは計画と実装で 2 スキルに分かれている:
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/plan.md
 ```
 
-### Phase 6: 承認
+### Phase 8: 承認
 
 `plan.md` 本文を `EnterPlanMode` に渡して承認 UI を表示する。
 （CLAUDE.md ルール: 「方針承認はテキストではなく EnterPlanMode で」）
 
-### Phase 7: /zeus:dev への引き渡し
+### Phase 9: /zeus:dev への引き渡し
 
 承認後:
 
