@@ -1,34 +1,32 @@
 # Zeus
 
-ultraplan / feature-dev の **完全上位互換** となる Claude Code プラグイン。
-最高神レベルの超深掘り計画策定と、計画駆動の実装＋セルフレビューを提供する。
+公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
+コードベース調査 → 実装計画策定 → 実装 → セルフレビュー までを `plan.md` を介して連携する 2 スキル構成。
 
 ## 構成
 
 | スキル | 役割 |
 |---|---|
-| `/zeus:plan <task>` | タスク性質に応じて専門エージェントを動的選択し、並列議論で **唯一最強の統合プラン** を作る |
-| `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、5体のレビューワーで並列セルフレビュー → 修正ループ |
+| `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
+| `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 
-## 同梱エージェント（18体）
+## 同梱エージェント (3 体)
 
-すべて `~/.claude/agents/` ではなく **このプラグイン内に同梱**。インストールするだけで使える。
+このプラグイン内に同梱されているので、インストールするだけで使える。
 
-### 計画用 (13体)
-- `zeus-explorer` — コードベース探索（haiku, 読み取り専用）
-- `zeus-architect` — 実装ブループリント策定（観点違いで複数並列起動）
-- 専門観点 11体: `zeus-security`, `zeus-performance`, `zeus-ux`, `zeus-dx`, `zeus-testing`, `zeus-debt`, `zeus-data`, `zeus-integration`, `zeus-migration`, `zeus-operability`, `zeus-failure-mode`
-
-### レビュー用 (5体)
-- `zeus-reviewer-security` / `zeus-reviewer-logic` / `zeus-reviewer-performance` / `zeus-reviewer-design` / `zeus-reviewer-maintainability`
+| エージェント | 役割 |
+|---|---|
+| `zeus-explorer` | コードベース探索、必読ファイル抽出（haiku, 読み取り専用） |
+| `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言） |
+| `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー（confidence ≥ 80 でフィルタ） |
 
 ## インストール
 
 ### ローカル開発（推奨）
 
 ```bash
-git clone https://github.com/shinaps/zeus ~/dev/claude-plugins/zeus
-claude --plugin-dir ~/dev/claude-plugins/zeus
+git clone https://github.com/shinaps/claude-plugins ~/dev/claude-plugins
+claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ```
 
 ### プラグインマーケットプレイス経由
@@ -47,17 +45,18 @@ claude --plugin-dir ~/dev/claude-plugins/zeus
 /zeus:plan ユーザー認証に2要素認証(TOTP)を追加したい
 ```
 
-zeus-plan が以下を自動実行する:
+`/zeus:plan` が以下を自動実行する:
 
-1. タスク受領 & 性質判定（必要なら AskUserQuestion で重要点だけ確認）
-2. `zeus-explorer` を 2-3 体並列起動でコードベース探索
-3. タスク性質から専門エージェントセットを動的選択
-4. `zeus-architect` (複数観点) + 選んだ専門観点エージェントを **並列起動**
+1. タスク受領（必要なら `AskUserQuestion` で重要点だけ確認）
+2. `zeus-explorer` を起動してコードベース探索（領域が広ければ複数並列）
+3. 主体が必読ファイルを直接 Read して文脈構築
+4. `zeus-architect` を起動して実装ブループリント策定（複数観点を内部で検討した単一案）
 5. 各エージェントの生レポートを `.claude/zeus/{ts}-{slug}/raw/` に全文保存
-6. 合議して **唯一最強の統合プラン** を作成 → `.claude/zeus/{ts}-{slug}/plan.md`
-7. `EnterPlanMode` で承認UI表示
+6. 統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に作成
+7. `EnterPlanMode` で承認 UI 表示
 
 承認後、次のステップが案内される:
+
 ```
 /zeus:dev .claude/zeus/{ts}-{slug}/plan.md
 ```
@@ -68,16 +67,15 @@ zeus-plan が以下を自動実行する:
 /zeus:dev .claude/zeus/20260502-141500-totp-auth/plan.md
 ```
 
-zeus-dev が以下を自動実行する:
+`/zeus:dev` が以下を自動実行する:
 
 1. plan 検証 + 関連ファイル事前 Read
 2. plan のビルド順序に従って実装
 3. `implementation.md` に実装ログ保存
-4. `zeus-reviewer-*` 5体を **並列起動** でセルフレビュー
-5. 各レビューの生レポートを `.claude/zeus/{ts}-{slug}/review/` に保存
-6. 統合 → `review-summary.md`
-7. **Critical は自動修正、Warning は確認、Info は記録のみ**
-8. 完了報告（次のステップは `/commit` `/create-pr` を案内）
+4. `zeus-reviewer` を起動してセルフレビュー
+5. レビューの生レポートを `.claude/zeus/{ts}-{slug}/review.md` に保存
+6. **Critical は自動修正、Warning は確認、Info は記録のみ**
+7. 完了報告（次のステップは `/commit` `/create-pr` を案内）
 
 ## 出力ディレクトリ
 
@@ -86,10 +84,11 @@ zeus-dev が以下を自動実行する:
 ```
 .claude/zeus/{ts}-{slug}/
 ├── plan.md                 ← /zeus:plan が作成
-├── raw/                    ← 計画フェーズの専門エージェント生レポート
+├── raw/                    ← 計画フェーズの生レポート
+│   ├── explorer.md
+│   └── architect.md
 ├── implementation.md       ← /zeus:dev が作成
-├── review/                 ← レビューエージェント生レポート
-├── review-summary.md       ← レビュー統合結果
+├── review.md               ← /zeus:dev が作成
 └── fix-log.md              ← 修正ループの履歴
 ```
 
@@ -104,11 +103,10 @@ zeus-dev が以下を自動実行する:
 ## 設計原則
 
 - **重要ポイントだけ確認**: 細かい質問の連発はしない
-- **動的エージェント選択**: 小タスクに重エージェントセットを起動しない
 - **生レポート保存厳守**: 後から議論の足跡を辿れる
 - **統合プランは単一案**: A/B 案を残すのは重大トレードオフだけ
-- **並列起動の徹底**: 同一メッセージ内で複数エージェント呼び出し
-- **計画と実装の分離**: zeus-dev は plan.md 必須（単独起動不可）
+- **計画と実装の分離**: `/zeus:dev` は plan.md 必須（単独起動不可）
+- **シンプル優先**: 観点を細分化せず、1 エージェントに統合観点を持たせる
 
 ## ライセンス
 
