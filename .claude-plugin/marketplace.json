@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装プラグイン。タスク性質に応じて専門エージェントを動的選択し、並列議論で最強の実装計画を作る (/zeus:plan) → plan に基づいて実装＋セルフレビューを行う (/zeus:dev)。18体のzeus専用エージェント同梱。",
-      "version": "0.1.0",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 実装計画 (/zeus:plan) → 実装＋セルフレビュー (/zeus:dev) → レビュー単発 (/zeus:review) を spec.md / plan.md で連携する 5 スキル構成。8 体の zeus 専用エージェント同梱。",
+      "version": "0.6.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"

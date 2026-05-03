@@ -1,24 +1,27 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-コードベース調査 → 実装計画策定 → 実装 → セルフレビュー までを `plan.md` を介して連携する 2 スキル構成。
+要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー までを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
 
 ## 構成
 
 | スキル | 役割 |
 |---|---|
-| `/zeus:spec [要望]` | ざっくりした要望を対話的なヒアリングで詰めて仕様書化。`zeus-spec-writer` で構造化し、そのまま `/zeus:plan` へ橋渡し可能 |
+| `/zeus:spec [要望]` | ざっくりした要望を対話的なヒアリングで詰めて仕様書化。`zeus-spec-writer` で構造化し、そのまま `/zeus:tech-survey` / `/zeus:plan` へ橋渡し可能 |
+| `/zeus:tech-survey [spec.md/要望]` | WebSearch / WebFetch で最新情報を集めてライブラリ・フレームワーク・サービスの候補を観点別に比較。`zeus-tech-surveyor` + `zeus-survey-validator` で鮮度・出典の妥当性も検証 |
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
 
-## 同梱エージェント (6 体)
+## 同梱エージェント (8 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
 | エージェント | 役割 |
 |---|---|
 | `zeus-spec-writer` | ヒアリング結果を構造化された仕様書（機能要件 / 非機能要件 / スコープ / 制約 / 受け入れ条件）に整理 |
+| `zeus-tech-surveyor` | WebSearch / WebFetch で最新情報を集めてライブラリ・フレームワーク・サービスを観点別に比較する一次レポートを作成 |
+| `zeus-survey-validator` | tech-surveyor の主張を出典 URL で再確認し、鮮度・正確性を検証（outdated / inaccurate / unverifiable / additional finding） |
 | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言、self-critique も担当） |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
@@ -59,6 +62,29 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 5. そのまま `/zeus:plan` に橋渡し可能（or ローカル保存のみで終了）
 
 要件が既に明確な場合はスキップして直接 `/zeus:plan` を呼ぶ方が速い。
+
+### 0.5. 技術選定（使う技術が未定のとき）
+
+```
+/zeus:tech-survey                                                # interactive: 何を選定したいか聞かれる
+/zeus:tech-survey .claude/zeus/specs/{ts}-{slug}/spec.md         # spec モード: spec.md の未確定論点を抽出して調査
+/zeus:tech-survey "Next.js 用の認証ライブラリを比較したい"          # freeform モード
+```
+
+`/zeus:tech-survey` が以下を自動実行する:
+
+1. 引数判定（なし=interactive / `.md` パス=spec / その他=freeform）
+2. `input.md` に調査対象と既知の制約を記録
+3. `zeus-tech-surveyor` を起動して候補列挙＋観点別比較レポート作成（WebSearch / WebFetch で公式情報を取得）
+4. `zeus-survey-validator` を起動して出典 URL を再確認し、鮮度・正確性を検証
+5. 結果を `.claude/zeus/tech-surveys/{ts}-{slug}/` に保存
+6. `EnterPlanMode` で採用候補を承認 UI に提示
+7. 次アクションを確認:
+   - **spec.md に追記して `/zeus:plan` へ橋渡し**（spec モード時の Recommended）
+   - **tech-decision.md として独立保存して `/zeus:plan` へ橋渡し**
+   - **保存のみで終了**
+
+要件と技術の両方が固まっていれば、このスキルをスキップして直接 `/zeus:plan` を呼ぶ方が速い。
 
 ### 1. 計画策定
 
@@ -158,6 +184,17 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ├── review.md               ← zeus-reviewer の一次レビュー
 ├── review-validated.md     ← zeus-review-validator の検証済み指摘
 └── plan-handoff.md         ← /zeus:plan へ橋渡し時の修正タスク記述
+```
+
+`/zeus:tech-survey` の生成物:
+
+```
+.claude/zeus/tech-surveys/{ts}-{slug}/
+├── input.md                ← 調査対象と既知の制約のサマリ
+├── survey.md               ← zeus-tech-surveyor の一次調査レポート
+├── survey-validated.md     ← zeus-survey-validator の検証済みレポート
+├── tech-decision.md        ← 採用決定の記録（独立保存選択時のみ）
+└── plan-handoff.md         ← /zeus:plan へ橋渡し時の引き継ぎ
 ```
 
 ## ultraplan / feature-dev からの移行
