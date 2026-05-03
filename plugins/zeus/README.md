@@ -9,8 +9,9 @@
 |---|---|
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
+| `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` でレビュー |
 
-## 同梱エージェント (4 体)
+## 同梱エージェント (5 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
@@ -20,6 +21,7 @@
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言、self-critique も担当） |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー（confidence ≥ 80 でフィルタ） |
+| `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証（false positive 排除 + 追加発見） |
 
 ## インストール
 
@@ -82,9 +84,29 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 8. **Critical 修正があれば再レビュー**（修正で生んだ別バグを検出、最大 1 回）
 9. 完了報告（次のステップは `/commit` `/create-pr` を案内）
 
+### 3. 単独レビュー（修正計画への橋渡しも可能）
+
+```
+/zeus:review                # 現ブランチの diff をレビュー
+/zeus:review 42             # GitHub PR #42 をレビュー
+/zeus:review src/           # 指定ディレクトリをフルコードレビュー
+```
+
+`/zeus:review` が以下を自動実行する:
+
+1. 引数判定（なし=branch / 数字=PR / その他=path）
+2. レビュー対象を取得（git diff / gh pr diff / Read）
+3. `zeus-reviewer` で一次レビュー
+4. `zeus-review-validator` で事実確認・妥当性検証（false positive 排除 + 追加発見）
+5. 結果を `.claude/zeus/reviews/{ts}-{mode}/` に保存
+6. 確定指摘がある場合、次アクションを確認:
+   - **修正計画を立てる** → `/zeus:plan` へ自動橋渡し（その後 `/zeus:dev` で実装まで進める）
+   - **PR コメント投稿**（PR モードのみ）
+   - **ローカル保存のみで終了**
+
 ## 出力ディレクトリ
 
-すべての生成物は `.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/` に集約される:
+`/zeus:plan` `/zeus:dev` の生成物:
 
 ```
 .claude/zeus/{ts}-{slug}/
@@ -99,6 +121,16 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ├── review.md               ← /zeus:dev が作成
 ├── review-2nd.md           ← Critical 修正後の再レビュー（あれば）
 └── fix-log.md              ← 修正ループの履歴
+```
+
+`/zeus:review` の生成物:
+
+```
+.claude/zeus/reviews/{ts}-{mode}/
+├── input.md                ← レビュー対象のサマリ
+├── review.md               ← zeus-reviewer の一次レビュー
+├── review-validated.md     ← zeus-review-validator の検証済み指摘
+└── plan-handoff.md         ← /zeus:plan へ橋渡し時の修正タスク記述
 ```
 
 ## ultraplan / feature-dev からの移行
