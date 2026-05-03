@@ -7,16 +7,18 @@
 
 | スキル | 役割 |
 |---|---|
+| `/zeus:spec [要望]` | ざっくりした要望を対話的なヒアリングで詰めて仕様書化。`zeus-spec-writer` で構造化し、そのまま `/zeus:plan` へ橋渡し可能 |
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
-| `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` でレビュー |
+| `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
 
-## 同梱エージェント (5 体)
+## 同梱エージェント (6 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
 | エージェント | 役割 |
 |---|---|
+| `zeus-spec-writer` | ヒアリング結果を構造化された仕様書（機能要件 / 非機能要件 / スコープ / 制約 / 受け入れ条件）に整理 |
 | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定（単一最強案を断言、self-critique も担当） |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
@@ -41,6 +43,22 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ```
 
 ## 使い方
+
+### 0. 仕様策定（要望が曖昧なとき）
+
+```
+/zeus:spec 通知機能を追加したい
+```
+
+`/zeus:spec` が以下を自動実行する:
+
+1. 初期要望の受領（引数なしなら `AskUserQuestion` で確認）
+2. **段階的ヒアリング**（機能要件 / ユーザー / スコープ / 優先度 / 制約 / 非機能要件 / 受け入れ条件 を順次確認）
+3. `zeus-spec-writer` で構造化された仕様書を作成
+4. `EnterPlanMode` で仕様書承認
+5. そのまま `/zeus:plan` に橋渡し可能（or ローカル保存のみで終了）
+
+要件が既に明確な場合はスキップして直接 `/zeus:plan` を呼ぶ方が速い。
 
 ### 1. 計画策定
 
@@ -121,6 +139,15 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ├── review.md               ← /zeus:dev が作成
 ├── review-2nd.md           ← Critical 修正後の再レビュー（あれば）
 └── fix-log.md              ← 修正ループの履歴
+```
+
+`/zeus:spec` の生成物:
+
+```
+.claude/zeus/specs/{ts}-{slug}/
+├── spec.md                 ← 構造化された仕様書
+├── interview-log.md        ← ヒアリングのやりとり記録
+└── plan-handoff.md         ← /zeus:plan 橋渡し時の引き継ぎ
 ```
 
 `/zeus:review` の生成物:
