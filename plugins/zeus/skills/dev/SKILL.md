@@ -170,9 +170,9 @@ Phase 7 で **Critical を修正した場合のみ**、もう一度 `zeus-review
 これは「修正で別バグを生むリスク」を検出するため。
 
 - プロンプトには「修正後の差分」「修正前の指摘」「修正内容」を渡す
-- 応答は `review-2nd.md` として保存
-- 再レビューでさらに Critical が出た場合は **1 回だけ追加修正** する（無限ループ防止）
-- 2 回目の再レビューは行わない
+- 応答は `review-{n}.md` として保存（n は 2 始まり、初回 review.md の続き番号）
+- 再レビューでさらに Critical が出た場合は再修正 → 再レビューを Critical が無くなるまで繰り返す
+- 各ラウンドの修正は `fix-log.md` に追記し、ラウンド数が判別できるようにする
 
 Critical 修正がなかった場合は再レビューをスキップして Phase 9 へ。
 
@@ -186,7 +186,7 @@ Critical 修正がなかった場合は再レビューをスキップして Phas
 - plan: .claude/zeus/{ts}-{slug}/plan.md
 - 実装ログ: .claude/zeus/{ts}-{slug}/implementation.md
 - レビュー: .claude/zeus/{ts}-{slug}/review.md
-- 再レビュー: .claude/zeus/{ts}-{slug}/review-2nd.md（Critical 修正があった場合）
+- 再レビュー: .claude/zeus/{ts}-{slug}/review-{n}.md（Critical 修正があった場合、n は 2 始まり）
 - 修正履歴: .claude/zeus/{ts}-{slug}/fix-log.md（修正があった場合）
 
 ### 次のステップ

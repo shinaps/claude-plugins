@@ -125,7 +125,7 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 5. `zeus-reviewer` を起動してセルフレビュー
 6. レビューの生レポートを `.claude/zeus/{ts}-{slug}/review.md` に保存
 7. **Critical は自動修正**（動作確認の失敗も Critical 扱い）、Warning は確認、Info は記録のみ
-8. **Critical 修正があれば再レビュー**（修正で生んだ別バグを検出、最大 1 回）
+8. **Critical 修正があれば再レビュー**（修正で生んだ別バグを検出、Critical が無くなるまで繰り返し）
 9. 完了報告（次のステップは `/commit` `/create-pr` を案内）
 
 ### 3. 単独レビュー（修正計画への橋渡しも可能）
@@ -160,10 +160,10 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 │   ├── architect-initial.md
 │   ├── architect-critique.md
 │   ├── plan-review.md
-│   └── architect-revised.md  ← 差し戻し時のみ
+│   └── architect-revised-{n}.md  ← 差し戻し時のみ（n は 1 始まり）
 ├── implementation.md       ← /zeus:dev が作成（動作確認結果も含む）
 ├── review.md               ← /zeus:dev が作成
-├── review-2nd.md           ← Critical 修正後の再レビュー（あれば）
+├── review-{n}.md           ← Critical 修正後の再レビュー（あれば、n は 2 始まり）
 └── fix-log.md              ← 修正ループの履歴
 ```
 

@@ -88,7 +88,7 @@ self-critique は同じ architect による自己批判のため **視点固定�
 `zeus-plan-reviewer` は総合判定（承認 / 条件付き承認 / 差し戻し）と Critical / Warning / Info を返す。
 
 **判定別の対応**:
-- **差し戻し**: Phase 3 に戻り、レビュー指摘を渡して `zeus-architect` を再起動して plan を作り直す（**最大 1 回まで**。無限ループ回避）
+- **差し戻し**: Phase 3 に戻り、レビュー指摘を渡して `zeus-architect` を再起動して plan を作り直す（納得いくまで繰り返し可。各回の生レポートは `architect-revised-{n}.md` として保存）
 - **条件付き承認**: 指摘箇所を反映して plan を作成（Phase 6 へ）
 - **承認**: そのまま Phase 6 へ
 
@@ -101,7 +101,7 @@ self-critique は同じ architect による自己批判のため **視点固定�
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-initial.md
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-critique.md
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/plan-review.md
-.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-revised.md  ← 差し戻しで再策定した場合のみ
+.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/raw/architect-revised-{n}.md  ← 差し戻しで再策定した場合のみ（n は 1 始まり）
 ```
 
 - `slug` はタスク内容の短い英語スラッグ（kebab-case, 30 文字以内）
@@ -113,7 +113,7 @@ self-critique は同じ architect による自己批判のため **視点固定�
 主体（あなた）が `zeus-architect` の出力を中心に、`zeus-explorer` の発見・`zeus-plan-reviewer` の指摘も統合した
 **最終的な実装プラン** を作成する。
 
-- `zeus-architect` の最終案（self-critique 反映済み・差し戻し時は再策定版）を基本構造として採用
+- `zeus-architect` の最終案（self-critique 反映済み・差し戻し時は最後の再策定版）を基本構造として採用
 - `zeus-plan-reviewer` の Critical / Warning 指摘を必ず反映
 - 必要に応じてユーザーの追加要件を反映
 - ユーザー判断が必要な重大トレードオフが残った場合のみ `AskUserQuestion` で確認
