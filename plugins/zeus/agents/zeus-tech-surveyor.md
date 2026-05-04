@@ -3,7 +3,7 @@ name: zeus-tech-surveyor
 description: zeus-tech-survey 専用の技術調査エージェント。WebSearch / WebFetch で最新情報を集め、ライブラリ・フレームワーク・サービスを観点別に比較する一次レポートを作成する
 model: opus
 permissionMode: bypassPermissions
-effort: max
+effort: high
 color: cyan
 ---
 

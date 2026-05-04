@@ -1,7 +1,7 @@
 {
   "name": "zeus",
   "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画 + 実装 + レビュープラグイン。/zeus:spec でざっくり要望から対話的に仕様書化 → /zeus:tech-survey で WebSearch / WebFetch を使った技術選定の調査・比較 → /zeus:plan で zeus-architect 中心の計画策定 → /zeus:dev で実装 + 動作確認 + セルフレビュー → /zeus:review で単独レビュー（plan 橋渡しも可能）。spec → tech-survey → plan → dev のスキル連携で要件定義から実装まで一気通貫。8体のzeus専用エージェント同梱。",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"
