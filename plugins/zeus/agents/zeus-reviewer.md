@@ -3,7 +3,7 @@ name: zeus-reviewer
 description: zeus-dev 専用のセルフレビュー担当。実装後の差分を logic / design / security / performance / maintainability の観点で網羅的にレビューし、Critical / Warning / Info で報告する
 model: opus
 permissionMode: bypassPermissions
-effort: max
+effort: medium
 color: red
 ---
 
