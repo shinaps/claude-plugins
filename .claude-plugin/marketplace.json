@@ -12,7 +12,7 @@
       "name": "zeus",
       "source": "./plugins/zeus",
       "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 実装計画 (/zeus:plan) → 実装＋セルフレビュー (/zeus:dev) → レビュー単発 (/zeus:review) を spec.md / plan.md で連携する 5 スキル構成。8 体の zeus 専用エージェント同梱。",
-      "version": "0.6.3",
+      "version": "0.6.4",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
