@@ -12,9 +12,9 @@
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
-| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用 |
+| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用。**re-review で再出しない指摘や won't-fix 返信スレッドは GraphQL で auto-resolve**（✅ Addressed in {sha} / Marked as won't-fix の返信付き） |
 | `/zeus:pr-watch [interval\|--once]` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**起動するだけで内部 `/loop` を自動セットアップ**（default 5 分、`--once` で 1 サイクル）。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等運用） |
-| `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成し、CLAUDE.md にマーカー付きで PM 利用ルールを挿入 |
+| `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成。**team / both は `CLAUDE.md`、personal は `CLAUDE.local.md`** にマーカー付きで PM 利用ルールを挿入（personal モードでは PM の存在自体が git に残らない） |
 | `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
 ## 同梱エージェント (9 体)
@@ -237,22 +237,25 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
    - `roadmap.md` — 次にやる候補（短期 / 中期 / 長期 / 却下）
    - `decisions.md` — 意思決定ログ（なぜ X を選んだか）
    - `workflow.md` — このプロジェクトの進め方・規約
-2. `CLAUDE.md` に `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで PM 利用ルールを挿入
-3. ルールに従って Claude が **毎セッション開始時に PM を自動参照** し、作業区切りで `/zeus:pm sync` `/zeus:pm decision` を呼ぶ習慣を持つ
+2. PM 利用ルールをマーカー付きで挿入（モード別）:
+   - `team` / `both`: `CLAUDE.md` に挿入（チーム全員に効く、commit される）
+   - `personal`: **`CLAUDE.local.md`** に挿入（Claude Code 公式の local override、gitignore 推奨）
+3. `.gitignore` を自動更新（personal モードでは `.zeus/pm-local/` と `CLAUDE.local.md` を追加）
+4. ルールに従って Claude が **毎セッション開始時に PM を自動参照** し、作業区切りで `/zeus:pm sync` `/zeus:pm decision` を呼ぶ習慣を持つ
 
 #### 「ユーザーが意識しなくても PM が把握する」を実現する仕組み
 
-- **セッション開始時**: Claude が CLAUDE.md を読み → ルールに従って `.zeus/pm/state.md` を自動参照 → 曖昧な質問は PM の内容から答える
-- **作業完了時**: CLAUDE.md のルールにより、タスク完了 / 意思決定 / 新タスク追加のタイミングで Claude が `/zeus:pm done` 等の呼び出しを提案する
+- **セッション開始時**: Claude が `CLAUDE.md`（と存在すれば `CLAUDE.local.md`）を読み → ルールに従って `.zeus/pm/state.md` を自動参照 → 曖昧な質問は PM の内容から答える
+- **作業完了時**: ルールにより、タスク完了 / 意思決定 / 新タスク追加のタイミングで Claude が `/zeus:pm done` 等の呼び出しを提案する
 - **personal overlay**: `.zeus/pm-local/` がある場合は team の同名ファイルより優先される（チーム共有 + 個人スクラッチを両立）
 
 #### team / personal / both の使い分け
 
-| モード | 用途 |
-|---|---|
-| `team` | チーム共有の公式コンテキスト。`/zeus:pm-init team` で `.zeus/pm/` を作成、git commit して共有 |
-| `personal` | 個人プロジェクト or 公にしたくない作業メモ。`/zeus:pm-init personal` で `.zeus/pm-local/` を作成、自動で .gitignore に登録 |
-| `both` | OSS / 複数人プロジェクトで「チーム共有の公式情報」と「個人的なメモ・思考」を併用したい場合 |
+| モード | コンテキスト | ルール挿入先 | git | 用途 |
+|---|---|---|---|---|
+| `team` | `.zeus/pm/` | `CLAUDE.md` | 両方 commit | チーム共有の公式コンテキスト |
+| `personal` | `.zeus/pm-local/` | `CLAUDE.local.md` | **両方 gitignore** | 個人作業 or チームリポジトリで自分だけ PM を回したい時。**PM の存在自体が git に残らない** |
+| `both` | 両方 | `CLAUDE.md`（team ルール） | mixed | チーム共有 + 個人 overlay。personal が同名ファイルで上書き |
 
 ## 出力ディレクトリ
 
@@ -337,7 +340,12 @@ Zeus PM の生成物（`/zeus:pm-init` がスケルトン生成、`/zeus:pm` で
 └── ...                     ← 他は personal だけのファイル
 ```
 
-CLAUDE.md には `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで PM 利用ルールが挿入され、Claude がセッション開始時に PM を自動参照する。
+PM 利用ルールは `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで以下のファイルに挿入される（モード別）:
+
+- team / both: `CLAUDE.md`（プロジェクトルート、commit）
+- personal: `CLAUDE.local.md`（プロジェクトルート、gitignore）
+
+Claude がセッション開始時に該当ファイルを読むことで PM を自動参照する。再 init はマーカー内だけを安全に置換するため、ユーザーが追加した独自セクションは保持される。
 
 ## ultraplan / feature-dev からの移行
 

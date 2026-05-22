@@ -1,6 +1,6 @@
 ---
 name: pm-init
-description: プロジェクトに Zeus PM（プロジェクト継続コンテキスト管理）を初期化する。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）を生成し、4 ファイル（state / roadmap / decisions / workflow）のスケルトンを書く。CLAUDE.md にマーカー付きで PM 利用ルールを挿入し、Claude が毎セッション自動で PM を読むようにする
+description: プロジェクトに Zeus PM（プロジェクト継続コンテキスト管理）を初期化する。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）を生成し、4 ファイル（state / roadmap / decisions / workflow）のスケルトンを書く。team / both は CLAUDE.md、personal は CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。personal モードでは PM の存在自体が git に残らない
 argument-hint: <なし | team | personal | both>
 ---
 
@@ -20,11 +20,16 @@ PM は「いま何やってるか」「次やること」「進め方」をセ�
 
 ## モードの違い
 
-| モード | 配置先 | git 管理 | 用途 |
-|---|---|---|---|
-| **team** | `.zeus/pm/` | commit | チーム全員で共有する公式コンテキスト（公式 roadmap, 共通決定事項） |
-| **personal** | `.zeus/pm-local/` | gitignore | 自分用スクラッチパッド（個人的なメモ、まだ公にしたくない計画） |
-| **both** | 両方 | mixed | チーム共有を持ちつつ個人 overlay も併用。personal が同名ファイルで上書き |
+| モード | コンテキスト配置先 | ルール挿入先 | git 管理 | 用途 |
+|---|---|---|---|---|
+| **team** | `.zeus/pm/` | `CLAUDE.md` | 両方 commit | チーム全員で共有する公式コンテキスト |
+| **personal** | `.zeus/pm-local/` | `CLAUDE.local.md` | 両方 gitignore | 個人スクラッチパッド。**PM の存在自体が git に残らない** |
+| **both** | 両方 | `CLAUDE.md`（team ルール）+ personal overlay は overlay ファイルで挙動 | mixed | チーム共有 + 個人 overlay 併用。personal が同名ファイルで上書き |
+
+**personal モードの設計意図**:
+`CLAUDE.local.md` は Claude Code が公式にサポートする「local override」用ファイルで、デフォルトで `.gitignore` に入れる前提（公式ドキュメント推奨）。
+このファイルに PM ルールを書くことで、ルール自体もコンテキスト本体も両方 git に載らない完全 local 構成になる。
+個人プロジェクトでもチームリポジトリで「自分だけ PM を使う」ケースでも、他人に存在を漏らさず PM を回せる。
 
 ## 実行フロー
 
@@ -184,29 +189,63 @@ PM ブリーフィングでは Claude が軽く目を通すだけで、roadmap �
 <!-- まだ相談していない懸念 -->
 ```
 
-### Phase 3: .gitignore 更新（personal / both 時のみ）
+### Phase 3: .gitignore 更新
 
-personal または both モードで:
+モード別に必要なエントリを追加する。
 
 1. `.gitignore` を Read（無ければ新規作成）
-2. `.zeus/pm-local/` パターンが既に含まれているか確認
-3. 含まれていなければ末尾に追記:
+2. 既存の含有を確認した上で、不足分だけ末尾に追記
+
+#### personal モード時
 
 ```
-# Zeus PM personal context
+# Zeus PM (personal mode — keep PM private)
+.zeus/pm-local/
+CLAUDE.local.md
+```
+
+`CLAUDE.local.md` は Claude Code 公式が gitignore 推奨する local override ファイル。
+**personal モードでは PM ルール本体もこのファイルに書かれる**ため、PM の存在自体が git に残らない。
+
+#### both モード時
+
+```
+# Zeus PM (personal overlay)
 .zeus/pm-local/
 ```
 
-`.zeus/review-memory.md` は **gitignore しない**（team モードの review-memory はチーム共有が前提）。
+both モードでは team ルールが `CLAUDE.md`（commit）に入るため、`CLAUDE.local.md` は gitignore しなくてよい（個人が自由に上書きルールを足す余地として残す）。
+ただし personal の **コンテキスト本体** (`.zeus/pm-local/`) は gitignore する。
 
-### Phase 4: CLAUDE.md 更新（最重要）
+#### team モード時
 
-プロジェクトルートの `CLAUDE.md` を更新。これにより **毎セッション開始時に Claude が自動で PM を読み込む** ようになる。
+`.gitignore` 変更なし（すべて commit されるのが正しい運用）。
 
-1. `CLAUDE.md` を Read（無ければ新規作成）
+`.zeus/review-memory.md` は **どのモードでも gitignore しない**（PR レビュー側のルールで、PM とは別系統）。
+
+### Phase 4: ルール挿入先ファイルの更新（最重要）
+
+これにより **毎セッション開始時に Claude が自動で PM を読み込む** ようになる。
+挿入先ファイルはモード別に切り替える:
+
+| モード | 挿入先ファイル | 理由 |
+|---|---|---|
+| `team` | `CLAUDE.md`（プロジェクトルート） | チーム全員に PM ルールを適用したい |
+| `personal` | `CLAUDE.local.md`（プロジェクトルート） | **ルール自体も他人に見せず完全 local 完結**。Claude Code 公式の local override 機構に乗る |
+| `both` | `CLAUDE.md` | team ルールは全員に効かせる。personal overlay はコンテキストファイル側で挙動するためルール変更不要 |
+
+#### 共通処理
+
+1. 対象ファイルを Read（無ければ新規作成）
 2. 既存マーカー `<!-- zeus-pm:start -->` 〜 `<!-- zeus-pm:end -->` の有無を確認
 3. **マーカーあり**: 中身を最新版で置換
 4. **マーカーなし**: ファイル末尾にマーカー付きで挿入
+
+#### Claude Code の CLAUDE.local.md 仕様
+
+- プロジェクトルートの `CLAUDE.local.md` は **`CLAUDE.md` の後に追加で読み込まれる**（append、override ではない）
+- 公式ドキュメント (https://code.claude.com/docs/en/memory.md) が `.gitignore` への追加を推奨
+- personal モードでは Phase 3 で自動的に `.gitignore` に追加されるので、ユーザーは追加作業不要
 
 挿入する内容:
 
@@ -264,9 +303,10 @@ personal または both モードで:
 ## /zeus:pm-init 完了
 
 - モード: {team / personal / both}
-- 生成: {ファイル一覧}
-- CLAUDE.md: {新規作成 / マーカー追記 / マーカー更新}
-- .gitignore: {更新あり/なし}
+- コンテキスト生成先: {.zeus/pm/ / .zeus/pm-local/ / 両方}
+- 生成ファイル: {ファイル一覧}
+- ルール挿入先: {CLAUDE.md / CLAUDE.local.md} ({新規作成 / マーカー追記 / マーカー更新})
+- .gitignore: {更新あり (追記行: ...) / 変更なし}
 
 ### 次にやること
 
