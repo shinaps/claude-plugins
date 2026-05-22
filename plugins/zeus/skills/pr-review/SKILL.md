@@ -274,54 +274,18 @@ _{severity-badge}_ | _{tag-badge}_
 
 #### Summary review 本文テンプレート
 
-verdict を **最先頭の GitHub callout block** で表示。H2 ヘッダーとアイコンで一目で分かるように。
+**ミニマル設計**: HTML marker（状態管理用、不可視）+ Verdict callout のみ。severity 表 / 概要 / 主要な懸念 / Review info / Files reviewed は **書かない**。詳細は inline comments で十分伝わる。冗長なサマリは PR タイムラインのノイズになるため省く。
 
 ```markdown
-<!-- zeus:pr-review version=1 reviewed-sha={head-sha} reviewer={gh-login} at={iso} verdict={LGTM|comments-only|changes-requested|discussion} -->
+<!-- zeus:pr-review version=1 reviewed-sha={head-sha} reviewer={gh-login} at={iso} verdict={lgtm|comments-only|changes-requested|discussion} stats=critical:{n}/major:{n}/nitpick:{n}/suggestion:{n}/resolved:{r} -->
 
 > [!{TIP|NOTE|CAUTION|IMPORTANT}]
 > ## {✅ LGTM | 💬 Comments Only | 🛑 Changes Requested | 🤔 Discussion}
 >
 > {1-2 行の判断理由}
-
-## Zeus Review Summary
-
-**Actionable comments posted: {N}**
-
-| Severity | Count |
-|---|---|
-| 🔴 Critical | {n} |
-| 🟠 Major | {n} |
-| 🟡 Nitpick | {n} |
-| 💡 Suggestion | {n} |
-
-### 概要
-
-{PR 全体に対する 2-3 行の所感}
-
-### 主要な懸念
-
-{Critical / Major の 1 行サマリリスト, 各 inline comment への anchor}
-
-<details>
-<summary>ℹ️ Review info</summary>
-
-- Mode: `{mode}`
-- Reviewed SHA: `{head-sha}`
-- Files reviewed: {N}
-- Memory snapshot: `.zeus/review-memory.md` ({M} conventions, {K} won't-fix patterns)
-- Tech survey: {invoked: yes/no}
-- Validator: {confirmed: N / false-positive: N / partial: N / additional: N}
-
-</details>
-
-<details>
-<summary>📒 Files reviewed</summary>
-
-{ファイル一覧}
-
-</details>
 ```
+
+統計値（severity 別件数、auto-resolve 件数、validator 結果など）は **HTML marker の `stats=` 属性に押し込む**。レンダリング上は非表示だが、将来 zeus 側で再パースして傾向分析するときの足跡として残しておく。ユーザー目線では verdict callout だけが見える。
 
 #### Verdict callout 例
 
@@ -362,6 +326,49 @@ verdict を **最先頭の GitHub callout block** で表示。H2 ヘッダーと
 ```
 
 ### Phase 8: GitHub 投稿
+
+まず **「サイレント再検証」判定** を行う。条件を満たすなら新規投稿せず既存 summary を編集するだけで終わる（タイムラインに新規エントリを出さない）。
+
+#### Phase 8a: サイレント再検証判定
+
+以下を **すべて** 満たすなら **silent-edit パス** に入る:
+
+- mode == `re-review`
+- 投稿予定の新規 inline comments 件数 = 0（fingerprint 重複排除後）
+- auto-resolve 対象スレッド数 = 0
+- メモリ更新件数 = 0
+- 既存 zeus summary review が **存在する**（`reviewed-sha=` marker を持つ過去投稿）
+
+= 「新コミットを見たけど、新たに言うことも、resolve すべきスレッドも、覚えるべきこともない」状態。
+
+**silent-edit パス**:
+
+1. 既存 zeus summary review のうち **最新** を特定（GraphQL `pullRequest.reviews(last: N)` で取得し、body に `<!-- zeus:pr-review` を含み `user.login == 自分` のもの → `submittedAt` 降順 1 件）
+2. その review の **GraphQL node id** を控える
+3. body を以下に更新:
+   - HTML marker の `reviewed-sha={新 SHA}` / `at={新 ISO}` / `stats={新統計}` を最新値に
+   - verdict callout の中身（reason 行）を **「commit {新 SHA[:8]} で再確認。追加の指摘なし」** のように現在のタイムスタンプを反映した文に置き換え
+   - verdict 自体（LGTM / Comments Only / etc.）も最新 judgment に従って更新（基本は LGTM を維持）
+4. GraphQL `updatePullRequestReview` mutation で body 更新:
+
+   ```bash
+   gh api graphql -f query='
+     mutation($reviewId: ID!, $body: String!) {
+       updatePullRequestReview(input: {pullRequestReviewId: $reviewId, body: $body}) {
+         pullRequestReview { id body updatedAt }
+       }
+     }
+   ' -F reviewId={review-node-id} -F body=@new-body.md
+   ```
+
+5. inline comments / resolve / reply 投稿は **全部スキップ**
+6. **タイムラインに新規エントリは出ない**（既存 review に "edited" マークが付くだけ）
+
+silent-edit 完了後は Phase 9（結果報告）にジャンプ。
+
+#### Phase 8b: 通常投稿（silent-edit に該当しない場合）
+
+silent-edit 条件に該当しないとき、または mode が `fresh` / `comment-response` の場合:
 
 1. 既存 review comments の fingerprint set を作成（重複排除用）
 2. 各 inline comment について:
@@ -431,10 +438,10 @@ Phase 5 / Phase 6 で集めた `resolve 対象 comment id 集合` を GraphQL �
 ## /zeus:pr-review 完了
 
 - PR: {owner}/{repo}#{N} "{title}"
-- Mode: {mode}
+- Mode: {mode}{ + " (silent-edit)" if silent-edit パス}
 - **Verdict: {✅ LGTM | 💬 Comments Only | 🛑 Changes Requested | 🤔 Discussion}**
 - Reviewed SHA: {head-sha[:8]}
-- Inline comments posted: {N} (skipped {M} duplicates)
+- Inline comments posted: {N} (skipped {M} duplicates){ silent-edit 時は "— silent-edit のため新規投稿なし、既存 summary を bump"}
 - Auto-resolved threads: {R}
   - re-review (修正済み判定): {a}
   - comment-response (won't-fix 返信): {b}
@@ -462,6 +469,8 @@ Phase 5 / Phase 6 で集めた `resolve 対象 comment id 集合` を GraphQL �
 - **closed / merged はスキップ**: 即終了
 - **resolve 時は理由コメントを残す**: ✅ Addressed in {sha} / ✅ Marked as won't-fix per @{user} の返信を付けてから resolve（後追跡可能）
 - **verdict を summary 先頭に大きく表示**: LGTM / Comments Only / Changes Requested / Discussion を GitHub callout (`[!TIP]` / `[!NOTE]` / `[!CAUTION]` / `[!IMPORTANT]`) で 1 目で分かるよう表示。GitHub review state は `--comment` のままで **merge ブロックはしない**（branch protection 影響回避）
+- **summary はミニマル**: HTML marker + verdict callout のみ。severity 表 / 概要 / 主要懸念 / files list は書かない。詳細は inline comments が伝える
+- **サイレント再検証 (silent-edit)**: re-review で新規 findings / resolves / memory 更新がすべて 0 のとき、新規投稿せず **既存 summary を `updatePullRequestReview` で編集して `reviewed-sha` だけ更新**。タイムラインに新規エントリを出さずノイズを最小化（GitHub side state は維持）
 
 ## 他スキルとの使い分け
 
