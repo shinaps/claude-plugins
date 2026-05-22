@@ -12,7 +12,7 @@
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
-| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用。**re-review で再出しない指摘や won't-fix 返信スレッドは GraphQL で auto-resolve**（✅ Addressed in {sha} / Marked as won't-fix の返信付き） |
+| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。**summary 先頭に Verdict callout**（✅ LGTM / 💬 Comments Only / 🛑 Changes Requested / 🤔 Discussion）を大きく表示。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用。re-review で再出しない指摘や won't-fix 返信スレッドは GraphQL で auto-resolve |
 | `/zeus:pr-watch [interval\|--once]` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**起動するだけで内部 `/loop` を自動セットアップ**（default 5 分、`--once` で 1 サイクル）。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等運用） |
 | `/zeus:resolve-pr-review <PR番号>` | PR で受けたレビューコメント（zeus / CodeRabbit / 人間レビュアー全部）を `zeus-review-validator` で妥当性判定し、confirmed は `/zeus:plan` + `/zeus:dev` に委譲、false-positive / won't-fix / out-of-scope は理由付きで返信 + スレッド resolve、clarification は説明返信のみ。**push はしない**（CLAUDE.md 準拠） |
 | `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成。**team / both は `CLAUDE.md`、personal は `CLAUDE.local.md`** にマーカー付きで PM 利用ルールを挿入（personal モードでは PM の存在自体が git に残らない） |
@@ -172,10 +172,11 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 4. `zeus-reviewer` + `zeus-review-validator` で精度の高い指摘リスト作成
 5. メモリの `Won't Fix Patterns` / `Project Conventions` で再フィルタ（重複指摘の排除）
 6. 依存マニフェスト変更があれば `zeus-tech-surveyor` で追加調査（必要時のみ）
-7. **CodeRabbit ライクな inline + summary コメント** を整形（投稿前承認 UI は **挟まず即投稿**、unattended 運用前提）
-8. `gh api` で inline comment 個別投稿 + summary review 投稿
-9. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
-10. **auto-resolve（GraphQL `resolveReviewThread`）**:
+7. **総合判定 (Verdict) を選定**: `LGTM` / `Comments Only` / `Changes Requested` / `Discussion` から 1 つを LLM 判断で選ぶ
+8. **CodeRabbit ライクな inline + summary コメント** を整形。summary 先頭に GitHub callout (`[!TIP]` / `[!NOTE]` / `[!CAUTION]` / `[!IMPORTANT]`) で Verdict を **デカく表示**。投稿前承認 UI は **挟まず即投稿**、unattended 運用前提
+9. `gh api` で inline comment 個別投稿 + summary review 投稿
+10. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
+11. **auto-resolve（GraphQL `resolveReviewThread`）**:
     - re-review で旧 fingerprint が新リストに無い → 「✅ Addressed in {sha} (no longer flagged on re-review)」と返信してから resolve
     - won't-fix 返信のスレッド → 「✅ Marked as won't-fix per @{user}. Added to `.zeus/review-memory.md`.」と返信してから resolve
     - 既に resolved なスレッドはスキップ（冪等）

@@ -200,6 +200,36 @@ inline comment 投稿前に、既存 review comments を全部取り、各コメ
 
 4. メモリ更新後、PR コラボレータが他リポジトリでも使えるよう **`git add` のみ実行しユーザーにコミット案内** （自動コミットはしない）
 
+### Phase 6.5: Verdict（総合判定）を決定
+
+本スキルのメインスレッドが、メモリフィルタ後の最終 findings と PR コンテキストを踏まえて **総合判定を 1 つ** 選ぶ。summary 先頭に大きく表示する。
+
+判定候補:
+
+| Verdict | callout | 用途 |
+|---|---|---|
+| `LGTM` | `[!TIP]` (緑) | マージ可能と判断。Critical / Major 指摘なし、または全部 auto-resolve 済み |
+| `Comments Only` | `[!NOTE]` (青) | Nitpick / Suggestion のみ。マージは可だが目を通すと良い |
+| `Changes Requested` | `[!CAUTION]` (赤) | Critical / Major の confirmed 指摘あり。修正後マージ推奨 |
+| `Discussion` | `[!IMPORTANT]` (紫) | 設計判断が割れる / 方針確認が必要 / comment-response モードで議論継続中 |
+
+#### 判定の指針（LLM 判断）
+
+機械的な閾値ではなく **PR コンテキストを踏まえた総合判断**。以下を考慮して 1 つ選ぶ:
+
+- **新 findings の重大度分布**: Critical / Major があれば原則 `Changes Requested`。ただし PR の性質（実験ハーネス / WIP draft / docs PR など）を考慮
+- **auto-resolve 状況**: re-review で旧 findings が全部解消されていて新 findings が無い → `LGTM`
+- **PR の目的**: refactor / bugfix / feature / docs によって許容ラインが変わる
+- **議論の状態**: comment-response モードで方針議論が継続している → `Discussion`
+- **メモリでの除外件数**: メモリ照合で除外された finding が多く実質指摘なし → `LGTM`
+- **summary 概要との整合**: 「概要」セクションで書く所感と verdict が矛盾しないこと
+
+verdict と一緒に **1-2 行の判断理由** も生成する（callout 内に表示）。
+
+#### GitHub review state は変更しない
+
+GitHub の `--approve` / `--request-changes` は使わず、引き続き `--comment` で投稿する（merge ブロック回避）。verdict は **summary body 内の callout でのみ表示**。branch protection に影響しない設計。
+
 ### Phase 7: コメント整形 + プレビュー
 
 最終的な投稿物を `comments-payload.md` に書き出す。**CodeRabbit ライクな構造**:
@@ -244,8 +274,15 @@ _{severity-badge}_ | _{tag-badge}_
 
 #### Summary review 本文テンプレート
 
+verdict を **最先頭の GitHub callout block** で表示。H2 ヘッダーとアイコンで一目で分かるように。
+
 ```markdown
-<!-- zeus:pr-review version=1 reviewed-sha={head-sha} reviewer={gh-login} at={iso} -->
+<!-- zeus:pr-review version=1 reviewed-sha={head-sha} reviewer={gh-login} at={iso} verdict={LGTM|comments-only|changes-requested|discussion} -->
+
+> [!{TIP|NOTE|CAUTION|IMPORTANT}]
+> ## {✅ LGTM | 💬 Comments Only | 🛑 Changes Requested | 🤔 Discussion}
+>
+> {1-2 行の判断理由}
 
 ## Zeus Review Summary
 
@@ -284,6 +321,44 @@ _{severity-badge}_ | _{tag-badge}_
 {ファイル一覧}
 
 </details>
+```
+
+#### Verdict callout 例
+
+**LGTM**:
+
+```markdown
+> [!TIP]
+> ## ✅ LGTM
+>
+> Critical / Major 指摘なし。前回レビューで出した指摘 6 件はすべて適切に解消されています。マージ可能と判断します。
+```
+
+**Comments Only**:
+
+```markdown
+> [!NOTE]
+> ## 💬 Comments Only
+>
+> Nitpick 2 件、Suggestion 3 件あります。マージは可能ですが、目を通すと品質が上がります。
+```
+
+**Changes Requested**:
+
+```markdown
+> [!CAUTION]
+> ## 🛑 Changes Requested
+>
+> Critical 1 件 / Major 2 件の指摘があります。マージ前の修正を推奨します。詳細は inline comments を参照。
+```
+
+**Discussion**:
+
+```markdown
+> [!IMPORTANT]
+> ## 🤔 Discussion
+>
+> 設計判断が分かれる論点があります（PR スコープ / ライブラリ選定 / API 設計など）。マージ前に方針合意が必要です。
 ```
 
 ### Phase 8: GitHub 投稿
@@ -357,6 +432,7 @@ Phase 5 / Phase 6 で集めた `resolve 対象 comment id 集合` を GraphQL �
 
 - PR: {owner}/{repo}#{N} "{title}"
 - Mode: {mode}
+- **Verdict: {✅ LGTM | 💬 Comments Only | 🛑 Changes Requested | 🤔 Discussion}**
 - Reviewed SHA: {head-sha[:8]}
 - Inline comments posted: {N} (skipped {M} duplicates)
 - Auto-resolved threads: {R}
@@ -385,6 +461,7 @@ Phase 5 / Phase 6 で集めた `resolve 対象 comment id 集合` を GraphQL �
 - **draft PR は確認後**: 自動 watch から draft をレビューするとノイズになるため確認を挟む
 - **closed / merged はスキップ**: 即終了
 - **resolve 時は理由コメントを残す**: ✅ Addressed in {sha} / ✅ Marked as won't-fix per @{user} の返信を付けてから resolve（後追跡可能）
+- **verdict を summary 先頭に大きく表示**: LGTM / Comments Only / Changes Requested / Discussion を GitHub callout (`[!TIP]` / `[!NOTE]` / `[!CAUTION]` / `[!IMPORTANT]`) で 1 目で分かるよう表示。GitHub review state は `--comment` のままで **merge ブロックはしない**（branch protection 影響回避）
 
 ## 他スキルとの使い分け
 
