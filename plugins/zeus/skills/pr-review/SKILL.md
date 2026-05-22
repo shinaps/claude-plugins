@@ -277,13 +277,7 @@ _{severity-badge}_ | _{tag-badge}_
 </details>
 ```
 
-### Phase 8: 投稿前確認
-
-1. `comments-payload.md` の内容を `EnterPlanMode` で承認 UI に提示
-   - ユーザーが拒否したらローカル保存のみで終了
-2. 承認されたら投稿フェーズへ
-
-### Phase 9: GitHub 投稿
+### Phase 8: GitHub 投稿
 
 1. 既存 review comments の fingerprint set を作成（重複排除用）
 2. 各 inline comment について:
@@ -296,7 +290,7 @@ _{severity-badge}_ | _{tag-badge}_
    - `gh api -X POST repos/:o/:r/pulls/:N/comments/{id}/replies` でスレッド返信
    - 処理済みコメントに 👀 (`eyes`) リアクションを付ける（重複処理防止）
 
-### Phase 10: 結果報告
+### Phase 9: 結果報告
 
 ```
 ## /zeus:pr-review 完了
@@ -320,7 +314,7 @@ _{severity-badge}_ | _{tag-badge}_
 - **fingerprint で重複排除**: 同じ指摘を 2 回投稿しない（再レビュー時の冗長化を防ぐ）
 - **メモリで継続学習**: won't-fix / プロジェクト方針を `.zeus/review-memory.md` に蓄積、他 PR でも活用
 - **メモリ自動コミットはしない**: `git add` までで止めてユーザーに案内（CLAUDE.md の add / commit 分離ルールに準拠）
-- **投稿前必ず承認**: `EnterPlanMode` で内容確認、ユーザー拒否で投稿しない
+- **無人運用 / 投稿前承認なし**: `/zeus:pr-watch` から /loop で常駐運用する前提のため、投稿前 UI 承認は **挟まない**。誤投稿の予防は fingerprint と memory フィルタで担保。事前に内容だけ見たい場合は `/zeus:review <PR番号>` を使う（こちらはローカル保存のみで投稿しない）
 - **tech-survey は依存変更時のみ**: 通常 PR では起動せず高速化
 - **既存 reviewer / validator を再利用**: PR 専用エージェントは追加しない（メンテコスト最小）
 - **bot コメントは無視**: コラボレータの非 bot コメントだけを「ユーザーコメント」として扱う

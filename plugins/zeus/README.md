@@ -13,7 +13,7 @@
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
 | `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用 |
-| `/zeus:pr-watch` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**トリガーコメント不要で全 open PR を自動レビュー**（CodeRabbit 同等運用）。`/loop 5m /zeus:pr-watch` で常駐 |
+| `/zeus:pr-watch [interval\|--once]` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**起動するだけで内部 `/loop` を自動セットアップ**（default 5 分、`--once` で 1 サイクル）。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等運用） |
 | `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成し、CLAUDE.md にマーカー付きで PM 利用ルールを挿入 |
 | `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
@@ -171,9 +171,11 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 4. `zeus-reviewer` + `zeus-review-validator` で精度の高い指摘リスト作成
 5. メモリの `Won't Fix Patterns` / `Project Conventions` で再フィルタ（重複指摘の排除）
 6. 依存マニフェスト変更があれば `zeus-tech-surveyor` で追加調査（必要時のみ）
-7. **CodeRabbit ライクな inline + summary コメント** を整形し承認 UI（`EnterPlanMode`）で確認
-8. 承認後、`gh api` で inline comment 個別投稿 + summary review 投稿
+7. **CodeRabbit ライクな inline + summary コメント** を整形（投稿前承認 UI は **挟まず即投稿**、unattended 運用前提）
+8. `gh api` で inline comment 個別投稿 + summary review 投稿
 9. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
+
+事前にレビュー内容だけ確認したい場合は `/zeus:review <PR番号>`（投稿しないローカル保存型）を使う。
 
 #### プロジェクトメモリ `.zeus/review-memory.md`
 
@@ -188,21 +190,26 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ### 5. PR 監視ループ（常駐レビュアー化）
 
 ```
-/loop 5m /zeus:pr-watch                                     # 5 分おきに監視
-/loop 15m /zeus:pr-watch                                    # 通常運用 (15 分)
-/zeus:pr-watch                                              # 単発スキャン
+/zeus:pr-watch                                              # 5 分おき loop で常駐 (デフォルト)
+/zeus:pr-watch 15m                                          # 15 分おき loop
+/zeus:pr-watch 1h                                           # 1 時間おき loop
+/zeus:pr-watch --once                                       # 1 サイクルだけ実行
+/zeus:pr-watch repo:owner/another                           # 他リポジトリ
 ```
 
 `/zeus:pr-watch` が以下を自動実行する:
 
-1. open かつ非 draft かつ非 bot 作成の PR を `gh pr list` で列挙
-2. 各 PR について以下のトリガーを評価:
+1. **モード判定**: 引数なし or `<interval>` のみなら loop モード、`--once` なら単発モード
+2. ユーザーに loop 開始通知（停止方法: Esc / 新規メッセージ送信）
+3. open かつ非 draft かつ非 bot 作成の PR を `gh pr list` で列挙
+4. 各 PR について以下のトリガーを評価:
    - `fresh-review`: zeus レビューがまだ無い PR（**トリガーコメント不要、全 open PR が対象**）
    - `re-review`: zeus レビュー済みだが head SHA が変わった
    - `comment-response`: zeus レビュー済みで、SHA は同じだが新規ユーザーコメントあり
-3. アクション対象が **6 件以上** あれば `AskUserQuestion` で「全件処理 / 上位 5 件 / キャンセル」を確認（初回スパム防止）
-4. トリガー検出した PR を `/zeus:pr-review <N>` に順次委譲
-5. 状態は **すべて GitHub 側の HTML マーカーから再構築** するためローカル状態ファイル無し → ループが落ちても再起動で完全復旧
+5. アクション対象が **6 件以上** あれば `AskUserQuestion` で「全件処理 / 上位 5 件 / キャンセル」を確認（初回スパム防止）
+6. トリガー検出した PR を `/zeus:pr-review <N>` に順次委譲（**投稿前承認 UI は挟まず即投稿**、unattended 運用前提）
+7. loop モードならサイクル完了後に `Skill` ツール経由で `/loop {interval} /zeus:pr-watch --once` を起動して常駐化
+8. 状態は **すべて GitHub 側の HTML マーカーから再構築** するためローカル状態ファイル無し → ループが落ちても再起動で完全復旧
 
 PR を open するだけで次のスキャンサイクルで自動レビューが走る（コメントトリガー不要）。
 レビューに対してユーザーが「これは方針」と返信すれば、次サイクルで `.zeus/review-memory.md` に学習が蓄積される。

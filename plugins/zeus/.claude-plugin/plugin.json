@@ -1,7 +1,7 @@
 {
   "name": "zeus",
   "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画 + 実装 + レビュー + PR 監視 + PM プラグイン。/zeus:spec で要望から対話的に仕様書化 → /zeus:tech-survey で技術選定 → /zeus:plan で計画策定 → /zeus:dev で実装 + セルフレビュー → /zeus:review で単独レビュー → /zeus:pr-review で GitHub PR への CodeRabbit ライク自動レビュー投稿 → /zeus:pr-watch を /loop で常駐させて自動検知。/zeus:pm-init + /zeus:pm でプロジェクトの「いま何やってる / 次やる / 進め方 / 過去の意思決定」を .zeus/pm/ (チーム共有) と .zeus/pm-local/ (個人 / gitignore) にセッション横断で蓄積し CLAUDE.md ルール経由で自動参照。9 体の zeus 専用エージェント同梱、9 スキル構成。",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"

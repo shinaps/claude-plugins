@@ -1,32 +1,51 @@
 ---
 name: pr-watch
-description: open な GitHub PR を定期スキャンし、未レビュー PR / 新コミット / 新規ユーザーコメントを検出して `/zeus:pr-review` に自動委譲する監視スキル。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等）。`/loop 5m /zeus:pr-watch` で常駐運用する想定。状態は GitHub 側のみで管理（専用ファイルなし）
-argument-hint: <なし | repo:owner/name>
+description: open な GitHub PR を定期スキャンし、未レビュー PR / 新コミット / 新規ユーザーコメントを検出して `/zeus:pr-review` に自動委譲する監視スキル。引数なしで自動的に 5 分おきの loop を開始（内部で `/loop` を起動）。`<interval>` 指定で間隔変更、`--once` で 1 サイクルだけ。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等）。状態は GitHub 側のみで管理（専用ファイルなし）
+argument-hint: <なし | interval (5m, 15m, 1h) | --once | repo:owner/name>
 ---
 
 # Zeus PR Watch スキル（PR 監視・委譲担当）
 
 カレントリポジトリの open な GitHub PR を定期スキャンし、レビューが必要な PR を検出して `/zeus:pr-review` に委譲する **watcher** スキル。
+**起動するだけで自動的に loop が始まる**（内部で `/loop` を Skill ツール経由で起動）。
 **トリガーコメントは不要**、open な PR は draft / bot 以外すべて自動レビュー対象（CodeRabbit と同じ運用感）。
 **ローカル状態ファイルは持たず**、GitHub 上のレビュー本文に埋め込まれた HTML マーカーから状態を再構築する。
 
 ## 引数仕様
 
 ```
-/zeus:pr-watch                                 # 現在の repo の open PR を全部スキャン
-/zeus:pr-watch repo:owner/name                 # 指定 repo をスキャン
+/zeus:pr-watch                                  # 5 分おき loop で常駐 (デフォルト)
+/zeus:pr-watch 15m                              # 15 分おき loop
+/zeus:pr-watch 1h                               # 1 時間おき loop
+/zeus:pr-watch --once                           # 1 サイクルだけ実行して終了
+/zeus:pr-watch repo:owner/name                  # 他リポジトリ (loop / once どちらでも組み合わせ可)
+/zeus:pr-watch 10m repo:owner/name              # 10 分おき loop で他リポジトリ
+/zeus:pr-watch --once repo:owner/name           # 他リポジトリで 1 サイクルだけ
 ```
 
-`/loop` から繰り返し呼ばれる前提の **冪等な** 1 回 1 サイクル実装。状態を残さない。
+### 引数パーサ
 
-## 想定運用
+スペース区切りで各トークンを以下に分類:
+
+| トークン | 解釈 |
+|---|---|
+| `--once` / `--single` | `once_mode = true`（loop しない） |
+| `^\d+[smh]$` にマッチ (`5m`, `15m`, `1h`, `30s` 等) | `interval = <値>` |
+| `repo:owner/name` | `repo_override = owner/name` |
+| その他 | 無視（警告は出すが続行） |
+
+**デフォルト**: `interval = "5m"`、`once_mode = false`、`repo_override = なし`（カレント repo）。
+
+### loop の起動方法
+
+`once_mode = false` のとき、本スキルは内部で `Skill` ツールを使い `loop` スキルを起動する:
 
 ```
-/loop 5m /zeus:pr-watch
+Skill(skill="loop", args="{interval} /zeus:pr-watch --once{ repo:owner/name があれば追記}")
 ```
 
-これで 5 分おきにスキャンされ、新規トリガー・新コミット・新規ユーザーコメントを検出すれば自動で `/zeus:pr-review <N>` に委譲する。
-**`/loop` の起動はユーザーが手動で行う**（このスキル自身は `/loop` を呼ばない）。
+**ユーザーが `/loop` を手動で打つ必要はない**。`/zeus:pr-watch` 1 つで loop セットアップまで完結する。
+過去の `/loop 5m /zeus:pr-watch` 形式も動くが、その場合は **必ず `--once` を付ける** ように案内（付けないと loop の中でさらに loop が立つため）。
 
 ## 使用ツール
 
@@ -77,6 +96,24 @@ PR ごとに以下のシグナルを評価する。**トリガーコメントは
 トリガーが何も立たなければ skip。
 
 ## 実行フロー
+
+### Phase 0: モード判定とユーザー通知
+
+1. 引数パーサで `once_mode` / `interval` / `repo_override` を確定
+2. **`once_mode = true` の場合**: そのまま Phase 1 へ進む（1 サイクル実行して終了）
+3. **`once_mode = false` の場合（loop mode）**:
+   - ユーザーに開始メッセージを表示:
+     ```
+     ## Zeus PR Watch 起動
+     - リポジトリ: {owner}/{repo}（{repo_override or "current"}）
+     - 間隔: {interval}
+     - これより 1 サイクル即時実行 → /loop で常駐します
+     - 停止方法:
+       1. プロンプトで Esc キーを押して /loop を中断
+       2. もしくは会話に新規メッセージを送信して /loop を打ち切る
+     ```
+   - **まず Phase 1 以降を即時 1 サイクル実行**（即時フィードバックを返す）
+   - 1 サイクル完了後、Phase 9 で `/loop` を起動して制御を渡す
 
 ### Phase 1: 環境チェック
 
@@ -165,10 +202,27 @@ Skill(skill="zeus:pr-review", args="{PR番号}")
 
 - 処理: {N} 件の PR で /zeus:pr-review を起動
 - 結果: pr-review の出力を参照（PR ごとに別エントリ）
-- 次回スキャン: /loop が稼働していれば自動。手動なら再度 /zeus:pr-watch
+- 次回スキャン: {loop mode なら "/loop が {interval} 後に自動再実行" / once mode なら "再実行するには /zeus:pr-watch を再度起動"}
 ```
 
-`/loop` 動的モードで動いている場合、次回スケジューリングは `/loop` 側に任せる。このスキルは 1 サイクルで完結する。
+### Phase 9: /loop 起動（loop mode のみ）
+
+`once_mode = false` で起動された **最初の 1 回目** のみ、サイクル完了後に `/loop` を起動して常駐モードに入る:
+
+1. 既に loop が稼働中なら（= 引数に `--once` が無いのに、これが /loop からの再呼び出しの場合）スキップ
+   - **検出方法**: 引数に `--once` が含まれている = /loop からの再呼び出し。Phase 0 で `once_mode = true` ルートに入っているのでここには来ない
+   - したがってここに来るのは「ユーザーが直接 `/zeus:pr-watch` を打った 1 回目」だけ
+2. `Skill` ツールで `loop` スキルを起動:
+   ```
+   Skill(skill="loop", args="{interval} /zeus:pr-watch --once{repo_override があれば " repo:" + repo_override を追加}")
+   ```
+3. ユーザーに通知:
+   ```
+   /loop に常駐を引き継ぎました。{interval} ごとに再スキャンします。
+   ```
+4. 制御を /loop に渡して本スキル終了
+
+once_mode で呼ばれた場合（/loop からの再呼び出し含む）は Phase 9 をスキップして終了。これで「ユーザーが /zeus:pr-watch を 1 回打つ → 即時 1 サイクル + /loop 常駐セット」という挙動になる。
 
 ## 動作原則
 
@@ -177,8 +231,9 @@ Skill(skill="zeus:pr-review", args="{PR番号}")
 - **draft / bot は除外**: ノイズ源を最初に切る
 - **委譲先に集約**: トリガー検出だけ責務とし、レビュー実行・コメント整形・メモリ更新は `/zeus:pr-review` に一任
 - **並列処理しない**: PR は順次処理（API レート・コメント順序の予測可能性）
-- **承認 UI はスキップしない**: 初版では `/zeus:pr-review` の `EnterPlanMode` 承認をスキップしない。誤投稿が出るより止まったほうが安全
-- **ループ起動は人間が行う**: `/zeus:pr-watch` 自身は `/loop` を呼ばない（暴走防止）
+- **デフォルトで loop**: 引数なし起動で即 loop（CodeRabbit と同じ常駐感）。`--once` で単発を明示
+- **二重ループ防止**: /loop からの再呼び出しは必ず `--once` 付き。Phase 9 をスキップしてネスト loop を防ぐ
+- **無人運用前提**: `/zeus:pr-review` 側も承認 UI 無しで自動投稿。誤投稿は fingerprint と memory フィルタで予防
 - **静かな失敗**: 認証失敗 / repo 解決失敗は短いエラーログだけ出して終了（`/loop` 中の例外連発を避ける）
 
 ## 個別 PR を手動でレビューしたい場合
@@ -199,14 +254,24 @@ Skill(skill="zeus:pr-review", args="{PR番号}")
 
 ## /loop との関係
 
-`/loop` は本プラグインに含まれる skill ではなく、Claude Code 側の機能。
-ユーザーが `/loop 5m /zeus:pr-watch` で起動することを推奨運用とする。間隔の目安:
+`/loop` は Claude Code に標準で含まれる skill。本スキルは Skill ツール経由で内部から `/loop` を起動する（ユーザーは `/loop` を直接打たなくてよい）。
 
-- **5 分**: アクティブなチームで PR が頻繁に動く時
-- **15 分**: 通常運用
-- **1 時間**: 低頻度な個人プロジェクト
+間隔の目安:
 
-`/loop` を停止すれば watch は止まる。`/zeus:pr-watch` を単発で呼べばその時点で 1 サイクルだけ走る。
+| interval | 用途 |
+|---|---|
+| `5m` (default) | アクティブなチームで PR が頻繁に動く時 |
+| `15m` | 通常運用 |
+| `1h` | 低頻度な個人プロジェクト |
+
+### 停止方法
+
+`/loop` 内に入った状態を抜けるには:
+
+1. **Esc キー**: プロンプト入力中なら /loop に割り込みを送れる
+2. **新規メッセージ送信**: 会話に何かを送ると /loop が中断される
+
+`/zeus:pr-watch --once` で実行した場合は loop を立てないので、その 1 サイクルが終わったら自然終了する。
 
 ## 他スキルとの使い分け
 
