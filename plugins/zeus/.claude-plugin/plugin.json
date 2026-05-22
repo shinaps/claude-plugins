@@ -1,7 +1,7 @@
 {
   "name": "zeus",
-  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画 + 実装 + レビュー + PR 監視 + PM プラグイン。/zeus:spec で要望から対話的に仕様書化 → /zeus:tech-survey で技術選定 → /zeus:plan で計画策定 → /zeus:dev で実装 + セルフレビュー → /zeus:review で単独レビュー → /zeus:pr-review で GitHub PR への CodeRabbit ライク自動レビュー投稿 → /zeus:pr-watch を /loop で常駐させて自動検知。/zeus:pm-init + /zeus:pm でプロジェクトの「いま何やってる / 次やる / 進め方 / 過去の意思決定」を .zeus/pm/ (チーム共有) と .zeus/pm-local/ (個人 / gitignore) にセッション横断で蓄積。PM ルール挿入先は team/both=CLAUDE.md, personal=CLAUDE.local.md と切り替え、personal モードでは PM の存在自体が git に残らない。9 体の zeus 専用エージェント同梱、9 スキル構成。",
-  "version": "0.9.1",
+  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画 + 実装 + レビュー + PR 監視 + PR レビュー対応 + PM プラグイン。/zeus:spec → /zeus:tech-survey → /zeus:plan → /zeus:dev → /zeus:review → /zeus:pr-review (CodeRabbit ライク自動レビュー + auto-resolve) → /zeus:pr-watch (内部 /loop で常駐) → /zeus:resolve-pr-review (受けた指摘を validator で妥当性判定して /zeus:plan に橋渡し or 返信 + resolve) → /zeus:pm-init + /zeus:pm でプロジェクトの「いま何やってる / 次やる / 進め方 / 過去の意思決定」を .zeus/pm/ (チーム共有) と .zeus/pm-local/ (個人 / gitignore) にセッション横断で蓄積。PM ルール挿入先は team/both=CLAUDE.md, personal=CLAUDE.local.md と切り替え。won't-fix / 方針は .zeus/review-memory.md に蓄積し他 PR でも自動適用。9 体の zeus 専用エージェント同梱、10 スキル構成。",
+  "version": "0.10.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"

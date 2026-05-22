@@ -157,6 +157,13 @@ inline comment 投稿前に、既存 review comments を全部取り、各コメ
    - マッチしたら除外し、`findings-filtered.md` の「メモリで除外」セクションに理由付きで記録
    - 残った指摘が **最終的に投稿される指摘**
 
+7. **修正済み判定（re-review モードのみ）— auto-resolve 対象を抽出**:
+   - 旧 zeus inline comments（前回投稿）から fingerprint 一覧を取得 → `old_fp_set`
+   - 新 findings（メモリ再フィルタ後の最終リスト）から fingerprint 一覧を取得 → `new_fp_set`
+   - `resolved_fp_set = old_fp_set - new_fp_set` を計算 → これが「ユーザーが対応した」と判定する集合
+   - 各 fingerprint について、対応する review comment の `databaseId` を控え、Phase 8 の resolve 処理に渡す
+   - `findings-filtered.md` の「auto-resolve 対象」セクションに該当 finding 一覧を理由 (`fingerprint not reproduced on re-review`) 付きで記録
+
 #### comment-response の場合
 
 `zeus-reviewer` は起動しない。代わりに本スキルのメインスレッドが各ユーザーコメントを LLM 判断で分類:
@@ -164,12 +171,14 @@ inline comment 投稿前に、既存 review comments を全部取り、各コメ
 | 分類 | 判断基準（自然言語マッチ + 文脈） | アクション |
 |---|---|---|
 | `policy` | 「方針」「規約」「うちは○○を使う」など、プロジェクト全体に効く判断 | `.zeus/review-memory.md` の `Project Conventions` に追記 |
-| `wont-fix` | 「これは意図的」「修正しない」「won't fix」「許容範囲」 | `.zeus/review-memory.md` の `Won't Fix Patterns` に追記 |
-| `fix-requested` | 「再レビューして」「修正したので確認」「もう一度見て」 | mode を `re-review` に切り替えて Phase 4 再走（コミットがあるなら） |
+| `wont-fix` | 「これは意図的」「修正しない」「won't fix」「許容範囲」 | `.zeus/review-memory.md` の `Won't Fix Patterns` に追記 **+ 該当スレッドを Phase 8 で resolve 対象に追加**（inline コメントへの返信であれば、その parent thread を resolve） |
+| `fix-requested` | 「再レビューして」「修正したので確認」「もう一度見て」 | mode を `re-review` に切り替えて Phase 4 再走（コミットがあるなら）。re-review の自動 resolve に乗せる |
 | `clarification` | 「なぜ？」「理由は？」など質問 | 該当 inline comment にスレッド返信で説明 |
 | `unrelated` | 上記いずれにも該当しない雑談 | 何もしない |
 
 複数コメントある場合は **時系列順に 1 件ずつ処理**。`policy` / `wont-fix` が混ざる場合は最後にまとめてメモリ更新を 1 回。
+
+`wont-fix` で resolve するのは **「inline review comment への返信」だった場合のみ**。トップレベル issue comment に won't-fix と書かれた場合はメモリ追記のみで、どのスレッドを閉じればいいか特定できないので resolve はしない（誤 resolve 防止）。
 
 ### Phase 6: メモリ更新（comment-response モードのみ）
 
@@ -290,6 +299,57 @@ _{severity-badge}_ | _{tag-badge}_
    - `gh api -X POST repos/:o/:r/pulls/:N/comments/{id}/replies` でスレッド返信
    - 処理済みコメントに 👀 (`eyes`) リアクションを付ける（重複処理防止）
 
+#### Phase 8b: スレッド auto-resolve（GraphQL）
+
+Phase 5 / Phase 6 で集めた `resolve 対象 comment id 集合` を GraphQL で resolve する。
+
+1. **REST comment id → GraphQL thread id のマッピングを取得**:
+
+   ```bash
+   gh api graphql -f query='
+     query($owner: String!, $name: String!, $number: Int!) {
+       repository(owner: $owner, name: $name) {
+         pullRequest(number: $number) {
+           reviewThreads(first: 100) {
+             nodes {
+               id
+               isResolved
+               comments(first: 1) {
+                 nodes { databaseId }
+               }
+             }
+           }
+         }
+       }
+     }
+   ' -F owner={owner} -F name={repo} -F number={N}
+   ```
+
+   `comments.nodes[0].databaseId` が REST API の comment id に対応する。thread.id が GraphQL node id。
+
+2. resolve 対象 comment id ごとに、対応する thread を検索 → `isResolved: false` なら resolve:
+
+   ```bash
+   gh api graphql -f query='
+     mutation($threadId: ID!) {
+       resolveReviewThread(input: {threadId: $threadId}) {
+         thread { id isResolved }
+       }
+     }
+   ' -F threadId={thread-node-id}
+   ```
+
+3. resolve 時、**resolve の理由を残すため返信コメントを 1 つ付けてから resolve** する（CodeRabbit の "✅ Addressed in commit XXX" 相当）:
+
+   - re-review で修正済み判定: 「✅ Addressed in {head-sha[:8]} (no longer flagged on re-review)」
+   - won't-fix 返信: 「✅ Marked as won't-fix per @{user}'s reply. Added to `.zeus/review-memory.md`.」
+
+   返信は `gh api -X POST repos/:o/:r/pulls/:N/comments/{id}/replies` で投稿してから resolve mutation を打つ。
+
+4. **既に resolved な thread はスキップ**（同じ resolve 操作を何度もしない）。GraphQL クエリの `isResolved` で判定。
+
+5. 失敗（GraphQL 権限不足など）は warning ログだけ出して続行。`isResolved` が更新されなくても致命的ではない。
+
 ### Phase 9: 結果報告
 
 ```
@@ -299,19 +359,23 @@ _{severity-badge}_ | _{tag-badge}_
 - Mode: {mode}
 - Reviewed SHA: {head-sha[:8]}
 - Inline comments posted: {N} (skipped {M} duplicates)
+- Auto-resolved threads: {R}
+  - re-review (修正済み判定): {a}
+  - comment-response (won't-fix 返信): {b}
 - Summary review: {url}
 - 確定指摘: Critical {n} / Major {n} / Nitpick {n} / Suggestion {n}
 - メモリ更新: {追記件数} ({.zeus/review-memory.md})
 
 ### 次アクション
 - レビュー結果を `/zeus:plan` で修正計画化したい場合: `/zeus:plan PR#{N} のレビュー指摘を修正`
-- 監視ループ起動: `/loop 5m /zeus:pr-watch`
+- 監視ループ起動: `/zeus:pr-watch`（5 分おき loop でデフォルト起動）
 ```
 
 ## 動作原則
 
 - **状態ファイル不要**: GitHub 側の HTML マーカーから状態を再構築
 - **fingerprint で重複排除**: 同じ指摘を 2 回投稿しない（再レビュー時の冗長化を防ぐ）
+- **fingerprint で auto-resolve**: re-review で同 fingerprint が再出しなければ「修正済み」と判定して該当スレッドを resolve（GraphQL）。won't-fix 返信されたスレッドも resolve
 - **メモリで継続学習**: won't-fix / プロジェクト方針を `.zeus/review-memory.md` に蓄積、他 PR でも活用
 - **メモリ自動コミットはしない**: `git add` までで止めてユーザーに案内（CLAUDE.md の add / commit 分離ルールに準拠）
 - **無人運用 / 投稿前承認なし**: `/zeus:pr-watch` から /loop で常駐運用する前提のため、投稿前 UI 承認は **挟まない**。誤投稿の予防は fingerprint と memory フィルタで担保。事前に内容だけ見たい場合は `/zeus:review <PR番号>` を使う（こちらはローカル保存のみで投稿しない）
@@ -320,6 +384,7 @@ _{severity-badge}_ | _{tag-badge}_
 - **bot コメントは無視**: コラボレータの非 bot コメントだけを「ユーザーコメント」として扱う
 - **draft PR は確認後**: 自動 watch から draft をレビューするとノイズになるため確認を挟む
 - **closed / merged はスキップ**: 即終了
+- **resolve 時は理由コメントを残す**: ✅ Addressed in {sha} / ✅ Marked as won't-fix per @{user} の返信を付けてから resolve（後追跡可能）
 
 ## 他スキルとの使い分け
 

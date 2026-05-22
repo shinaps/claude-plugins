@@ -1,7 +1,7 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 → PM までを `spec.md` / `plan.md` / `.zeus/review-memory.md` / `.zeus/pm/` を介して連携する 9 スキル構成。
+要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 → PR レビュー対応 → PM までを `spec.md` / `plan.md` / `.zeus/review-memory.md` / `.zeus/pm/` を介して連携する 10 スキル構成。
 
 ## 構成
 
@@ -14,6 +14,7 @@
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
 | `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用。**re-review で再出しない指摘や won't-fix 返信スレッドは GraphQL で auto-resolve**（✅ Addressed in {sha} / Marked as won't-fix の返信付き） |
 | `/zeus:pr-watch [interval\|--once]` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**起動するだけで内部 `/loop` を自動セットアップ**（default 5 分、`--once` で 1 サイクル）。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等運用） |
+| `/zeus:resolve-pr-review <PR番号>` | PR で受けたレビューコメント（zeus / CodeRabbit / 人間レビュアー全部）を `zeus-review-validator` で妥当性判定し、confirmed は `/zeus:plan` + `/zeus:dev` に委譲、false-positive / won't-fix / out-of-scope は理由付きで返信 + スレッド resolve、clarification は説明返信のみ。**push はしない**（CLAUDE.md 準拠） |
 | `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成。**team / both は `CLAUDE.md`、personal は `CLAUDE.local.md`** にマーカー付きで PM 利用ルールを挿入（personal モードでは PM の存在自体が git に残らない） |
 | `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
@@ -174,6 +175,10 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 7. **CodeRabbit ライクな inline + summary コメント** を整形（投稿前承認 UI は **挟まず即投稿**、unattended 運用前提）
 8. `gh api` で inline comment 個別投稿 + summary review 投稿
 9. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
+10. **auto-resolve（GraphQL `resolveReviewThread`）**:
+    - re-review で旧 fingerprint が新リストに無い → 「✅ Addressed in {sha} (no longer flagged on re-review)」と返信してから resolve
+    - won't-fix 返信のスレッド → 「✅ Marked as won't-fix per @{user}. Added to `.zeus/review-memory.md`.」と返信してから resolve
+    - 既に resolved なスレッドはスキップ（冪等）
 
 事前にレビュー内容だけ確認したい場合は `/zeus:review <PR番号>`（投稿しないローカル保存型）を使う。
 
