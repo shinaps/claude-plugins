@@ -1,7 +1,7 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー までを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
+要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 までを `spec.md` / `plan.md` / `.zeus/review-memory.md` を介して連携する 7 スキル構成。
 
 ## 構成
 
@@ -12,6 +12,8 @@
 | `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
 | `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
+| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用 |
+| `/zeus:pr-watch` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**トリガーコメント不要で全 open PR を自動レビュー**（CodeRabbit 同等運用）。`/loop 5m /zeus:pr-watch` で常駐 |
 
 ## 同梱エージェント (8 体)
 
@@ -148,6 +150,61 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
    - **PR コメント投稿**（PR モードのみ）
    - **ローカル保存のみで終了**
 
+### 4. GitHub PR への自動レビュー投稿
+
+```
+/zeus:pr-review 42                                          # 現在の repo の PR #42
+/zeus:pr-review https://github.com/owner/repo/pull/42       # 他 repo の PR
+```
+
+`/zeus:pr-review` が以下を自動実行する:
+
+1. PR 取得 + 認証チェック（`gh` CLI）
+2. `.zeus/review-memory.md`（プロジェクトメモリ）を読み込み
+3. **モード自動判定**:
+   - `fresh`: 過去に zeus レビュー無し → 全 diff をレビュー
+   - `re-review`: zeus レビュー済みだが head SHA が変わった → 前回レビュー以降の diff だけレビュー
+   - `comment-response`: SHA は同じだがユーザーが新規コメント → コメント分類して won't-fix / 方針はメモリへ、修正要求は再レビュー
+4. `zeus-reviewer` + `zeus-review-validator` で精度の高い指摘リスト作成
+5. メモリの `Won't Fix Patterns` / `Project Conventions` で再フィルタ（重複指摘の排除）
+6. 依存マニフェスト変更があれば `zeus-tech-surveyor` で追加調査（必要時のみ）
+7. **CodeRabbit ライクな inline + summary コメント** を整形し承認 UI（`EnterPlanMode`）で確認
+8. 承認後、`gh api` で inline comment 個別投稿 + summary review 投稿
+9. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
+
+#### プロジェクトメモリ `.zeus/review-memory.md`
+
+`/zeus:pr-review` の comment-response モードで、ユーザーの返信が:
+
+- 「これはプロジェクト方針」「うちは○○を使う」→ `Project Conventions` に追記
+- 「これは意図的」「won't fix」「修正しない」→ `Won't Fix Patterns` に追記
+
+として自動的にこのファイルに蓄積される。**他 PR のレビューでも自動で読み込まれ、同じ指摘を繰り返さない**。
+チームで共有したい場合は `.zeus/review-memory.md` をコミットすればよい（自動コミットはしない、`git add` まで）。
+
+### 5. PR 監視ループ（常駐レビュアー化）
+
+```
+/loop 5m /zeus:pr-watch                                     # 5 分おきに監視
+/loop 15m /zeus:pr-watch                                    # 通常運用 (15 分)
+/zeus:pr-watch                                              # 単発スキャン
+```
+
+`/zeus:pr-watch` が以下を自動実行する:
+
+1. open かつ非 draft かつ非 bot 作成の PR を `gh pr list` で列挙
+2. 各 PR について以下のトリガーを評価:
+   - `fresh-review`: zeus レビューがまだ無い PR（**トリガーコメント不要、全 open PR が対象**）
+   - `re-review`: zeus レビュー済みだが head SHA が変わった
+   - `comment-response`: zeus レビュー済みで、SHA は同じだが新規ユーザーコメントあり
+3. アクション対象が **6 件以上** あれば `AskUserQuestion` で「全件処理 / 上位 5 件 / キャンセル」を確認（初回スパム防止）
+4. トリガー検出した PR を `/zeus:pr-review <N>` に順次委譲
+5. 状態は **すべて GitHub 側の HTML マーカーから再構築** するためローカル状態ファイル無し → ループが落ちても再起動で完全復旧
+
+PR を open するだけで次のスキャンサイクルで自動レビューが走る（コメントトリガー不要）。
+レビューに対してユーザーが「これは方針」と返信すれば、次サイクルで `.zeus/review-memory.md` に学習が蓄積される。
+特定 PR を即時レビューしたい場合は `/zeus:pr-review 42` で直接呼び出すこともできる。
+
 ## 出力ディレクトリ
 
 `/zeus:plan` `/zeus:dev` の生成物:
@@ -195,6 +252,25 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 ├── survey-validated.md     ← zeus-survey-validator の検証済みレポート
 ├── tech-decision.md        ← 採用決定の記録（独立保存選択時のみ）
 └── plan-handoff.md         ← /zeus:plan へ橋渡し時の引き継ぎ
+```
+
+`/zeus:pr-review` の生成物:
+
+```
+.claude/zeus/pr-reviews/{ts}-{repo-slug}-{N}-{mode}/
+├── input.md                ← PR 情報・diff・モード判定の根拠
+├── memory-snapshot.md      ← その時点の .zeus/review-memory.md
+├── review.md               ← zeus-reviewer の一次レポート
+├── review-validated.md     ← zeus-review-validator の検証済み指摘
+├── findings-filtered.md    ← メモリ照合で除外/減衰した指摘の最終リスト
+├── comments-payload.md     ← 投稿前の inline + summary 完成形プレビュー
+└── memory-diff.md          ← comment-response モード時のメモリ追記差分
+```
+
+プロジェクトメモリ（リポジトリルートに作成。git で共有可能）:
+
+```
+.zeus/review-memory.md      ← Project Conventions / Won't Fix Patterns を蓄積
 ```
 
 ## ultraplan / feature-dev からの移行

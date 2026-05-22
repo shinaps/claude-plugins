@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 実装計画 (/zeus:plan) → 実装＋セルフレビュー (/zeus:dev) → レビュー単発 (/zeus:review) を spec.md / plan.md で連携する 5 スキル構成。8 体の zeus 専用エージェント同梱。",
-      "version": "0.6.4",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装 + PR 監視プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 実装計画 (/zeus:plan) → 実装＋セルフレビュー (/zeus:dev) → レビュー単発 (/zeus:review) → GitHub PR への CodeRabbit ライク自動レビュー (/zeus:pr-review) → /loop で常駐させる PR 監視 (/zeus:pr-watch)。won't-fix / プロジェクト方針は .zeus/review-memory.md に蓄積して他 PR でも活用。8 体の zeus 専用エージェント同梱、7 スキル構成。",
+      "version": "0.7.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
