@@ -1,7 +1,7 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 までを `spec.md` / `plan.md` / `.zeus/review-memory.md` を介して連携する 7 スキル構成。
+要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 → PM までを `spec.md` / `plan.md` / `.zeus/review-memory.md` / `.zeus/pm/` を介して連携する 9 スキル構成。
 
 ## 構成
 
@@ -14,8 +14,10 @@
 | `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
 | `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用 |
 | `/zeus:pr-watch` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**トリガーコメント不要で全 open PR を自動レビュー**（CodeRabbit 同等運用）。`/loop 5m /zeus:pr-watch` で常駐 |
+| `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成し、CLAUDE.md にマーカー付きで PM 利用ルールを挿入 |
+| `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
-## 同梱エージェント (8 体)
+## 同梱エージェント (9 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
@@ -29,6 +31,7 @@
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー（confidence ≥ 80 でフィルタ） |
 | `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証（false positive 排除 + 追加発見） |
+| `zeus-pm` | `.zeus/pm/` + `.zeus/pm-local/` を読んで brief / sync / decision の 3 モードで PM 状態を整形（書き換えはスキル側が責任を持つ） |
 
 ## インストール
 
@@ -205,6 +208,45 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 レビューに対してユーザーが「これは方針」と返信すれば、次サイクルで `.zeus/review-memory.md` に学習が蓄積される。
 特定 PR を即時レビューしたい場合は `/zeus:pr-review 42` で直接呼び出すこともできる。
 
+### 6. プロジェクト PM（セッション横断のコンテキスト管理）
+
+```
+/zeus:pm-init                    # interactive: team / personal / both を選択
+/zeus:pm-init team               # チーム共有 (commit)
+/zeus:pm-init personal           # 個人 (gitignore)
+
+/zeus:pm                         # ブリーフィング: いま何やってる / 次やる / 進め方
+/zeus:pm sync                    # 直近の git 活動から state.md 更新案
+/zeus:pm decision <text>         # 意思決定ログを decisions.md に追記
+/zeus:pm done <task>             # state.md の進行中タスクを完了マーク
+/zeus:pm next <text>             # roadmap.md に項目追加
+/zeus:pm status                  # ファイル別の軽量サマリ
+```
+
+`/zeus:pm-init` を 1 回実行すると以下が整う:
+
+1. `.zeus/pm/`（team）または `.zeus/pm-local/`（personal、gitignore 済み）に 4 ファイルのスケルトン生成:
+   - `state.md` — 現在のフォーカス、進行中タスク、ブロッカー、最近完了
+   - `roadmap.md` — 次にやる候補（短期 / 中期 / 長期 / 却下）
+   - `decisions.md` — 意思決定ログ（なぜ X を選んだか）
+   - `workflow.md` — このプロジェクトの進め方・規約
+2. `CLAUDE.md` に `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで PM 利用ルールを挿入
+3. ルールに従って Claude が **毎セッション開始時に PM を自動参照** し、作業区切りで `/zeus:pm sync` `/zeus:pm decision` を呼ぶ習慣を持つ
+
+#### 「ユーザーが意識しなくても PM が把握する」を実現する仕組み
+
+- **セッション開始時**: Claude が CLAUDE.md を読み → ルールに従って `.zeus/pm/state.md` を自動参照 → 曖昧な質問は PM の内容から答える
+- **作業完了時**: CLAUDE.md のルールにより、タスク完了 / 意思決定 / 新タスク追加のタイミングで Claude が `/zeus:pm done` 等の呼び出しを提案する
+- **personal overlay**: `.zeus/pm-local/` がある場合は team の同名ファイルより優先される（チーム共有 + 個人スクラッチを両立）
+
+#### team / personal / both の使い分け
+
+| モード | 用途 |
+|---|---|
+| `team` | チーム共有の公式コンテキスト。`/zeus:pm-init team` で `.zeus/pm/` を作成、git commit して共有 |
+| `personal` | 個人プロジェクト or 公にしたくない作業メモ。`/zeus:pm-init personal` で `.zeus/pm-local/` を作成、自動で .gitignore に登録 |
+| `both` | OSS / 複数人プロジェクトで「チーム共有の公式情報」と「個人的なメモ・思考」を併用したい場合 |
+
 ## 出力ディレクトリ
 
 `/zeus:plan` `/zeus:dev` の生成物:
@@ -272,6 +314,23 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 ```
 .zeus/review-memory.md      ← Project Conventions / Won't Fix Patterns を蓄積
 ```
+
+Zeus PM の生成物（`/zeus:pm-init` がスケルトン生成、`/zeus:pm` で日常更新）:
+
+```
+.zeus/pm/                   ← team モード (git commit)
+├── state.md                ← 現在のフォーカス・進行中・ブロッカー・最近完了
+├── roadmap.md              ← 次にやる候補 (短期 / 中期 / 長期 / 却下)
+├── decisions.md            ← 意思決定ログ (時系列降順)
+└── workflow.md             ← 進め方・規約 (ブランチ運用 / レビュー / デプロイ)
+
+.zeus/pm-local/             ← personal モード (gitignore)
+├── state.md                ← personal overlay (team を上書き)
+├── scratch.md              ← 走り書き・アイデア
+└── ...                     ← 他は personal だけのファイル
+```
+
+CLAUDE.md には `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで PM 利用ルールが挿入され、Claude がセッション開始時に PM を自動参照する。
 
 ## ultraplan / feature-dev からの移行
 
