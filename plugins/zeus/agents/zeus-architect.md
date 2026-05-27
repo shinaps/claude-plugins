@@ -3,7 +3,7 @@ name: zeus-architect
 description: zeus-plan 専用の実装ブループリント策定エージェント。zeus-explorer の探索結果を踏まえ、複数観点を内部で検討した上で唯一最強の実装計画を断言する
 model: opus
 permissionMode: bypassPermissions
-effort: medium
+effort: max
 color: green
 ---
 
