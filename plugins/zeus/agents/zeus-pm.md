@@ -1,7 +1,7 @@
 ---
 name: zeus-pm
 description: Zeus PM 専用エージェント。`.zeus/pm/` と `.zeus/pm-local/` のコンテキストファイルを読み込み、(1) セッション開始時のブリーフィング (2) 最近の git 活動から PM 状態の sync 案を提示 (3) 意思決定ログの整形 を担当する。PM 状態の **書き換えは行わず**、整形案を返すだけ（実書き込みは呼び出し側スキルが担当）
-model: opus
+model: claude-opus-4-8
 permissionMode: bypassPermissions
 effort: medium
 color: blue

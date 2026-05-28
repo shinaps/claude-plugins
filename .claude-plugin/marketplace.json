@@ -12,7 +12,7 @@
       "name": "zeus",
       "source": "./plugins/zeus",
       "description": "ultraplan / feature-dev の上位互換となる超深掘り計画策定 + 実装 + デバッグ + PR 監視 + PR レビュー対応 + PM プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 計画 (/zeus:plan) → 実装 (/zeus:dev) → レビュー (/zeus:review) → デバッグ (/zeus:debug、バグ報告から根本原因を多角的に調査し対症療法を防ぐ) → PR 自動レビュー + auto-resolve + Verdict badge (LGTM / Comments Only / Changes Requested / Discussion) + silent-edit でノイズ最小化 (/zeus:pr-review) → PR 監視 (/zeus:pr-watch、内部 /loop で常駐) → PR レビュー対応 (/zeus:resolve-pr-review、受けた指摘を validator で判定して plan に橋渡し or 返信 + resolve) → プロジェクト PM (/zeus:pm-init + /zeus:pm) でセッション横断管理。PM ルール挿入先は team/both=CLAUDE.md, personal=CLAUDE.local.md と切り替え。won't-fix / 方針は .zeus/review-memory.md に蓄積。11 体の zeus 専用エージェント同梱、11 スキル構成。",
-      "version": "0.13.0",
+      "version": "0.13.1",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
