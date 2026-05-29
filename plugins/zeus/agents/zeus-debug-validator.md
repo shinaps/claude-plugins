@@ -1,7 +1,7 @@
 ---
 name: zeus-debug-validator
 description: zeus-debug 専用の仮説検証エージェント。zeus-debugger の仮説を実コードと照合し、root-cause / contributing-factor / red-herring / needs-reproduction に分類する
-model: claude-opus-4-8
+model: opus
 permissionMode: bypassPermissions
 effort: xhigh
 color: gray

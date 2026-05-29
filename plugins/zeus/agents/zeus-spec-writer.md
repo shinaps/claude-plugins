@@ -1,7 +1,7 @@
 ---
 name: zeus-spec-writer
 description: zeus-spec 専用の仕様書作成エージェント。ヒアリングで収集した情報を、構造化された仕様書（機能要件 / 非機能要件 / スコープ / 制約 / 受け入れ条件）に整理する
-model: claude-opus-4-8
+model: opus
 permissionMode: bypassPermissions
 effort: medium
 color: pink

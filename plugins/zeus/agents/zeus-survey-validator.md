@@ -1,7 +1,7 @@
 ---
 name: zeus-survey-validator
 description: zeus-tech-survey 専用の調査妥当性検証エージェント。zeus-tech-surveyor のレポートを受け取り、出典 URL を WebFetch で再確認しながら情報の鮮度・出典の妥当性・主張の正確性を検証する
-model: claude-opus-4-8
+model: opus
 permissionMode: bypassPermissions
 effort: xhigh
 color: yellow

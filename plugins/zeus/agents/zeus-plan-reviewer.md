@@ -1,7 +1,7 @@
 ---
 name: zeus-plan-reviewer
 description: zeus-plan 専用の第三者プランレビューエージェント。zeus-architect が出した実装計画を、要件カバー度・設計妥当性・実装可能性・リスクの観点で批判的にレビューし、修正提案を返す
-model: claude-opus-4-8
+model: opus
 permissionMode: bypassPermissions
 effort: xhigh
 color: purple
