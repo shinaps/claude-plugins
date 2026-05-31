@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグ + PM プラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 計画+実装+セルフレビュー (/zeus:dev、単一スキルで explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical/Warning 自動修正まで完走) → 単独レビュー (/zeus:review、修正実装は /zeus:dev 橋渡し) → デバッグ (/zeus:debug、バグ報告から根本原因を多角的に調査し対症療法を防ぐ) → プロジェクト PM (/zeus:pm-init + /zeus:pm) でセッション横断管理。PM ルール挿入先は team/both=CLAUDE.md, personal=CLAUDE.local.md と切り替え。設計の核は「ユーザーインタラクション最小」: EnterPlanMode を一切使わず、AskUserQuestion での要件ヒヤリングも廃止しているため bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。11 体の zeus 専用エージェント同梱、7 スキル構成。",
-      "version": "1.0.0",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 計画+実装+セルフレビュー (/zeus:dev、単一スキルで explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical/Warning 自動修正まで完走) → 単独レビュー (/zeus:review、修正実装は /zeus:dev 橋渡し) → デバッグ (/zeus:debug、バグ報告から根本原因を多角的に調査し対症療法を防ぐ)。設計の核は「ユーザーインタラクション最小」: EnterPlanMode を一切使わず、AskUserQuestion での要件ヒヤリングも廃止しているため bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。10 体の zeus 専用エージェント同梱、5 スキル構成。v2.0.0 BREAKING: PM 機能は別プラグイン pm に分離 (移行手順は README 参照)。",
+      "version": "2.0.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
@@ -28,6 +28,27 @@
         "agents",
         "ultraplan",
         "feature-dev"
+      ]
+    },
+    {
+      "name": "pm",
+      "source": "./plugins/pm",
+      "description": "プロジェクト継続コンテキスト管理プラグイン。「いま何やってる / 次やる / 進め方 / 過去の意思決定」をセッション横断で .pm/ (チーム共有 / commit) と .pm-local/ (個人 / gitignore) に蓄積する。3 スキル構成: /pm:init (初期化、CLAUDE.md or CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入)、/pm:sync (直近の git 活動から state.md / decisions.md / roadmap.md への更新案を作成して適用、decision / done / next の単発操作も sync に統合)、/pm:ask (読み取り専用窓口: ブリーフィング + 軽量サマリ + 「先週何やった?」「あの決定の理由は?」などの自由質問に PM ファイル + git log から回答)。personal モードでは PM の存在自体が git に残らない設計。pm-agent 1 体同梱。zeus などの他プラグインから独立して動作。",
+      "version": "0.1.0",
+      "author": {
+        "name": "shinaps",
+        "email": "ryuta@shinaps.jp"
+      },
+      "homepage": "https://github.com/shinaps/claude-plugins",
+      "repository": "https://github.com/shinaps/claude-plugins",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "project-management",
+        "pm",
+        "context",
+        "memory",
+        "session-continuity"
       ]
     }
   ]

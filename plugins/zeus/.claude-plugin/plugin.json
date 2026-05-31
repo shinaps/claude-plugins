@@ -1,7 +1,7 @@
 {
   "name": "zeus",
-  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画+実装+セルフレビュー一気通貫 + 単独レビュー + デバッグ + PM プラグイン。/zeus:spec → /zeus:tech-survey → /zeus:dev (計画策定 → 実装 → セルフレビューまで単一スキルで完走) → /zeus:review (単独レビュー、修正実装は /zeus:dev に橋渡し) → /zeus:debug (バグ報告から根本原因を多角的に調査し対症療法を防ぐ、修正は /zeus:dev に橋渡し) → /zeus:pm-init + /zeus:pm でプロジェクトの「いま何やってる / 次やる / 進め方 / 過去の意思決定」を .zeus/pm/ (チーム共有) と .zeus/pm-local/ (個人 / gitignore) にセッション横断で蓄積。PM ルール挿入先は team/both=CLAUDE.md, personal=CLAUDE.local.md と切り替え。設計の核は「ユーザーインタラクション最小」: EnterPlanMode を一切使わず、AskUserQuestion での要件ヒヤリングも廃止しているため bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。11 体の zeus 専用エージェント同梱、7 スキル構成。",
-  "version": "1.0.0",
+  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画+実装+セルフレビュー一気通貫 + 単独レビュー + デバッグプラグイン。/zeus:spec → /zeus:tech-survey → /zeus:dev (計画策定 → 実装 → セルフレビューまで単一スキルで完走) → /zeus:review (単独レビュー、修正実装は /zeus:dev に橋渡し) → /zeus:debug (バグ報告から根本原因を多角的に調査し対症療法を防ぐ、修正は /zeus:dev に橋渡し)。設計の核は「ユーザーインタラクション最小」: EnterPlanMode を一切使わず、AskUserQuestion での要件ヒヤリングも廃止しているため bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。10 体の zeus 専用エージェント同梱、5 スキル構成。v2.0.0 BREAKING: PM 機能は別プラグイン pm に分離 (移行手順は README 参照)。",
+  "version": "2.0.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"

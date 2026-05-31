@@ -1,9 +1,11 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 → 技術選定 → 計画策定 + 実装 + セルフレビュー → デバッグ → PM までを `spec.md` / `plan.md` / `.zeus/pm/` を介して連携する 7 スキル構成。
+要件定義 → 技術選定 → 計画策定 + 実装 + セルフレビュー → デバッグまでを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
 
 **設計の核**: ユーザーインタラクション最小（`EnterPlanMode` を一切使わない）。`bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る。
+
+> **v2.0.0 BREAKING**: プロジェクト PM 機能は別プラグイン [`pm`](../pm/) に分離されました。`/zeus:pm` `/zeus:pm-init` は削除されています。移行方法は本 README 末尾の「v2.0.0 移行ガイド」を参照してください。
 
 ## 構成
 
@@ -14,10 +16,8 @@
 | `/zeus:dev <task or plan.md>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` でコードベース調査 → `zeus-architect` で実装ブループリント策定 → `zeus-plan-reviewer` で第三者レビュー → 実装 → `zeus-reviewer` でセルフレビュー → Critical/Warning 自動修正までを単一スキルで完走。`EnterPlanMode` / `AskUserQuestion` の要件ヒヤリングは使わない |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
-| `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成。**team / both は `CLAUDE.md`、personal は `CLAUDE.local.md`** にマーカー付きで PM 利用ルールを挿入（personal モードでは PM の存在自体が git に残らない） |
-| `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
-## 同梱エージェント (11 体)
+## 同梱エージェント (10 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
@@ -33,7 +33,6 @@
 | `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証（false positive 排除 + 追加発見） |
 | `zeus-debugger` | 症状からコードを追跡し、WebSearch / GitHub Issue 検索で外部情報を集めて根本原因の仮説を立案 |
 | `zeus-debug-validator` | debugger の仮説を実コードと照合し、root-cause / contributing-factor / red-herring / needs-reproduction に分類 |
-| `zeus-pm` | `.zeus/pm/` + `.zeus/pm-local/` を読んで brief / sync / decision の 3 モードで PM 状態を整形（書き換えはスキル側が責任を持つ） |
 
 ## インストール
 
@@ -50,6 +49,12 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 
 ```
 /plugin install zeus
+```
+
+PM 機能も使いたい場合は別途 `pm` プラグインをインストール:
+
+```
+/plugin install pm
 ```
 
 ## 使い方
@@ -158,48 +163,6 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 3. `zeus-debug-validator` で各仮説を実コード照合して root-cause / contributing-factor / red-herring / needs-reproduction に分類
 4. 確定した根本原因を `/zeus:dev` に橋渡しして修正実装
 
-### 4. プロジェクト PM（セッション横断のコンテキスト管理）
-
-```
-/zeus:pm-init                    # interactive: team / personal / both を選択
-/zeus:pm-init team               # チーム共有 (commit)
-/zeus:pm-init personal           # 個人 (gitignore)
-
-/zeus:pm                         # ブリーフィング: いま何やってる / 次やる / 進め方
-/zeus:pm sync                    # 直近の git 活動から state.md 更新案
-/zeus:pm decision <text>         # 意思決定ログを decisions.md に追記
-/zeus:pm done <task>             # state.md の進行中タスクを完了マーク
-/zeus:pm next <text>             # roadmap.md に項目追加
-/zeus:pm status                  # ファイル別の軽量サマリ
-```
-
-`/zeus:pm-init` を 1 回実行すると以下が整う:
-
-1. `.zeus/pm/`（team）または `.zeus/pm-local/`（personal、gitignore 済み）に 4 ファイルのスケルトン生成:
-   - `state.md` — 現在のフォーカス、進行中タスク、ブロッカー、最近完了
-   - `roadmap.md` — 次にやる候補（短期 / 中期 / 長期 / 却下）
-   - `decisions.md` — 意思決定ログ（なぜ X を選んだか）
-   - `workflow.md` — このプロジェクトの進め方・規約
-2. PM 利用ルールをマーカー付きで挿入（モード別）:
-   - `team` / `both`: `CLAUDE.md` に挿入（チーム全員に効く、commit される）
-   - `personal`: **`CLAUDE.local.md`** に挿入（Claude Code 公式の local override、gitignore 推奨）
-3. `.gitignore` を自動更新（personal モードでは `.zeus/pm-local/` と `CLAUDE.local.md` を追加）
-4. ルールに従って Claude が **毎セッション開始時に PM を自動参照** し、作業区切りで `/zeus:pm sync` `/zeus:pm decision` を呼ぶ習慣を持つ
-
-#### 「ユーザーが意識しなくても PM が把握する」を実現する仕組み
-
-- **セッション開始時**: Claude が `CLAUDE.md`（と存在すれば `CLAUDE.local.md`）を読み → ルールに従って `.zeus/pm/state.md` を自動参照 → 曖昧な質問は PM の内容から答える
-- **作業完了時**: ルールにより、タスク完了 / 意思決定 / 新タスク追加のタイミングで Claude が `/zeus:pm done` 等の呼び出しを提案する
-- **personal overlay**: `.zeus/pm-local/` がある場合は team の同名ファイルより優先される（チーム共有 + 個人スクラッチを両立）
-
-#### team / personal / both の使い分け
-
-| モード | コンテキスト | ルール挿入先 | git | 用途 |
-|---|---|---|---|---|
-| `team` | `.zeus/pm/` | `CLAUDE.md` | 両方 commit | チーム共有の公式コンテキスト |
-| `personal` | `.zeus/pm-local/` | `CLAUDE.local.md` | **両方 gitignore** | 個人作業 or チームリポジトリで自分だけ PM を回したい時。**PM の存在自体が git に残らない** |
-| `both` | 両方 | `CLAUDE.md`（team ルール） | mixed | チーム共有 + 個人 overlay。personal が同名ファイルで上書き |
-
 ## 出力ディレクトリ
 
 `/zeus:dev` の生成物:
@@ -259,37 +222,53 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 └── plan-handoff.md         ← /zeus:dev へ橋渡し時の修正タスク記述
 ```
 
-Zeus PM の生成物（`/zeus:pm-init` がスケルトン生成、`/zeus:pm` で日常更新）:
+## v2.0.0 移行ガイド
 
-```
-.zeus/pm/                   ← team モード (git commit)
-├── state.md                ← 現在のフォーカス・進行中・ブロッカー・最近完了
-├── roadmap.md              ← 次にやる候補 (短期 / 中期 / 長期 / 却下)
-├── decisions.md            ← 意思決定ログ (時系列降順)
-└── workflow.md             ← 進め方・規約 (ブランチ運用 / レビュー / デプロイ)
+v1.x まで zeus が提供していた PM 機能 (`/zeus:pm` `/zeus:pm-init` `zeus-pm` エージェント) は **別プラグイン [`pm`](../pm/) に分離** されました。zeus は「開発フロー」に集中するためのリストラ。
 
-.zeus/pm-local/             ← personal モード (gitignore)
-├── state.md                ← personal overlay (team を上書き)
-├── scratch.md              ← 走り書き・アイデア
-└── ...                     ← 他は personal だけのファイル
-```
+### マイグレーション手順
 
-PM 利用ルールは `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マーカーで以下のファイルに挿入される（モード別）:
+1. **新 `pm` プラグインをインストール**:
+   ```
+   /plugin install pm
+   ```
 
-- team / both: `CLAUDE.md`（プロジェクトルート、commit）
-- personal: `CLAUDE.local.md`（プロジェクトルート、gitignore）
+2. **PM コンテキストファイルを移動** (旧 `.zeus/pm/` → 新 `.pm/`):
+   ```bash
+   mv .zeus/pm .pm
+   mv .zeus/pm-local .pm-local   # 存在すれば
+   ```
 
-Claude がセッション開始時に該当ファイルを読むことで PM を自動参照する。再 init はマーカー内だけを安全に置換するため、ユーザーが追加した独自セクションは保持される。
+3. **CLAUDE.md / CLAUDE.local.md の旧マーカーを削除**:
+   旧 `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` の範囲を削除
 
-## ultraplan / feature-dev / 旧 /zeus:plan からの移行
+4. **新 PM プラグインで再初期化**:
+   ```
+   /pm:init team      # または personal / both
+   ```
+   これで新マーカー `<!-- pm:start --> ... <!-- pm:end -->` が挿入される
+
+### コマンド対応表
+
+| 旧 | 新 |
+|---|---|
+| `/zeus:pm-init` | `/pm:init` |
+| `/zeus:pm` (引数なし) | `/pm:ask` |
+| `/zeus:pm status` | `/pm:ask status` |
+| `/zeus:pm sync` | `/pm:sync` |
+| `/zeus:pm decision <text>` | コミットメッセージや plan.md に書いて `/pm:sync` で拾う |
+| `/zeus:pm done <task>` | タスク完了をコミットして `/pm:sync` で拾う |
+| `/zeus:pm next <text>` | roadmap.md を直接編集するか TODO コメントとして書いて `/pm:sync` で拾う |
+
+新 `pm` プラグインでは `decision` / `done` / `next` の個別コマンドは廃止され、すべて `/pm:sync` が git 活動から自動判別する設計になっています。
+
+### ultraplan / feature-dev / 旧 /zeus:plan からの移行
 
 | 旧 | 新 |
 |---|---|
 | `/ultraplan <task>` | `/zeus:dev <task>` |
 | `/feature-dev <task>` | `/zeus:dev <task>` |
 | `/zeus:plan <task>` + `/zeus:dev <plan.md>` の 2 ステップ | `/zeus:dev <task>` の 1 ステップ |
-
-旧 `/zeus:plan` で作成済みの `plan.md` がある場合は `/zeus:dev <path/to/plan.md>` で実装フェーズだけ実行できる。
 
 ## 設計原則
 
@@ -299,6 +278,7 @@ Claude がセッション開始時に該当ファイルを読むことで PM を
 - **統合プランは単一案**: A/B 案を残すのは plan-reviewer で「未解決リスク」として明記された場合だけ
 - **Critical / Warning は自動修正**: Info のみ記録扱い
 - **シンプル優先**: 観点を細分化せず、1 エージェントに統合観点を持たせる
+- **責務の分離**: PM のような「開発フロー外の機能」は別プラグインに切り出す（v2.0.0 での pm 分離）
 
 ## ライセンス
 

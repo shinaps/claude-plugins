@@ -56,7 +56,8 @@ claude-plugins/
 
 ## 既存プラグイン
 
-- `plugins/zeus/` — feature-dev 上位互換。spec / tech-survey / plan / dev / review の 5 スキル構成
+- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / debug の 5 スキル構成
+- `plugins/pm/` — プロジェクト継続コンテキスト管理プラグイン。init / sync / ask の 3 スキル構成。zeus とは独立して動作
 
 ## 関連リンク
 
