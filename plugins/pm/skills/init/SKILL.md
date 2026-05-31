@@ -1,28 +1,35 @@
 ---
 name: init
-description: プロジェクトに PM（プロジェクト継続コンテキスト管理）を初期化する。`.pm/`（チーム共有 / commit）または `.pm-local/`（個人 / gitignore）を生成し、4 ファイル（state / roadmap / decisions / workflow）のスケルトンを書く。team は CLAUDE.md、personal は CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。**team モードでは PM スキル (ask / sync) と pm-agent をプロジェクト直下の `.claude/skills/pm-ask/` `.claude/skills/pm-sync/` `.claude/agents/pm-agent.md` に転写し、pm プラグイン未インストールのチームメンバーも `/pm-ask` `/pm-sync` で PM を呼べる** (git pull で配布)。personal モードでは PM の存在自体が git に残らない設計。チーム共有と個人 overlay を併用したい場合は team → personal を別個に実行する
-argument-hint: <なし | team | personal>
+description: プロジェクトに PM（プロジェクト継続コンテキスト管理）を初期化する。3 モード構成 — solo は .pm/ を commit + CLAUDE.md にルール挿入 + スキル転写なし (1 人プロジェクト or 全員 pm プラグインを入れる前提のチーム向け)、team は solo に加えて PM スキル (ask / sync) と pm-agent を .claude/skills/pm-ask/ .claude/skills/pm-sync/ .claude/agents/pm-agent.md に転写し pm プラグイン未インストールのチームメンバーも /pm-ask /pm-sync で呼べる (git pull で配布)、personal は .pm-local/ (gitignore) + CLAUDE.local.md にルール挿入 + 転写なし (PM の存在自体を git に残さない)。チーム共有 + 個人 overlay を併用したい場合は solo/team → personal を別個に実行する
+argument-hint: <なし | solo | team | personal>
 ---
 
 ## 引数仕様
 
 ```
-/pm:init                     # interactive: AskUserQuestion で team / personal を選択
-/pm:init team                # チーム共有モード: .pm/ (commit)
-/pm:init personal            # 個人モード: .pm-local/ (gitignore)
+/pm:init                     # interactive: AskUserQuestion で solo / team / personal を選択
+/pm:init solo                # 1 人プロジェクト or 全員 pm 入れる前提: .pm/ (commit) + 転写なし
+/pm:init team                # 未インストールメンバー考慮: .pm/ (commit) + スキル転写
+/pm:init personal            # 個人 (PM を git に残さない): .pm-local/ (gitignore)
 ```
 
-両方欲しい場合は `/pm:init team` 実行後、別途 `/pm:init personal` を実行する。
+solo / team とは別に個人 overlay を持ちたい場合は `/pm:init personal` を別個に実行する。
 それぞれが独立して動き、Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md の両方を読むため、`.pm/` と `.pm-local/` 両方が自動的に参照される。
 
 ## モードの違い
 
 | モード | コンテキスト配置先 | ルール挿入先 | スキル/エージェント転写 | 呼び出すコマンド | git 管理 | 用途 |
 |---|---|---|---|---|---|---|
-| **team** | `.pm/` | `CLAUDE.md` | あり (`.claude/skills/pm-ask/`、`.claude/skills/pm-sync/`、`.claude/agents/pm-agent.md`) | `/pm-ask` `/pm-sync` (pm プラグイン保有者は `/pm:ask` `/pm:sync` も可) | 全部 commit | チーム全員で共有する公式コンテキスト。**pm プラグイン未インストール環境でも `/pm-ask` `/pm-sync` が動く** |
-| **personal** | `.pm-local/` | `CLAUDE.local.md` | なし | `/pm:ask` `/pm:sync` (pm プラグイン経由) | 両方 gitignore | 個人スクラッチパッド。**PM の存在自体が git に残らない** |
+| `solo` | `.pm/` | `CLAUDE.md` | なし | `/pm:ask` `/pm:sync` (pm プラグイン経由) | 両方 commit | 1 人プロジェクト or 全員 pm プラグインを入れる前提のチーム。PM コンテキストは git で共有するが、スキル転写は不要 |
+| `team` | `.pm/` | `CLAUDE.md` | あり (`.claude/skills/pm-ask/`、`.claude/skills/pm-sync/`、`.claude/agents/pm-agent.md`) | `/pm-ask` `/pm-sync` (pm プラグイン保有者は `/pm:ask` `/pm:sync` も可) | 全部 commit | pm プラグイン未インストールのメンバーがいる可能性があるチーム。スキル本体も配布する |
+| `personal` | `.pm-local/` | `CLAUDE.local.md` | なし | `/pm:ask` `/pm:sync` (pm プラグイン経由) | 両方 gitignore | 個人スクラッチパッド。PM の存在自体が git に残らない |
 
-### PM スキル/エージェントのプロジェクト転写について
+### モード選択の判断軸
+
+- **コンテキストを git で共有したいか?** → No なら `personal`、Yes なら solo / team へ
+- **チームメンバー全員が pm プラグインを入れているか?** → Yes / 1 人 → `solo`、いいえ (未インストール考慮) → `team`
+
+### PM スキル/エージェントのプロジェクト転写 (team モードのみ)
 
 team モードでは、以下を pm プラグイン本体からコピーする:
 
@@ -32,7 +39,7 @@ team モードでは、以下を pm プラグイン本体からコピーする:
 
 これにより:
 
-- **pm プラグイン未インストールのチームメンバー** も `/pm-ask` `/pm-sync` を叩くだけで PM を使える
+- pm プラグイン未インストールのチームメンバーも `/pm-ask` `/pm-sync` を叩くだけで PM を使える
 - ファイルは commit されてリポジトリに乗るため、`git pull` だけで全員に配布される
 - pm 本体側で SKILL や `pm-agent` を更新した場合は、pm プラグイン保有者が再 `/pm:init` を打って転写ファイルを更新する
 
@@ -40,8 +47,8 @@ team モードでは、以下を pm プラグイン本体からコピーする:
 
 ### Phase 1: 引数判定 + モード確認
 
-1. 引数が `team` / `personal` のいずれかなら採用
-2. 引数なし or 無効値 → `AskUserQuestion` で選択（Recommended: `team`）
+1. 引数が `solo` / `team` / `personal` のいずれかなら採用
+2. 引数なし or 無効値 → `AskUserQuestion` で選択（Recommended: `solo`、未インストールメンバー考慮なら `team`）
 3. 既に `.pm/` または `.pm-local/` が存在する場合:
    - 既存ファイルを読んで内容を保持
    - 不足ファイルだけ追加生成
@@ -51,7 +58,7 @@ team モードでは、以下を pm プラグイン本体からコピーする:
 
 選択モードに応じて以下を作成（既存なら上書きしない）:
 
-#### team モード時 — `.pm/` 配下
+#### solo / team モード時 — `.pm/` 配下
 
 **`state.md` スケルトン**:
 
@@ -185,13 +192,15 @@ PM ブリーフィングでは Claude が軽く目を通すだけで、roadmap �
 CLAUDE.local.md
 ```
 
-#### team モード時
+#### solo / team モード時
 
 `.gitignore` 変更なし（すべて commit されるのが正しい運用）。
 
 ### Phase 4: PM スキル/エージェントのプロジェクト転写（team モードのみ）
 
-personal モードではスキップ (PM の存在自体を git に残さない設計のため)。
+solo モード / personal モードではスキップ。
+- solo: チームメンバー全員が pm プラグインを入れている前提のため転写不要
+- personal: PM の存在自体を git に残さない設計のため
 
 #### 解決パス
 
@@ -240,10 +249,11 @@ cp "${PLUGIN_ROOT}/agents/pm-agent.md" .claude/agents/pm-agent.md
 
 挿入先ファイルはモード別に切り替える:
 
-| モード | 挿入先ファイル |
-|---|---|
-| `team` | `CLAUDE.md`（プロジェクトルート） |
-| `personal` | `CLAUDE.local.md`（プロジェクトルート） |
+| モード | 挿入先ファイル | コマンド参照 |
+|---|---|---|
+| `solo` | `CLAUDE.md`（プロジェクトルート） | `/pm:` 系 (pm プラグイン経由、転写なし) |
+| `team` | `CLAUDE.md`（プロジェクトルート） | `/pm-` 系 (Phase 4 で転写したスキル経由、未インストール環境でも動く) |
+| `personal` | `CLAUDE.local.md`（プロジェクトルート） | `/pm:` 系 (pm プラグイン経由) |
 
 #### 共通処理
 
@@ -252,9 +262,41 @@ cp "${PLUGIN_ROOT}/agents/pm-agent.md" .claude/agents/pm-agent.md
 3. マーカーあり → 中身を最新版で置換
 4. マーカーなし → ファイル末尾にマーカー付きで挿入
 
-挿入する内容は **モード別**:
-- team モード: コマンド参照を `/pm-` 系で書く (Phase 4 で転写したスキルを呼ぶため、pm プラグイン未インストール環境でも動く)
-- personal モード: コマンド参照を `/pm:` 系で書く (pm プラグイン経由で呼ぶ)
+#### solo モード（CLAUDE.md に挿入）
+
+```markdown
+<!-- pm:start -->
+## PM（プロジェクト継続コンテキスト）
+
+このプロジェクトでは PM が「いま何やっているか」「次やること」「進め方」「過去の意思決定」をセッション横断で管理する。
+
+### セッション開始時に必ず以下を読むこと
+
+`.pm/` 配下（および存在すれば `.pm-local/` の overlay）:
+
+- `state.md` — 現在のフォーカス、進行中タスク、ブロッカー
+- `roadmap.md` — 次にやる候補
+- `decisions.md` — 過去の意思決定ログ（なぜ X を選んだか）
+- `workflow.md` — このプロジェクトの進め方・規約
+
+`/pm:ask` を引数なしで叩くと `pm-agent` が上記を読み込み 300 行以内のブリーフィングを返す。曖昧な指示を受けたとき、まずこれを確認してから動くこと。
+
+`/pm:ask <自由質問>` で「先週何やった?」「○○の決定理由は?」のような質問にも回答できる。
+
+### 作業区切りで PM を更新すること
+
+- **作業が一段落したら `/pm:sync`**: 直近の git 活動 / plan.md / spec.md から state / decisions / roadmap への更新案を自動生成し、ユーザー承認後に適用される
+- 完了タスク / 新しい決定 / 新しい roadmap 項目はすべて sync が自動判別して拾う (個別コマンドは無い)
+
+### PM を活用するためのルール
+
+- **PM を読まずに「現状」「次やること」を答えない**: 曖昧な質問には `/pm:ask` を通して PM の内容を引いて答える
+- **意思決定はコミットメッセージか plan.md に明示する**: そうすれば次の `/pm:sync` で decisions.md に拾える
+- **state.md と現実を乖離させない**: 完了した作業がコミットされたら速やかに `/pm:sync` を回す
+- **/pm:sync は頻繁に**: 何もなければ「変更なし」と返るだけなので安全
+
+<!-- pm:end -->
+```
 
 #### team モード（CLAUDE.md に挿入）
 
@@ -331,6 +373,7 @@ team 版と同じ構造だが、コマンド参照を `/pm:` 系で書く (転�
 ### Phase 6: 初回ブリーフィング
 
 `Skill` ツールで PM を起動 (引数なし = brief モード):
+- solo モード: `Skill(skill="pm:ask")` (pm プラグイン、転写なし)
 - team モード: `Skill(skill="pm-ask")` (転写されたプロジェクトスキル)
 - personal モード: `Skill(skill="pm:ask")` (pm プラグイン)
 

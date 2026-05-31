@@ -1,7 +1,7 @@
 {
   "name": "pm",
-  "description": "プロジェクト継続コンテキスト管理プラグイン。「いま何やってる / 次やる / 進め方 / 過去の意思決定」をセッション横断で .pm/ (チーム共有 / commit) と .pm-local/ (個人 / gitignore) に蓄積する。3 スキル構成: /pm:init (初期化、team / personal の 2 モード。team では PM スキル本体 (ask / sync) と pm-agent を .claude/skills/pm-ask/ .claude/skills/pm-sync/ .claude/agents/pm-agent.md に転写し、pm プラグイン未インストールのチームメンバーも /pm-ask /pm-sync で呼べる)、/pm:sync (直近の git 活動から state.md / decisions.md / roadmap.md への更新案を作成して適用、decision / done / next の単発操作も sync に統合)、/pm:ask (読み取り専用窓口: ブリーフィング + 軽量サマリ + 「先週何やった?」「あの決定の理由は?」などの自由質問に PM ファイル + git log から回答)。personal モードでは PM の存在自体が git に残らない設計。pm-agent 1 体同梱。zeus などの他プラグインから独立して動作。",
-  "version": "0.5.0",
+  "description": "プロジェクト継続コンテキスト管理プラグイン。「いま何やってる / 次やる / 進め方 / 過去の意思決定」をセッション横断で .pm/ (commit) と .pm-local/ (gitignore) に蓄積する。3 スキル構成: /pm:init (初期化、solo / team / personal の 3 モード。solo は .pm/ + CLAUDE.md + 転写なし (1 人 or 全員 pm 入れる前提)、team は solo に加えて PM スキル本体 (ask / sync) と pm-agent を .claude/skills/pm-ask/ .claude/skills/pm-sync/ .claude/agents/pm-agent.md に転写し pm プラグイン未インストールのチームメンバーも /pm-ask /pm-sync で呼べる、personal は .pm-local/ + CLAUDE.local.md + 転写なし)、/pm:sync (直近の git 活動から state.md / decisions.md / roadmap.md への更新案を作成して適用、decision / done / next の単発操作も sync に統合)、/pm:ask (読み取り専用窓口: ブリーフィング + 軽量サマリ + 「先週何やった?」「あの決定の理由は?」などの自由質問に PM ファイル + git log から回答)。personal モードでは PM の存在自体が git に残らない設計。pm-agent 1 体同梱。zeus などの他プラグインから独立して動作。",
+  "version": "0.6.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"

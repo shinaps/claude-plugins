@@ -11,7 +11,7 @@
 
 | スキル | 役割 |
 |---|---|
-| `/pm:init [team\|personal]` | 初回セットアップ。`.pm/`（team）または `.pm-local/`（personal）のスケルトン生成 + CLAUDE.md or CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。**team モードでは PM スキル本体と pm-agent を `.claude/skills/pm-ask/` `.claude/skills/pm-sync/` `.claude/agents/pm-agent.md` にプロジェクト転写し、pm プラグイン未インストールのチームメンバーも `/pm-ask` `/pm-sync` で呼べる**。両方欲しい場合は team → personal を別個に実行 |
+| `/pm:init [solo\|team\|personal]` | 初回セットアップ。3 モード構成: **solo** = `.pm/` (commit) + 転写なし (1 人プロジェクト or 全員 pm 入れる前提のチーム)、**team** = `.pm/` (commit) + スキル転写 (`.claude/skills/pm-ask/` 等、pm 未インストール環境でも `/pm-ask` `/pm-sync` で動く)、**personal** = `.pm-local/` (gitignore) + 転写なし (PM の存在を git に残さない)。チーム共有 + 個人 overlay を併用したい場合は solo/team → personal を別個に実行 |
 | `/pm:ask [質問]` | **読み取り専用**。引数なし=ブリーフィング (300 行サマリ)、`status`=軽量メタ情報、自由質問 (「先週何やった?」「○○の決定理由は?」) で PM ファイル + git log から回答 |
 | `/pm:sync` | **唯一の書き込み窓口**。直近の git 活動 / plan.md / spec.md から state / decisions / roadmap への更新案を `pm-agent` に作らせ、ユーザー承認後に適用。完了マーク (done) / 意思決定 (decision) / 次タスク (next) はすべて sync が自動判別 |
 
@@ -41,12 +41,13 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 ### 1. 初期化
 
 ```
-/pm:init                    # interactive: team / personal を選択
-/pm:init team               # チーム共有 (commit)
-/pm:init personal           # 個人 (gitignore)
+/pm:init                    # interactive: solo / team / personal を選択
+/pm:init solo               # 1 人 or 全員 pm 入れる前提: .pm/ (commit) + 転写なし
+/pm:init team               # 未インストールメンバー考慮: .pm/ (commit) + スキル転写
+/pm:init personal           # 個人 (PM を git に残さない): .pm-local/ (gitignore)
 ```
 
-両方欲しい場合は `/pm:init team` → `/pm:init personal` を別個に実行する。
+solo / team とは別に個人 overlay を持ちたい場合は `/pm:init personal` を別個に実行する。
 Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md を両方読むため、`.pm/` と `.pm-local/` が自動で overlay として動く。
 
 実行すると以下が整う:
@@ -57,13 +58,14 @@ Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md を両�
    - `decisions.md` — 意思決定ログ（なぜ X を選んだか）
    - `workflow.md` — このプロジェクトの進め方・規約
 2. PM 利用ルールをマーカー付きで挿入（モード別、コマンド参照もモード別）:
+   - `solo`: `CLAUDE.md` に挿入（`/pm:` 系コマンドを参照、commit される）
    - `team`: `CLAUDE.md` に挿入（`/pm-` 系コマンドを参照、チーム全員に効く、commit される）
    - `personal`: **`CLAUDE.local.md`** に挿入（`/pm:` 系コマンドを参照、Claude Code 公式の local override、gitignore 推奨）
 3. **team モードのみ**: PM スキル本体と pm-agent をプロジェクトに転写
    - `.claude/skills/pm-ask/SKILL.md`（pm 本体の `ask` SKILL を `name: pm-ask` に書き換え + 内部の `/pm:` → `/pm-` 置換しながらコピー）
    - `.claude/skills/pm-sync/SKILL.md`（同様に転写）
    - `.claude/agents/pm-agent.md`（pm 本体のエージェント定義をそのままコピー）
-   - **これにより pm プラグイン未インストールのチームメンバーも `/pm-ask` `/pm-sync` で PM を呼べる**
+   - これにより pm プラグイン未インストールのチームメンバーも `/pm-ask` `/pm-sync` で PM を呼べる
    - 配布は `git pull` 経由（commit されている前提）
    - pm 本体の更新時は、pm プラグイン保有者が再 `/pm:init` を打って転写ファイルを更新
 4. `.gitignore` を自動更新（personal モードでは `.pm-local/` と `CLAUDE.local.md` を追加）
@@ -106,8 +108,14 @@ Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md を両�
 
 | モード | コンテキスト | ルール挿入先 | スキル/エージェント転写 | 呼び出すコマンド | git 管理 | 用途 |
 |---|---|---|---|---|---|---|
-| `team` | `.pm/` | `CLAUDE.md` | あり (`.claude/skills/pm-ask/` `.claude/skills/pm-sync/` `.claude/agents/pm-agent.md`) | `/pm-ask` `/pm-sync` (pm プラグイン保有者は `/pm:ask` `/pm:sync` も可) | 全部 commit | チーム全員で共有する公式コンテキスト。**pm 未インストール環境でも動く** |
+| `solo` | `.pm/` | `CLAUDE.md` | なし | `/pm:ask` `/pm:sync` (pm プラグイン経由) | 両方 commit | 1 人プロジェクト or 全員 pm プラグインを入れる前提のチーム。コンテキストは git で共有するが、スキル転写は不要 |
+| `team` | `.pm/` | `CLAUDE.md` | あり (`.claude/skills/pm-ask/` `.claude/skills/pm-sync/` `.claude/agents/pm-agent.md`) | `/pm-ask` `/pm-sync` (pm プラグイン保有者は `/pm:ask` `/pm:sync` も可) | 全部 commit | pm プラグイン未インストールメンバーがいる可能性があるチーム。スキル本体も配布 |
 | `personal` | `.pm-local/` | `CLAUDE.local.md` | なし | `/pm:ask` `/pm:sync` (pm プラグイン経由) | **両方 gitignore** | 個人スクラッチパッド。**PM の存在自体が git に残らない** |
+
+### モード選択の判断軸
+
+- **コンテキストを git で共有したいか?** → No なら `personal`、Yes なら `solo` / `team` へ
+- **チームメンバー全員が pm プラグインを入れているか?** → Yes / 1 人なら `solo`、いいえ (未インストール考慮) なら `team`
 
 ### personal モードの意義
 
