@@ -1,7 +1,7 @@
 ---
 name: init
-description: プロジェクトに PM（プロジェクト継続コンテキスト管理）を初期化する。`.pm/`（チーム共有 / commit）または `.pm-local/`（個人 / gitignore）を生成し、4 ファイル（state / roadmap / decisions / workflow）のスケルトンを書く。team / both は CLAUDE.md、personal は CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。personal モードでは PM の存在自体が git に残らない
-argument-hint: <なし | team | personal | both>
+description: プロジェクトに PM（プロジェクト継続コンテキスト管理）を初期化する。`.pm/`（チーム共有 / commit）または `.pm-local/`（個人 / gitignore）を生成し、4 ファイル（state / roadmap / decisions / workflow）のスケルトンを書く。team は CLAUDE.md、personal は CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。personal モードでは PM の存在自体が git に残らない。チーム共有と個人 overlay を併用したい場合は team → personal を別個に実行する
+argument-hint: <なし | team | personal>
 ---
 
 # PM Init スキル（PM 初期化担当）
@@ -12,11 +12,13 @@ PM は「いま何やってるか」「次やること」「進め方」をセ�
 ## 引数仕様
 
 ```
-/pm:init                     # interactive: AskUserQuestion で team / personal / both を選択
+/pm:init                     # interactive: AskUserQuestion で team / personal を選択
 /pm:init team                # チーム共有モード: .pm/ (commit)
 /pm:init personal            # 個人モード: .pm-local/ (gitignore)
-/pm:init both                # 両方: .pm/ + .pm-local/、personal が overlay
 ```
+
+両方欲しい場合は `/pm:init team` 実行後、別途 `/pm:init personal` を実行する。
+それぞれが独立して動き、Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md の両方を読むため、`.pm/` と `.pm-local/` 両方が自動的に参照される。
 
 ## モードの違い
 
@@ -24,7 +26,6 @@ PM は「いま何やってるか」「次やること」「進め方」をセ�
 |---|---|---|---|---|
 | **team** | `.pm/` | `CLAUDE.md` | 両方 commit | チーム全員で共有する公式コンテキスト |
 | **personal** | `.pm-local/` | `CLAUDE.local.md` | 両方 gitignore | 個人スクラッチパッド。**PM の存在自体が git に残らない** |
-| **both** | 両方 | `CLAUDE.md`（team ルール） | mixed | チーム共有 + 個人 overlay 併用。personal が同名ファイルで上書き |
 
 **personal モードの設計意図**:
 `CLAUDE.local.md` は Claude Code が公式にサポートする「local override」用ファイルで、デフォルトで `.gitignore` に入れる前提（公式ドキュメント推奨）。
@@ -35,7 +36,7 @@ PM は「いま何やってるか」「次やること」「進め方」をセ�
 
 ### Phase 1: 引数判定 + モード確認
 
-1. 引数が `team` / `personal` / `both` のいずれかなら採用
+1. 引数が `team` / `personal` のいずれかなら採用
 2. 引数なし or 無効値 → `AskUserQuestion` で選択（Recommended: `team`）
 3. **既に `.pm/` または `.pm-local/` が存在する場合**: 上書きせず以下を確認:
    - 既存ファイルを読んで内容を保持
@@ -167,27 +168,6 @@ state.md と違って頻繁に変わらない静的な内容（ブランチ運�
 PM ブリーフィングでは Claude が軽く目を通すだけで、roadmap や decisions と違って構造化されない。
 ```
 
-#### both モード時
-
-- `.pm/` に上記 team の 4 ファイル
-- `.pm-local/` に **state.md（空の overlay）と scratch.md** だけ作る（他は team を共有するので冗長作成しない）
-- personal の state.md は overlay 用途を明示するヘッダー付き:
-
-```markdown
-# Personal State Overlay
-
-`.pm/state.md`（チーム共有）に対する個人的な追記・覆い被せ。
-ブリーフィング時、team の同名ファイルより **こちらが優先** される。
-
-## 個人的なフォーカス
-
-<!-- まだチームに伝えていないが自分の中で進めている作業など -->
-
-## 個人的なブロッカー
-
-<!-- まだ相談していない懸念 -->
-```
-
 ### Phase 3: .gitignore 更新
 
 モード別に必要なエントリを追加する。
@@ -206,16 +186,6 @@ CLAUDE.local.md
 `CLAUDE.local.md` は Claude Code 公式が gitignore 推奨する local override ファイル。
 **personal モードでは PM ルール本体もこのファイルに書かれる**ため、PM の存在自体が git に残らない。
 
-#### both モード時
-
-```
-# PM (personal overlay)
-.pm-local/
-```
-
-both モードでは team ルールが `CLAUDE.md`（commit）に入るため、`CLAUDE.local.md` は gitignore しなくてよい（個人が自由に上書きルールを足す余地として残す）。
-ただし personal の **コンテキスト本体** (`.pm-local/`) は gitignore する。
-
 #### team モード時
 
 `.gitignore` 変更なし（すべて commit されるのが正しい運用）。
@@ -229,7 +199,6 @@ both モードでは team ルールが `CLAUDE.md`（commit）に入るため、
 |---|---|---|
 | `team` | `CLAUDE.md`（プロジェクトルート） | チーム全員に PM ルールを適用したい |
 | `personal` | `CLAUDE.local.md`（プロジェクトルート） | **ルール自体も他人に見せず完全 local 完結**。Claude Code 公式の local override 機構に乗る |
-| `both` | `CLAUDE.md` | team ルールは全員に効かせる。personal overlay はコンテキストファイル側で挙動するためルール変更不要 |
 
 #### 共通処理
 
@@ -288,7 +257,7 @@ personal モードのみ、上記のパス参照を `.pm-local/` に書き換え
 ```
 ## /pm:init 完了
 
-- モード: {team / personal / both}
+- モード: {team / personal}
 - コンテキスト生成先: {.pm/ / .pm-local/ / 両方}
 - 生成ファイル: {ファイル一覧}
 - ルール挿入先: {CLAUDE.md / CLAUDE.local.md} ({新規作成 / マーカー追記 / マーカー更新})

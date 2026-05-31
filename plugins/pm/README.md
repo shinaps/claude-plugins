@@ -11,7 +11,7 @@
 
 | スキル | 役割 |
 |---|---|
-| `/pm:init [team\|personal\|both]` | 初回セットアップ。`.pm/` `.pm-local/` のスケルトン生成 + CLAUDE.md or CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入 |
+| `/pm:init [team\|personal]` | 初回セットアップ。`.pm/`（team）または `.pm-local/`（personal）のスケルトン生成 + CLAUDE.md or CLAUDE.local.md にマーカー付きで PM 利用ルールを挿入。両方欲しい場合は team → personal を別個に実行 |
 | `/pm:ask [質問]` | **読み取り専用**。引数なし=ブリーフィング (300 行サマリ)、`status`=軽量メタ情報、自由質問 (「先週何やった?」「○○の決定理由は?」) で PM ファイル + git log から回答 |
 | `/pm:sync` | **唯一の書き込み窓口**。直近の git 活動 / plan.md / spec.md から state / decisions / roadmap への更新案を `pm-agent` に作らせ、ユーザー承認後に適用。完了マーク (done) / 意思決定 (decision) / 次タスク (next) はすべて sync が自動判別 |
 
@@ -41,11 +41,13 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 ### 1. 初期化
 
 ```
-/pm:init                    # interactive: team / personal / both を選択
+/pm:init                    # interactive: team / personal を選択
 /pm:init team               # チーム共有 (commit)
 /pm:init personal           # 個人 (gitignore)
-/pm:init both               # 両方
 ```
+
+両方欲しい場合は `/pm:init team` → `/pm:init personal` を別個に実行する。
+Claude Code はセッション開始時に CLAUDE.md と CLAUDE.local.md を両方読むため、`.pm/` と `.pm-local/` が自動で overlay として動く。
 
 実行すると以下が整う:
 
@@ -55,7 +57,7 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
    - `decisions.md` — 意思決定ログ（なぜ X を選んだか）
    - `workflow.md` — このプロジェクトの進め方・規約
 2. PM 利用ルールをマーカー付きで挿入:
-   - `team` / `both`: `CLAUDE.md` に挿入（チーム全員に効く、commit される）
+   - `team`: `CLAUDE.md` に挿入（チーム全員に効く、commit される）
    - `personal`: **`CLAUDE.local.md`** に挿入（Claude Code 公式の local override、gitignore 推奨）
 3. `.gitignore` を自動更新（personal モードでは `.pm-local/` と `CLAUDE.local.md` を追加）
 4. ルールに従って Claude が **毎セッション開始時に PM を自動参照**
@@ -99,7 +101,6 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 |---|---|---|---|---|
 | `team` | `.pm/` | `CLAUDE.md` | 両方 commit | チーム全員で共有する公式コンテキスト |
 | `personal` | `.pm-local/` | `CLAUDE.local.md` | **両方 gitignore** | 個人スクラッチパッド。**PM の存在自体が git に残らない** |
-| `both` | 両方 | `CLAUDE.md`（team ルール） | mixed | チーム共有 + 個人 overlay。personal が同名ファイルで上書き |
 
 ### personal モードの意義
 
@@ -108,10 +109,13 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 
 個人プロジェクトでも、チームリポジトリで「自分だけ PM を回したい」ケースでも、他人に存在を漏らさず使える。
 
-### both モード = チーム共有 + 個人 overlay
+### チーム共有 + 個人 overlay の併用
+
+`/pm:init team` 済みのプロジェクトで `/pm:init personal` を別途実行すると、両方が独立して動く:
 
 - `.pm/` はチーム全員で共有 (commit)
 - `.pm-local/` は自分だけ持つ overlay (gitignore)
+- CLAUDE.md と CLAUDE.local.md は Claude Code が両方読むため、ブリーフィングで両方が参照される
 - 同名ファイルがあれば **personal が team を上書き**: 「チーム共有の state はこうだが、自分の中ではこっちが進んでいる」を両立できる
 
 ## 出力ディレクトリ
@@ -131,7 +135,7 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 
 PM 利用ルールは `<!-- pm:start --> ... <!-- pm:end -->` マーカーで以下のファイルに挿入される（モード別）:
 
-- team / both: `CLAUDE.md`（プロジェクトルート、commit）
+- team: `CLAUDE.md`（プロジェクトルート、commit）
 - personal: `CLAUDE.local.md`（プロジェクトルート、gitignore）
 
 Claude がセッション開始時に該当ファイルを読むことで PM を自動参照する。再 init はマーカー内だけを安全に置換するため、ユーザーが追加した独自セクションは保持される。
