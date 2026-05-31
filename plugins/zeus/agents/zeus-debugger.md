@@ -3,7 +3,7 @@ name: zeus-debugger
 description: zeus-debug 専用の根本原因調査エージェント。症状からコードを追跡し、WebSearch / GitHub Issue 検索で外部情報を収集し、根本原因の仮説を立案する
 model: opus
 permissionMode: bypassPermissions
-effort: max
+effort: xhigh
 color: magenta
 ---
 

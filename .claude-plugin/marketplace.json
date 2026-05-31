@@ -12,7 +12,7 @@
       "name": "zeus",
       "source": "./plugins/zeus",
       "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。要件定義 (/zeus:spec) → 技術選定 (/zeus:tech-survey) → 計画+実装+セルフレビュー (/zeus:dev、単一スキルで explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical/Warning 自動修正まで完走) → 単独レビュー (/zeus:review、修正実装は /zeus:dev 橋渡し) → デバッグ (/zeus:debug、バグ報告から根本原因を多角的に調査し対症療法を防ぐ)。設計の核は「ユーザーインタラクション最小」: EnterPlanMode を一切使わず、AskUserQuestion での要件ヒヤリングも廃止しているため bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。10 体の zeus 専用エージェント同梱、5 スキル構成。PM 機能は別プラグイン pm を併用。",
-      "version": "3.0.0",
+      "version": "3.1.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
