@@ -145,30 +145,6 @@ Claude がセッション開始時に該当ファイルを読むことで PM を
 - **personal モードは完全 local**: ルールもコンテキストも git に残さない
 - **自動コミットしない**: PM ファイル変更は `git add` までで止める
 
-## 旧 /zeus:pm からの移行
-
-過去に zeus プラグインの `/zeus:pm` `/zeus:pm-init` を使っていた場合の対応:
-
-| 旧 | 新 |
-|---|---|
-| `/zeus:pm-init` | `/pm:init` |
-| `/zeus:pm` (引数なし、brief) | `/pm:ask` |
-| `/zeus:pm status` | `/pm:ask status` |
-| `/zeus:pm sync` | `/pm:sync` |
-| `/zeus:pm decision <text>` | コミットメッセージや plan.md に書いて `/pm:sync` で拾う |
-| `/zeus:pm done <task>` | タスク完了をコミットして `/pm:sync` で拾う |
-| `/zeus:pm next <text>` | roadmap.md を直接編集するか、TODO コメントとして書いて `/pm:sync` で拾う |
-
-ディレクトリ規約も変更:
-
-| 旧 | 新 |
-|---|---|
-| `.zeus/pm/` | `.pm/` |
-| `.zeus/pm-local/` | `.pm-local/` |
-
-既存の `.zeus/pm/` 配下のファイルがある場合は、手動で `.pm/` に移行してください。
-CLAUDE.md / CLAUDE.local.md の旧マーカー (`<!-- zeus-pm:start -->`) は手動で削除した上で `/pm:init` を打ち直すと新マーカー (`<!-- pm:start -->`) が挿入される。
-
 ## ライセンス
 
 MIT

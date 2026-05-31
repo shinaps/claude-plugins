@@ -330,13 +330,3 @@ Skill(skill="zeus:dev", args="<元タスク要約>。詳細は .claude/zeus/.../
 ```
 
 `/zeus:dev` は引数文字列をそのままタスクとして受領し、新規タスクモードで計画策定から実装まで一気通貫で実行する。
-
-## ultraplan / feature-dev / 旧 /zeus:plan からの移行
-
-| 旧 | 新 |
-|---|---|
-| `/ultraplan <task>` | `/zeus:dev <task>` |
-| `/feature-dev <task>` | `/zeus:dev <task>` |
-| `/zeus:plan <task>` + `/zeus:dev <plan.md>` の 2 ステップ | `/zeus:dev <task>` の 1 ステップ |
-
-旧 `/zeus:plan` で作成済みの `plan.md` がある場合は `/zeus:dev <path/to/plan.md>` で実装フェーズだけ実行できる。

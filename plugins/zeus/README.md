@@ -5,8 +5,6 @@
 
 **設計の核**: ユーザーインタラクション最小（`EnterPlanMode` を一切使わない）。`bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る。
 
-> **v2.0.0 BREAKING**: プロジェクト PM 機能は別プラグイン [`pm`](../pm/) に分離されました。`/zeus:pm` `/zeus:pm-init` は削除されています。移行方法は本 README 末尾の「v2.0.0 移行ガイド」を参照してください。
-
 ## 構成
 
 | スキル | 役割 |
@@ -222,54 +220,6 @@ PM 機能も使いたい場合は別途 `pm` プラグインをインストー�
 └── plan-handoff.md         ← /zeus:dev へ橋渡し時の修正タスク記述
 ```
 
-## v2.0.0 移行ガイド
-
-v1.x まで zeus が提供していた PM 機能 (`/zeus:pm` `/zeus:pm-init` `zeus-pm` エージェント) は **別プラグイン [`pm`](../pm/) に分離** されました。zeus は「開発フロー」に集中するためのリストラ。
-
-### マイグレーション手順
-
-1. **新 `pm` プラグインをインストール**:
-   ```
-   /plugin install pm
-   ```
-
-2. **PM コンテキストファイルを移動** (旧 `.zeus/pm/` → 新 `.pm/`):
-   ```bash
-   mv .zeus/pm .pm
-   mv .zeus/pm-local .pm-local   # 存在すれば
-   ```
-
-3. **CLAUDE.md / CLAUDE.local.md の旧マーカーを削除**:
-   旧 `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` の範囲を削除
-
-4. **新 PM プラグインで再初期化**:
-   ```
-   /pm:init team      # または personal / both
-   ```
-   これで新マーカー `<!-- pm:start --> ... <!-- pm:end -->` が挿入される
-
-### コマンド対応表
-
-| 旧 | 新 |
-|---|---|
-| `/zeus:pm-init` | `/pm:init` |
-| `/zeus:pm` (引数なし) | `/pm:ask` |
-| `/zeus:pm status` | `/pm:ask status` |
-| `/zeus:pm sync` | `/pm:sync` |
-| `/zeus:pm decision <text>` | コミットメッセージや plan.md に書いて `/pm:sync` で拾う |
-| `/zeus:pm done <task>` | タスク完了をコミットして `/pm:sync` で拾う |
-| `/zeus:pm next <text>` | roadmap.md を直接編集するか TODO コメントとして書いて `/pm:sync` で拾う |
-
-新 `pm` プラグインでは `decision` / `done` / `next` の個別コマンドは廃止され、すべて `/pm:sync` が git 活動から自動判別する設計になっています。
-
-### ultraplan / feature-dev / 旧 /zeus:plan からの移行
-
-| 旧 | 新 |
-|---|---|
-| `/ultraplan <task>` | `/zeus:dev <task>` |
-| `/feature-dev <task>` | `/zeus:dev <task>` |
-| `/zeus:plan <task>` + `/zeus:dev <plan.md>` の 2 ステップ | `/zeus:dev <task>` の 1 ステップ |
-
 ## 設計原則
 
 - **ユーザーインタラクション最小**: `EnterPlanMode` は一切使わない。`AskUserQuestion` も要件ヒヤリングや承認では使わない
@@ -278,7 +228,7 @@ v1.x まで zeus が提供していた PM 機能 (`/zeus:pm` `/zeus:pm-init` `ze
 - **統合プランは単一案**: A/B 案を残すのは plan-reviewer で「未解決リスク」として明記された場合だけ
 - **Critical / Warning は自動修正**: Info のみ記録扱い
 - **シンプル優先**: 観点を細分化せず、1 エージェントに統合観点を持たせる
-- **責務の分離**: PM のような「開発フロー外の機能」は別プラグインに切り出す（v2.0.0 での pm 分離）
+- **責務の分離**: PM のような「開発フロー外の機能」は別プラグインに切り出す
 
 ## ライセンス
 
