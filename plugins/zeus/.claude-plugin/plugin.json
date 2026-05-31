@@ -1,7 +1,7 @@
 {
   "name": "zeus",
-  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画+実装+セルフレビュー一気通貫 + 単独レビュー + デバッグプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (計画策定 → 実装 → セルフレビューまで単一スキルで完走、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review (単独レビュー、修正実装は /zeus:dev に橋渡し) → /zeus:debug (バグ報告から根本原因を多角的に調査し対症療法を防ぐ)。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。10 体の zeus 専用エージェント同梱、5 スキル構成。PM 機能は別プラグイン pm を併用。",
-  "version": "3.3.0",
+  "description": "feature-dev の上位互換となる仕様策定 + 技術選定 + 計画+実装+セルフレビュー一気通貫 + 単独レビュー + デバッグプラグイン。/zeus:init (CLAUDE.md or CLAUDE.local.md に zeus 利用ガイドをマーカー付きで挿入し、shared / personal の 2 モードで設定を git で共有するか個人 local 完結にするかを選択) → /zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (計画策定 → 実装 → セルフレビューまで単一スキルで完走、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review (単独レビュー、修正実装は /zeus:dev に橋渡し) → /zeus:debug (バグ報告から根本原因を多角的に調査し対症療法を防ぐ)。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。10 体の zeus 専用エージェント同梱、6 スキル構成。PM 機能は別プラグイン pm を併用。",
+  "version": "3.4.0",
   "author": {
     "name": "shinaps",
     "email": "ryuta@shinaps.jp"
