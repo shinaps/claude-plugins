@@ -1,7 +1,7 @@
 ---
 name: pm-agent
 description: pm プラグイン専用エージェント。`.pm/` と `.pm-local/` のコンテキストファイルを読み込み、(1) ask モードで PM への問い合わせに回答 (ブリーフィング / 軽量サマリ / 自由質問)、(2) sync モードで最近の git 活動から state.md / decisions.md / roadmap.md への更新案を提示。PM ファイルの **書き換えは行わず**、整形案を返すだけ（実書き込みは呼び出し側スキルが担当）
-model: opus
+model: sonnet
 permissionMode: bypassPermissions
 effort: medium
 color: blue
