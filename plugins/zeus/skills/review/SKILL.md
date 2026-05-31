@@ -1,14 +1,14 @@
 ---
 name: review
-description: zeus-reviewer + zeus-review-validator で精度の高い単独レビューを行うスキル。差分・PR・既存コードを引数で切り替え。確定指摘があればそのまま /zeus:plan へ橋渡しして修正計画を立てられる
+description: zeus-reviewer + zeus-review-validator で精度の高い単独レビューを行うスキル。差分・PR・既存コードを引数で切り替え。確定指摘があればそのまま /zeus:dev へ橋渡しして修正計画 + 実装まで進められる
 argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 ---
 
 # Zeus Review スキル（単独レビュー担当）
 
-`/zeus:plan` や `/zeus:dev` を介さず、`zeus-reviewer` を **単独起動** してレビューを行うスキル。
+`/zeus:dev` を介さず、`zeus-reviewer` を **単独起動** してレビューを行うスキル。
 さらに `zeus-review-validator` で **事実確認・妥当性検証** を行い、false positive を排除した精度の高い指摘リストを作成する。
-確定指摘があれば、そのまま `/zeus:plan` に橋渡ししてレビュー指摘の修正計画を立てられる。
+確定指摘があれば、そのまま `/zeus:dev` に橋渡ししてレビュー指摘の修正実装まで進められる。
 
 ## 引数仕様と動作モード
 
@@ -39,7 +39,7 @@ argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 ├── input.md              ← レビュー対象のサマリ（diff 内容、PR 情報、対象パスなど）
 ├── review.md             ← zeus-reviewer の生レポート
 ├── review-validated.md   ← zeus-review-validator の検証済み指摘リスト
-└── plan-handoff.md       ← /zeus:plan へ引き継ぐ修正タスク記述（橋渡し時のみ）
+└── plan-handoff.md       ← /zeus:dev へ引き継ぐ修正タスク記述（橋渡し時のみ）
 ```
 
 `{mode}` は `branch` / `pr-{N}` / `path-{slug}` のいずれか。
@@ -159,15 +159,15 @@ argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 
 確定指摘（confirmed + partial + additional finding の Critical / Warning）が **1 件以上ある場合**、`AskUserQuestion` で次の選択を確認:
 
-- **修正計画を立てる（`/zeus:plan` へ橋渡し）**: 確定指摘を修正タスクとして `/zeus:plan` を起動
+- **修正実装に進む（`/zeus:dev` へ橋渡し）**: 確定指摘を修正タスクとして `/zeus:dev` を起動（計画策定 → 実装 → セルフレビューまで一気通貫）
 - **PR にコメント投稿する**（PR モードのみ）: `gh pr review` でコメント投稿
 - **ローカル保存のみで終了**: 何もしない
 
 確定指摘が 0 件の場合は「指摘なし」と通知して終了。
 
-### Phase 7: /zeus:plan への橋渡し（修正計画選択時）
+### Phase 7: /zeus:dev への橋渡し（修正実装選択時）
 
-修正計画を選んだ場合:
+修正実装を選んだ場合:
 
 1. `review-validated.md` の確定指摘を整理し、修正タスク記述を作成
 2. 以下を `plan-handoff.md` に保存:
@@ -197,10 +197,9 @@ argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 {全体としてどう修正すべきか、優先順位など}
 ```
 
-3. `Skill` ツールで `zeus:plan` を起動し、`plan-handoff.md` の内容を引数として渡す:
+3. `Skill` ツールで `zeus:dev` を起動し、`plan-handoff.md` の内容を引数として渡す:
    - 引数例: 「以下のレビュー指摘を修正する。詳細は `.claude/zeus/reviews/{ts}-{mode}/plan-handoff.md` を参照: {修正タスクの 1 行サマリ}」
-4. 通常の `/zeus:plan` フロー（explorer → architect → critique → plan-reviewer → 統合）に合流
-5. `/zeus:plan` 完了後、ユーザーに `/zeus:dev` で実装に進む案内が出る
+4. `/zeus:dev` 側で計画策定 → 実装 → セルフレビューまで一気通貫で完走する
 
 ### Phase 8: PR コメント投稿（PR モードかつ投稿選択時）
 
@@ -212,9 +211,9 @@ PR モードで「PR にコメント投稿」を選んだ場合:
 
 ## 動作原則
 
-- **plan.md 不要**: 単独で動作する。`/zeus:plan` や `/zeus:dev` を介さない
+- **plan.md 不要**: 単独で動作する。`/zeus:dev` を介さない
 - **2 段階レビュー**: reviewer → validator で false positive を排除
-- **plan 橋渡し**: 確定指摘があればそのまま修正計画フローへ
+- **dev 橋渡し**: 確定指摘があればそのまま修正実装フローへ
 - **モード自動判定**: 引数の型で動作を切り替え（数字 = PR、その他文字列 = path、なし = branch）
 - **生レポート保存厳守**: reviewer / validator 両方の応答を全文保存
 - **PR コメント投稿は要承認**: 外部影響のある操作は必ず確認
@@ -225,10 +224,10 @@ PR モードで「PR にコメント投稿」を選んだ場合:
 
 | スキル | 用途 |
 |---|---|
-| `/zeus:plan` → `/zeus:dev` | 計画から実装まで一貫して進める正規ルート |
-| **`/zeus:review`** | **plan 不要のレビュー単発実行（差分 / PR / 既存コード）+ 修正計画への橋渡し** |
+| `/zeus:dev` | 計画策定 → 実装 → セルフレビューまで一貫して進める正規ルート |
+| **`/zeus:review`** | **dev 不要のレビュー単発実行（差分 / PR / 既存コード）+ 修正実装への橋渡し** |
 | 公式 `/review` | より細分化された専門レビューワーチームでのレビュー（zeus とは別系統） |
 | 公式 `/review-all` | コードベース全体俯瞰の技術的負債チェック（zeus とは別系統） |
 
 `/zeus:review` は zeus エージェント設計（opus + effort: max + 統合観点）でのレビューを単独で受けたい時に使う。
-レビュー結果から修正実装まで一気通貫で進めたい場合、Phase 6 で `/zeus:plan` 橋渡しを選ぶ。
+レビュー結果から修正実装まで一気通貫で進めたい場合、Phase 6 で `/zeus:dev` 橋渡しを選ぶ。

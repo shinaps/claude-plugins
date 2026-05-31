@@ -157,7 +157,7 @@ argument-hint: <なし | sync | decision <text> | done <task> | next <text> | st
 |---|---|
 | `/zeus:pm-init` | PM の初回セットアップ。一度だけ実行 |
 | **`/zeus:pm`** | **PM の日常運用（このスキル）** |
-| `/zeus:plan` `/zeus:dev` `/zeus:review` `/zeus:pr-review` | 完了時に内部から `/zeus:pm sync` や `/zeus:pm decision` を呼ぶ習慣を Claude が持つ（CLAUDE.md ルール経由） |
+| `/zeus:dev` `/zeus:review` | 完了時に内部から `/zeus:pm sync` や `/zeus:pm decision` を呼ぶ習慣を Claude が持つ（CLAUDE.md ルール経由） |
 | `/zeus:spec` `/zeus:tech-survey` | 結果が固まったら decisions.md に追記される（sync 経由） |
 
 ## トラブルシュート

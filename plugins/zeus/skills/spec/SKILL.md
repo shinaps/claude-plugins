@@ -1,21 +1,20 @@
 ---
 name: spec
-description: ざっくりした要望を入力に、対話的なヒアリングで仕様を詰めて仕様書（spec.md）を作成するスキル。zeus-spec-writer で構造化し、そのまま /zeus:plan へ橋渡しできる。要望が曖昧で /zeus:plan に渡す前に要件定義したい時に使う
+description: ざっくりした要望を入力に、対話的なヒアリングで仕様を詰めて仕様書（spec.md）を作成するスキル。zeus-spec-writer で構造化し、そのまま /zeus:dev へ橋渡しできる。要望が曖昧で /zeus:dev に渡す前に要件定義したい時に使う
 argument-hint: <ざっくりした要望（省略可）>
 ---
 
 # Zeus Spec スキル（仕様策定担当）
 
-ざっくりした要望を **対話的なヒアリング** で具体化し、後続の `/zeus:plan` が消費できる構造化された仕様書を作るスキル。
-要件が固まる前に `/zeus:plan` に行くと曖昧なまま実装計画が立つので、その前段として使う。
+ざっくりした要望を **対話的なヒアリング** で具体化し、後続の `/zeus:dev` が消費できる構造化された仕様書を作るスキル。
+要件が固まる前に `/zeus:dev` に行くと曖昧なまま計画が立つので、その前段として使う。
 
-zeus プラグインは 5 スキルで構成される:
+zeus プラグインの主要スキルは:
 
 - **`/zeus:spec`**（このスキル）: 要件定義・仕様策定
 - **`/zeus:tech-survey`**: 技術選定の調査・比較（要件は固まったが技術が未定の時）
-- **`/zeus:plan`**: 仕様や明確なタスクから実装計画策定
-- **`/zeus:dev`**: plan.md を入力に実装＋セルフレビュー
-- **`/zeus:review`**: 単独レビュー（plan に橋渡し可能）
+- **`/zeus:dev`**: 仕様や明確なタスクから「計画策定 → 実装 → セルフレビュー」を一気通貫で実行
+- **`/zeus:review`**: 単独レビュー（修正計画への橋渡し可能）
 
 ## 引数仕様
 
@@ -40,7 +39,7 @@ zeus プラグインは 5 スキルで構成される:
 .claude/zeus/specs/{YYYYMMDD-HHMMSS}-{slug}/
 ├── spec.md            ← zeus-spec-writer が作成（メイン成果物）
 ├── interview-log.md   ← ヒアリングのやりとり記録
-└── plan-handoff.md    ← /zeus:plan への引き継ぎ（橋渡し時のみ）
+└── plan-handoff.md    ← /zeus:dev への引き継ぎ（橋渡し時のみ）
 ```
 
 `{slug}` は要望の短い英語スラッグ（kebab-case, 30 文字以内）。
@@ -122,48 +121,49 @@ zeus プラグインは 5 スキルで構成される:
 .claude/zeus/specs/{ts}-{slug}/spec.md
 ```
 
-### Phase 5: 仕様書承認
+### Phase 5: 仕様書サマリ提示
 
-`spec.md` 本文を `EnterPlanMode` に渡して承認 UI を表示する。
-（CLAUDE.md ルール: 「方針承認はテキストではなく EnterPlanMode で」）
+`spec.md` の主要セクション（要望の本質 / 機能要件 / スコープ / 制約 / 受け入れ条件 / 未解決の論点）を要約してテキスト出力する。
+承認 UI（`EnterPlanMode`）は使わない — bypassPermissions モード（リモート実行等）と両立させるため。
 
 ユーザーから修正要望があれば、Phase 2 のヒアリングに戻って該当箇所を再確認する。
+修正要望が無ければそのまま Phase 6 へ進む。
 
 ### Phase 6: 次アクション選択
 
-仕様書承認後、`AskUserQuestion` で次のアクションを確認:
+サマリ提示後、`AskUserQuestion` で次のアクションを確認:
 
-- **`/zeus:plan` に進む（橋渡し）**: 仕様書を入力に実装計画策定へ（技術スタックが固まっている時）
-- **`/zeus:tech-survey` に進む（橋渡し）**: 技術スタックが未確定の時、先に技術選定調査を行う（その後 `/zeus:plan` に繋がる）
+- **`/zeus:dev` に進む（橋渡し）**: 仕様書を入力に「計画策定 → 実装 → セルフレビュー」を一気通貫実行（技術スタックが固まっている時）
+- **`/zeus:tech-survey` に進む（橋渡し）**: 技術スタックが未確定の時、先に技術選定調査を行う（その後 `/zeus:dev` に繋がる）
 - **ローカル保存のみで終了**: 仕様書は保存済み、後で別途呼べる
 
-### Phase 7: /zeus:plan への橋渡し（選択時）
+### Phase 7: /zeus:dev への橋渡し（選択時）
 
 橋渡しを選んだ場合:
 
 1. `spec.md` から修正・実装に必要な情報を整理し、`plan-handoff.md` に保存:
 
 ```markdown
-# /zeus:plan への引き継ぎ
+# /zeus:dev への引き継ぎ
 
 - 元仕様書: .claude/zeus/specs/{ts}-{slug}/spec.md
 
 ## 実装タスク（spec.md ベース）
 
-{spec.md の機能要件・非機能要件・スコープを plan が消費しやすい形に変換}
+{spec.md の機能要件・非機能要件・スコープを dev が消費しやすい形に変換}
 
 ## 制約・優先度
 
-{spec.md の制約セクションから、plan が考慮すべき項目を抽出}
+{spec.md の制約セクションから、dev が考慮すべき項目を抽出}
 
-## 未解決の論点（plan で判断が必要）
+## 未解決の論点（dev での計画策定で判断が必要）
 
 {spec.md の未解決論点をそのまま転記}
 ```
 
-2. `Skill` ツールで `zeus:plan` を起動し、引数として `plan-handoff.md` のパスと 1 行サマリを渡す:
+2. `Skill` ツールで `zeus:dev` を起動し、引数として `plan-handoff.md` のパスと 1 行サマリを渡す:
    - 引数例: 「以下の仕様書を実装する。詳細は `.claude/zeus/specs/{ts}-{slug}/plan-handoff.md` を参照: {1 行サマリ}」
-3. 通常の `/zeus:plan` フロー（explorer → architect → critique → plan-reviewer → 統合）に合流
+3. `/zeus:dev` 側で新規タスクモードとして動作（explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → セルフレビュー）に合流
 
 ### Phase 8: /zeus:tech-survey への橋渡し（選択時）
 
@@ -172,7 +172,7 @@ zeus プラグインは 5 スキルで構成される:
 1. `Skill` ツールで `zeus:tech-survey` を起動し、引数として `spec.md` のパスを渡す:
    - 引数例: 「以下の仕様書をもとに技術選定を行う: `.claude/zeus/specs/{ts}-{slug}/spec.md`」
 2. `/zeus:tech-survey` 側で spec モードとして動作（未確定の技術論点を抽出して調査）
-3. 調査完了後、`/zeus:tech-survey` の Phase 7 で「spec.md に追記して `/zeus:plan` 橋渡し」を選べる
+3. 調査完了後、`/zeus:tech-survey` の Phase 7 で「spec.md に追記して `/zeus:dev` 橋渡し」を選べる
 
 ## 動作原則
 
@@ -180,7 +180,8 @@ zeus プラグインは 5 スキルで構成される:
 - **過剰な質問はしない**: 既に明確な観点はスキップ
 - **ユーザーの意図を抽出**: 言葉通りではなく本質を読む（仕様書化は zeus-spec-writer が担当）
 - **未解決は隠さない**: 答えが出なかった項目は仕様書で明示
-- **テキストでの承認質問は禁止**: 必ず `AskUserQuestion` / `EnterPlanMode` を使う
+- **選択を求める時は AskUserQuestion を使う**: テキストで「どれにしますか」と聞かず、構造化された選択肢を提示する
+- **EnterPlanMode は使わない**: bypassPermissions モードと両立させるため、承認 UI（プランモード）は呼ばない
 - **生レポート保存厳守**: ヒアリングログ・仕様書は全文保存
 
 ## 他スキルとの使い分け
@@ -189,10 +190,9 @@ zeus プラグインは 5 スキルで構成される:
 |---|---|
 | **`/zeus:spec`** | **要望が曖昧な状態で、要件を対話的に詰めたい時** |
 | `/zeus:tech-survey` | 要件は固まったが、使う技術（ライブラリ・フレームワーク・サービス）が未定の時 |
-| `/zeus:plan` | 要件 + 技術が固まっていて、実装計画を立てたい時 |
-| `/zeus:dev` | plan.md があり、実装に進む時 |
+| `/zeus:dev` | 要件 + 技術が固まっていて、計画策定 → 実装まで一気通貫で進めたい時 |
 | `/zeus:review` | 既存コード・PR・diff のレビュー |
 
-要件が明確なら `/zeus:spec` をスキップして直接 `/zeus:plan` を呼ぶ方が速い。
+要件が明確なら `/zeus:spec` をスキップして直接 `/zeus:dev` を呼ぶ方が速い。
 逆に「やりたいことは漠然としてる」「実装範囲を詰めたい」場合は `/zeus:spec` から始める。
-要件は固まったが技術選定で迷う場合は `/zeus:spec` → `/zeus:tech-survey` → `/zeus:plan` のチェーンを使う。
+要件は固まったが技術選定で迷う場合は `/zeus:spec` → `/zeus:tech-survey` → `/zeus:dev` のチェーンを使う。

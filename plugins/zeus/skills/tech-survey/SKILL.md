@@ -1,6 +1,6 @@
 ---
 name: tech-survey
-description: 技術選定特化の調査スキル。WebSearch / WebFetch で最新情報を集め、ライブラリ・フレームワーク・サービスの候補を観点別に比較する。spec.md / 自由記述 / /zeus:spec からの橋渡しに対応。選択結果を spec.md に追記してそのまま /zeus:plan へ進める
+description: 技術選定特化の調査スキル。WebSearch / WebFetch で最新情報を集め、ライブラリ・フレームワーク・サービスの候補を観点別に比較する。spec.md / 自由記述 / /zeus:spec からの橋渡しに対応。選択結果を spec.md に追記してそのまま /zeus:dev へ進める
 argument-hint: <なし | spec.md パス | 自由記述の要望>
 ---
 
@@ -9,13 +9,12 @@ argument-hint: <なし | spec.md パス | 自由記述の要望>
 要件は固まっているが「どの言語・ライブラリ・サービスを使うか」が未確定なフェーズで、**最新情報をもとに候補を比較してくれる調査スキル**。
 `zeus-tech-surveyor`（一次調査）と `zeus-survey-validator`（妥当性検証）の二段構成で、情報の鮮度と出典の正確性を担保する。
 
-zeus プラグインは 5 スキルで構成される:
+zeus プラグインの主要スキルは:
 
 - **`/zeus:spec`**: 要件定義・仕様策定
 - **`/zeus:tech-survey`**（このスキル）: 技術選定の調査・比較
-- **`/zeus:plan`**: 仕様や明確なタスクから実装計画策定
-- **`/zeus:dev`**: plan.md を入力に実装＋セルフレビュー
-- **`/zeus:review`**: 単独レビュー（plan に橋渡し可能）
+- **`/zeus:dev`**: 仕様や明確なタスクから「計画策定 → 実装 → セルフレビュー」を一気通貫で実行
+- **`/zeus:review`**: 単独レビュー（修正計画への橋渡し可能）
 
 ## 引数仕様と動作モード
 
@@ -47,7 +46,7 @@ zeus プラグインは 5 スキルで構成される:
 ├── survey.md               ← zeus-tech-surveyor の生レポート
 ├── survey-validated.md     ← zeus-survey-validator の検証済みレポート
 ├── tech-decision.md        ← 採用決定の記録（独立保存選択時のみ）
-└── plan-handoff.md         ← /zeus:plan への引き継ぎ（橋渡し時のみ）
+└── plan-handoff.md         ← /zeus:dev への引き継ぎ（橋渡し時のみ）
 ```
 
 `{slug}` は調査対象の短い英語スラッグ（kebab-case, 30 文字以内）。
@@ -161,25 +160,25 @@ zeus プラグインは 5 スキルで構成される:
 - 追加発見: {N} 件
 ```
 
-### Phase 6: 採用候補の決定（承認 UI）
+### Phase 6: 採用候補の決定
 
 候補が 1 つしかない場合 or 推奨が明確な場合:
-- そのまま `EnterPlanMode` → `ExitPlanMode` で「この候補を採用」プランを承認 UI に出す
-- プラン本文 = 「採用候補」「選定理由」「実装上の注意点」「次のステップ」
+- 「採用候補 / 選定理由 / 実装上の注意点 / 次のステップ」をテキストで提示し、そのまま Phase 7 へ進む
+- `EnterPlanMode` は使わない（bypassPermissions モードと両立させるため）
 
 候補が 2 つ以上で判断が割れる場合:
-- 先に `AskUserQuestion` で「どの候補を採用するか」を選ばせる
-- その後 `EnterPlanMode` → `ExitPlanMode` で承認 UI に出す
+- `AskUserQuestion` で「どの候補を採用するか」を選ばせる
+- 選択後、採用理由・注意点をテキストでまとめて Phase 7 へ進む
 
 ユーザーが修正要望を出した場合は、Phase 1 の入力収集に戻って観点や制約を再確認する。
 
 ### Phase 7: 次アクション選択
 
-承認後、`AskUserQuestion` で次のアクションを確認:
+候補決定後、`AskUserQuestion` で次のアクションを確認:
 
-- **A. spec.md に追記して `/zeus:plan` に進む（橋渡し）** — spec モード時の Recommended
-- **B. tech-decision.md として独立保存して `/zeus:plan` に進む** — spec モード以外の Recommended
-- **C. 保存のみで終了** — 後で別途 `/zeus:plan` を呼ぶ
+- **A. spec.md に追記して `/zeus:dev` に進む（橋渡し）** — spec モード時の Recommended
+- **B. tech-decision.md として独立保存して `/zeus:dev` に進む** — spec モード以外の Recommended
+- **C. 保存のみで終了** — 後で別途 `/zeus:dev` を呼ぶ
 
 ### Phase 8: 橋渡し実行
 
@@ -199,7 +198,7 @@ zeus プラグインは 5 スキルで構成される:
 ```
 
 3. `plan-handoff.md` を生成（後述）
-4. `Skill` ツールで `zeus:plan` を起動
+4. `Skill` ツールで `zeus:dev` を起動
 
 #### B 選択時（独立保存）
 
@@ -227,12 +226,12 @@ zeus プラグインは 5 スキルで構成される:
 ```
 
 2. `plan-handoff.md` を生成
-3. `Skill` ツールで `zeus:plan` を起動
+3. `Skill` ツールで `zeus:dev` を起動
 
 #### A / B 共通の plan-handoff.md
 
 ```markdown
-# /zeus:plan への引き継ぎ
+# /zeus:dev への引き継ぎ
 
 - 元調査: .claude/zeus/tech-surveys/{ts}-{slug}/survey-validated.md
 - 採用技術: {候補名 vX.Y.Z}
@@ -246,13 +245,13 @@ zeus プラグインは 5 スキルで構成される:
 
 {採用時の注意点、依存関係、互換性、ライセンスなど}
 
-## 未解決の論点（plan で判断が必要）
+## 未解決の論点（dev での計画策定で判断が必要）
 
 {調査で解消できなかった項目、実装段階で判断が必要な項目}
 ```
 
 `Skill` 起動時の引数例:
-> 「以下の技術選定結果に基づき実装計画を立てる。詳細は `.claude/zeus/tech-surveys/{ts}-{slug}/plan-handoff.md` を参照: {1 行サマリ}」
+> 「以下の技術選定結果に基づき実装する。詳細は `.claude/zeus/tech-surveys/{ts}-{slug}/plan-handoff.md` を参照: {1 行サマリ}」
 
 #### C 選択時
 
@@ -263,7 +262,8 @@ zeus プラグインは 5 スキルで構成される:
 - **二段検証**: surveyor → validator で情報の鮮度・正確性を担保
 - **公式情報を必ず確認**: surveyor も validator も公式サイト/GitHub を WebFetch で直接見る
 - **生レポート保存厳守**: 両エージェントの応答は省略せず全文保存
-- **テキストでの承認質問は禁止**: `AskUserQuestion` / `EnterPlanMode` を使う
+- **選択を求める時は AskUserQuestion を使う**: テキストで「どれにしますか」と聞かず、構造化された選択肢を提示する
+- **EnterPlanMode は使わない**: bypassPermissions モードと両立させるため、承認 UI（プランモード）は呼ばない
 - **既存スタック適合度を最優先**: プロジェクト CLAUDE.md / package.json 等を踏まえる
 - **断定しすぎない**: 「圧倒的に良い」ではなく、要件・制約に応じた条件付き推奨
 
@@ -273,9 +273,8 @@ zeus プラグインは 5 スキルで構成される:
 |---|---|
 | `/zeus:spec` | 要望が曖昧な状態で、要件を対話的に詰めたい時 |
 | **`/zeus:tech-survey`** | **要件は固まっているが、使う技術が未定の時** |
-| `/zeus:plan` | 要件 + 技術が固まった状態で実装計画を立てたい時 |
-| `/zeus:dev` | plan.md があり、実装に進む時 |
+| `/zeus:dev` | 要件 + 技術が固まった状態で、計画策定 → 実装まで一気通貫で進めたい時 |
 | `/zeus:review` | 既存コード・PR・diff のレビュー |
 
-要件と技術の両方が決まっているなら、このスキルをスキップして直接 `/zeus:plan` を呼ぶ方が速い。
+要件と技術の両方が決まっているなら、このスキルをスキップして直接 `/zeus:dev` を呼ぶ方が速い。
 逆に「技術選定で迷っている」「最新のライブラリ事情を踏まえたい」場合に使う。

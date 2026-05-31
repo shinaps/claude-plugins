@@ -1,6 +1,6 @@
 ---
 name: debug
-description: バグ報告・不具合の根本原因を多角的に調査し、対症療法ではなく根本解決を導くスキル。コードトレース + WebSearch + GitHub Issue 検索で仮説を立て、実コード検証で確定させ、/zeus:plan に橋渡しする
+description: バグ報告・不具合の根本原因を多角的に調査し、対症療法ではなく根本解決を導くスキル。コードトレース + WebSearch + GitHub Issue 検索で仮説を立て、実コード検証で確定させ、/zeus:dev に橋渡しする
 argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイルパス>
 ---
 
@@ -9,13 +9,12 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
 「うまくいかない」「バグがある」という報告から出発し、**対症療法ではなく根本原因** を特定するスキル。
 `zeus-debugger`（多角的調査 + 仮説立案）と `zeus-debug-validator`（実コード検証）の二段構成で、表面的な修正に流れることを防ぐ。
 
-zeus プラグインは以下のスキルで構成される:
+zeus プラグインの主要スキルは:
 
 - **`/zeus:spec`**: 要件定義・仕様策定
 - **`/zeus:tech-survey`**: 技術選定の調査・比較
-- **`/zeus:plan`**: 仕様や明確なタスクから実装計画策定
-- **`/zeus:dev`**: plan.md を入力に実装＋セルフレビュー
-- **`/zeus:review`**: 単独レビュー（plan に橋渡し可能）
+- **`/zeus:dev`**: 仕様や明確なタスクから「計画策定 → 実装 → セルフレビュー」を一気通貫で実行
+- **`/zeus:review`**: 単独レビュー（修正実装への橋渡し可能）
 - **`/zeus:debug`**（このスキル）: バグ・不具合の根本原因調査
 
 ## 引数仕様と動作モード
@@ -47,7 +46,7 @@ zeus プラグインは以下のスキルで構成される:
 ├── input.md                ← 症状・再現手順のサマリ
 ├── debug-report.md         ← zeus-debugger の生レポート（仮説一覧）
 ├── debug-validated.md      ← zeus-debug-validator の検証済みレポート
-└── plan-handoff.md         ← /zeus:plan への引き継ぎ（橋渡し時のみ）
+└── plan-handoff.md         ← /zeus:dev への引き継ぎ（橋渡し時のみ）
 ```
 
 `{slug}` は症状の短い英語スラッグ（kebab-case, 30 文字以内）。
@@ -171,24 +170,24 @@ zeus プラグインは以下のスキルで構成される:
 
 root-cause または contributing-factor が **1 件以上ある場合**、`AskUserQuestion` で次の選択を確認:
 
-- **修正計画を立てる（`/zeus:plan` へ橋渡し）（推奨）** — 確定した根本原因に対する修正計画を策定
+- **修正実装に進む（`/zeus:dev` へ橋渡し）（推奨）** — 確定した根本原因に対する修正を「計画策定 → 実装 → セルフレビュー」まで一気通貫で実行
 - **追加調査を依頼する** — needs-reproduction の仮説や新たな観点について再調査
-- **保存のみで終了** — 後で別途 `/zeus:plan` を呼ぶ
+- **保存のみで終了** — 後で別途 `/zeus:dev` を呼ぶ
 
 root-cause が 0 件で needs-reproduction のみの場合:
 - **再現手順を追加して再調査** — 追加情報を入力して Phase 3 からやり直す
-- **現時点の情報で `/zeus:plan` に進む** — contributing-factor ベースで修正計画
+- **現時点の情報で `/zeus:dev` に進む** — contributing-factor ベースで修正
 - **保存のみで終了**
 
-### Phase 7: /zeus:plan への橋渡し（修正計画選択時）
+### Phase 7: /zeus:dev への橋渡し（修正実装選択時）
 
-修正計画を選んだ場合:
+修正実装を選んだ場合:
 
 1. `debug-validated.md` の root-cause / contributing-factor を整理し、修正タスク記述を作成
 2. 以下を `plan-handoff.md` に保存:
 
 ```markdown
-# /zeus:plan への引き継ぎ（デバッグ結果）
+# /zeus:dev への引き継ぎ（デバッグ結果）
 
 - 元調査: .claude/zeus/debug/{ts}-{slug}/debug-validated.md
 - 症状: {1 行サマリ}
@@ -223,8 +222,9 @@ root-cause が 0 件で needs-reproduction のみの場合:
 {WebSearch / GitHub Issue で見つけた関連情報への参照}
 ```
 
-3. `Skill` ツールで `zeus:plan` を起動:
+3. `Skill` ツールで `zeus:dev` を起動:
    - 引数例: 「以下のデバッグ結果に基づき根本原因を修正する。詳細は `.claude/zeus/debug/{ts}-{slug}/plan-handoff.md` を参照: {根本原因の 1 行サマリ}」
+4. `/zeus:dev` 側で計画策定 → 実装 → セルフレビューまで一気通貫で完走する
 
 ### Phase 8: 追加調査（追加調査選択時）
 
@@ -246,9 +246,9 @@ root-cause が 0 件で needs-reproduction のみの場合:
 
 | スキル | 用途 |
 |---|---|
-| **`/zeus:debug`** | **「これが動かない」から根本原因を特定し、修正計画に橋渡し** |
+| **`/zeus:debug`** | **「これが動かない」から根本原因を特定し、修正実装に橋渡し** |
 | `/zeus:review` | 既存コード / diff のレビュー（品質改善観点） |
-| `/zeus:plan` | 要件が明確で何を実装するか分かっている時 |
+| `/zeus:dev` | 要件が明確で何を実装するか分かっている時（計画策定 → 実装まで一気通貫） |
 | `/zeus:tech-survey` | 技術選定で迷っている時 |
 | `/zeus:spec` | 要望が曖昧で要件を詰めたい時 |
 

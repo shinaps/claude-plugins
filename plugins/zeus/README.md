@@ -1,24 +1,23 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 → 技術選定 → 実装計画策定 → 実装 → セルフレビュー → PR 監視 → PR レビュー対応 → PM までを `spec.md` / `plan.md` / `.zeus/review-memory.md` / `.zeus/pm/` を介して連携する 10 スキル構成。
+要件定義 → 技術選定 → 計画策定 + 実装 + セルフレビュー → デバッグ → PM までを `spec.md` / `plan.md` / `.zeus/pm/` を介して連携する 7 スキル構成。
+
+**設計の核**: ユーザーインタラクション最小（`EnterPlanMode` を一切使わない）。`bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る。
 
 ## 構成
 
 | スキル | 役割 |
 |---|---|
-| `/zeus:spec [要望]` | ざっくりした要望を対話的なヒアリングで詰めて仕様書化。`zeus-spec-writer` で構造化し、そのまま `/zeus:tech-survey` / `/zeus:plan` へ橋渡し可能 |
+| `/zeus:spec [要望]` | ざっくりした要望を対話的なヒアリングで詰めて仕様書化。`zeus-spec-writer` で構造化し、そのまま `/zeus:tech-survey` / `/zeus:dev` へ橋渡し可能 |
 | `/zeus:tech-survey [spec.md/要望]` | WebSearch / WebFetch で最新情報を集めてライブラリ・フレームワーク・サービスの候補を観点別に比較。`zeus-tech-surveyor` + `zeus-survey-validator` で鮮度・出典の妥当性も検証 |
-| `/zeus:plan <task>` | `zeus-explorer` でコードベース調査 → `zeus-architect` で実装計画策定。`plan.md` を永続化して次工程に渡す |
-| `/zeus:dev <plan.md>` | `/zeus:plan` の出力を入力に、plan に厳密に従って実装し、`zeus-reviewer` でセルフレビュー → 修正ループ |
-| `/zeus:review [PR/path]` | plan 不要の単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、`/zeus:plan` 橋渡しも可能 |
-| `/zeus:pr-review <PR番号>` | GitHub PR への **CodeRabbit ライク自動レビュー投稿**。fresh / re-review / comment-response の 3 モード自動判定。**summary は Verdict callout のみのミニマル設計**（✅ LGTM / 💬 Comments Only / 🛑 Changes Requested / 🤔 Discussion）。re-review で更新が無いときは **既存 summary を編集して `reviewed-sha` だけ bump**（silent-edit、タイムラインに新規エントリ出さず）。`.zeus/review-memory.md` で won't-fix / プロジェクト方針を蓄積し他 PR でも活用。auto-resolve（GraphQL）対応 |
-| `/zeus:pr-watch [interval\|--once]` | open PR を定期スキャンして未レビュー PR / 新コミット / 新コメントを検出し `/zeus:pr-review` に委譲。**起動するだけで内部 `/loop` を自動セットアップ**（default 5 分、`--once` で 1 サイクル）。トリガーコメント不要で全 open PR を自動レビュー（CodeRabbit 同等運用） |
-| `/zeus:resolve-pr-review <PR番号>` | PR で受けたレビューコメント（zeus / CodeRabbit / 人間レビュアー全部）を `zeus-review-validator` で妥当性判定し、confirmed は `/zeus:plan` + `/zeus:dev` に委譲、false-positive / won't-fix / out-of-scope は理由付きで返信 + スレッド resolve、clarification は説明返信のみ。**push はしない**（CLAUDE.md 準拠） |
+| `/zeus:dev <task or plan.md>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` でコードベース調査 → `zeus-architect` で実装ブループリント策定 → `zeus-plan-reviewer` で第三者レビュー → 実装 → `zeus-reviewer` でセルフレビュー → Critical/Warning 自動修正までを単一スキルで完走。`EnterPlanMode` / `AskUserQuestion` の要件ヒヤリングは使わない |
+| `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
+| `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
 | `/zeus:pm-init [team\|personal\|both]` | プロジェクトに Zeus PM を初期化。`.zeus/pm/`（チーム共有 / commit）または `.zeus/pm-local/`（個人 / gitignore）に state / roadmap / decisions / workflow のスケルトンを生成。**team / both は `CLAUDE.md`、personal は `CLAUDE.local.md`** にマーカー付きで PM 利用ルールを挿入（personal モードでは PM の存在自体が git に残らない） |
 | `/zeus:pm [sync\|decision\|done\|next\|status]` | PM 日常運用。引数なしで `zeus-pm` がブリーフィング、`sync` で git 活動から状態更新、`decision <text>` で意思決定ログ、`done <task>` で完了マーク、`next <text>` で roadmap 追加 |
 
-## 同梱エージェント (9 体)
+## 同梱エージェント (11 体)
 
 このプラグイン内に同梱されているので、インストールするだけで使える。
 
@@ -32,6 +31,8 @@
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー（差し戻し / 条件付き承認 / 承認） |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー（confidence ≥ 80 でフィルタ） |
 | `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証（false positive 排除 + 追加発見） |
+| `zeus-debugger` | 症状からコードを追跡し、WebSearch / GitHub Issue 検索で外部情報を集めて根本原因の仮説を立案 |
+| `zeus-debug-validator` | debugger の仮説を実コードと照合し、root-cause / contributing-factor / red-herring / needs-reproduction に分類 |
 | `zeus-pm` | `.zeus/pm/` + `.zeus/pm-local/` を読んで brief / sync / decision の 3 モードで PM 状態を整形（書き換えはスキル側が責任を持つ） |
 
 ## インストール
@@ -64,10 +65,10 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 1. 初期要望の受領（引数なしなら `AskUserQuestion` で確認）
 2. **段階的ヒアリング**（機能要件 / ユーザー / スコープ / 優先度 / 制約 / 非機能要件 / 受け入れ条件 を順次確認）
 3. `zeus-spec-writer` で構造化された仕様書を作成
-4. `EnterPlanMode` で仕様書承認
-5. そのまま `/zeus:plan` に橋渡し可能（or ローカル保存のみで終了）
+4. サマリをテキスト出力（`EnterPlanMode` は使わない — bypassPermissions と両立させるため）
+5. `/zeus:tech-survey` / `/zeus:dev` に橋渡し可能（or ローカル保存のみで終了）
 
-要件が既に明確な場合はスキップして直接 `/zeus:plan` を呼ぶ方が速い。
+要件が既に明確な場合はスキップして直接 `/zeus:dev` を呼ぶ方が速い。
 
 ### 0.5. 技術選定（使う技術が未定のとき）
 
@@ -84,57 +85,47 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 3. `zeus-tech-surveyor` を起動して候補列挙＋観点別比較レポート作成（WebSearch / WebFetch で公式情報を取得）
 4. `zeus-survey-validator` を起動して出典 URL を再確認し、鮮度・正確性を検証
 5. 結果を `.claude/zeus/tech-surveys/{ts}-{slug}/` に保存
-6. `EnterPlanMode` で採用候補を承認 UI に提示
+6. 採用候補の決定（テキスト提示。複数候補で割れる時のみ `AskUserQuestion` で選択。`EnterPlanMode` は使わない）
 7. 次アクションを確認:
-   - **spec.md に追記して `/zeus:plan` へ橋渡し**（spec モード時の Recommended）
-   - **tech-decision.md として独立保存して `/zeus:plan` へ橋渡し**
+   - **spec.md に追記して `/zeus:dev` へ橋渡し**（spec モード時の Recommended）
+   - **tech-decision.md として独立保存して `/zeus:dev` へ橋渡し**
    - **保存のみで終了**
 
-要件と技術の両方が固まっていれば、このスキルをスキップして直接 `/zeus:plan` を呼ぶ方が速い。
+要件と技術の両方が固まっていれば、このスキルをスキップして直接 `/zeus:dev` を呼ぶ方が速い。
 
-### 1. 計画策定
+### 1. 計画策定 + 実装 + セルフレビュー（メインスキル）
 
 ```
-/zeus:plan ユーザー認証に2要素認証(TOTP)を追加したい
+/zeus:dev ユーザー認証に2要素認証(TOTP)を追加したい
 ```
 
-`/zeus:plan` が以下を自動実行する:
+`/zeus:dev` が以下を一気通貫で自動実行する:
 
-1. タスク受領（必要なら `AskUserQuestion` で重要点だけ確認）
+1. タスク受領（**AskUserQuestion による要件ヒヤリングはしない** — 引数の文字列で進める）
 2. `zeus-explorer` を起動してコードベース探索（領域が広ければ複数並列）
 3. 主体が必読ファイルを直接 Read して文脈構築
 4. `zeus-architect` を起動して実装ブループリント策定（複数観点を内部で検討した単一案）
 5. `zeus-architect` を再起動して **self-critique**（自己批判で盲点を炙り出し）
-6. `zeus-plan-reviewer` で **第三者プランレビュー**（視点固定バイアスを破る）
+6. `zeus-plan-reviewer` で **第三者プランレビュー**（差し戻し時は最大 2 回まで自動再策定ループ）
 7. 各エージェントの生レポートを `.claude/zeus/{ts}-{slug}/raw/` に全文保存
-8. レビュー指摘を反映した統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に作成
-9. `EnterPlanMode` で承認 UI 表示
+8. レビュー指摘を反映した統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に作成（**`EnterPlanMode` は使わない**）
+9. plan のビルド順序に従って実装
+10. `implementation.md` に実装ログ保存
+11. **動作確認**（型チェック・リント・ビルド・テストを利用可能なものから自動実行）
+12. `zeus-reviewer` を起動してセルフレビュー
+13. **Critical / Warning は自動修正**、Info は記録のみ（ユーザー確認なし）
+14. **修正があれば再レビュー**（Critical が無くなるまで繰り返し）
+15. 完了報告（次のステップは `/commit` `/create-pr` を案内）
 
-承認後、次のステップが案内される:
-
-```
-/zeus:dev .claude/zeus/{ts}-{slug}/plan.md
-```
-
-### 2. 実装＋セルフレビュー
+#### 既存 plan.md からの実装再開
 
 ```
 /zeus:dev .claude/zeus/20260502-141500-totp-auth/plan.md
 ```
 
-`/zeus:dev` が以下を自動実行する:
+引数が既存 `plan.md` のパス（or ディレクトリ）なら、Phase 1-6（計画フェーズ）をスキップして Phase 7（実装）から開始する。
 
-1. plan 検証 + 関連ファイル事前 Read
-2. plan のビルド順序に従って実装
-3. `implementation.md` に実装ログ保存
-4. **動作確認**（型チェック・リント・ビルド・テストを利用可能なものから自動実行）
-5. `zeus-reviewer` を起動してセルフレビュー
-6. レビューの生レポートを `.claude/zeus/{ts}-{slug}/review.md` に保存
-7. **Critical は自動修正**（動作確認の失敗も Critical 扱い）、Warning は確認、Info は記録のみ
-8. **Critical 修正があれば再レビュー**（修正で生んだ別バグを検出、Critical が無くなるまで繰り返し）
-9. 完了報告（次のステップは `/commit` `/create-pr` を案内）
-
-### 3. 単独レビュー（修正計画への橋渡しも可能）
+### 2. 単独レビュー（修正実装への橋渡しも可能）
 
 ```
 /zeus:review                # 現ブランチの diff をレビュー
@@ -150,79 +141,24 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 4. `zeus-review-validator` で事実確認・妥当性検証（false positive 排除 + 追加発見）
 5. 結果を `.claude/zeus/reviews/{ts}-{mode}/` に保存
 6. 確定指摘がある場合、次アクションを確認:
-   - **修正計画を立てる** → `/zeus:plan` へ自動橋渡し（その後 `/zeus:dev` で実装まで進める）
+   - **修正実装に進む** → `/zeus:dev` へ自動橋渡し（計画策定 → 実装 → セルフレビューまで一気通貫）
    - **PR コメント投稿**（PR モードのみ）
    - **ローカル保存のみで終了**
 
-### 4. GitHub PR への自動レビュー投稿
+### 3. デバッグ（根本原因調査）
 
 ```
-/zeus:pr-review 42                                          # 現在の repo の PR #42
-/zeus:pr-review https://github.com/owner/repo/pull/42       # 他 repo の PR
+/zeus:debug "ユーザー登録 API が稀に 500 を返す"
 ```
 
-`/zeus:pr-review` が以下を自動実行する:
+`/zeus:debug` が以下を自動実行する:
 
-1. PR 取得 + 認証チェック（`gh` CLI）
-2. `.zeus/review-memory.md`（プロジェクトメモリ）を読み込み
-3. **モード自動判定**:
-   - `fresh`: 過去に zeus レビュー無し → 全 diff をレビュー
-   - `re-review`: zeus レビュー済みだが head SHA が変わった → 前回レビュー以降の diff だけレビュー
-   - `comment-response`: SHA は同じだがユーザーが新規コメント → コメント分類して won't-fix / 方針はメモリへ、修正要求は再レビュー
-4. `zeus-reviewer` + `zeus-review-validator` で精度の高い指摘リスト作成
-5. メモリの `Won't Fix Patterns` / `Project Conventions` で再フィルタ（重複指摘の排除）
-6. 依存マニフェスト変更があれば `zeus-tech-surveyor` で追加調査（必要時のみ）
-7. **総合判定 (Verdict) を選定**: `LGTM` / `Comments Only` / `Changes Requested` / `Discussion` から 1 つを LLM 判断で選ぶ
-8. **ミニマルな summary** を整形。HTML marker + Verdict callout (`[!TIP]` / `[!NOTE]` / `[!CAUTION]` / `[!IMPORTANT]`) のみ。severity 表 / 概要 / files list は **書かない**（詳細は inline comments で十分）
-9. **silent-edit 判定**: re-review で新規 findings / resolves / memory 更新がすべて 0 のとき、新規投稿せず **既存 summary を GraphQL `updatePullRequestReview` で編集して `reviewed-sha` だけ bump**。タイムラインに新規エントリを出さない（最小ノイズ）
-10. それ以外なら `gh api` で inline comment 個別投稿 + summary review 投稿（state は `--comment`、branch protection に影響しない）
-11. 各 inline / summary に `<!-- zeus:pr-review reviewed-sha=... -->` / `<!-- zeus:finding fingerprint=... -->` を埋め込んで状態管理（**ローカル状態ファイル無し**）
-12. **auto-resolve（GraphQL `resolveReviewThread`）**:
-    - re-review で旧 fingerprint が新リストに無い → 「✅ Addressed in {sha} (no longer flagged on re-review)」と返信してから resolve
-    - won't-fix 返信のスレッド → 「✅ Marked as won't-fix per @{user}. Added to `.zeus/review-memory.md`.」と返信してから resolve
-    - 既に resolved なスレッドはスキップ（冪等）
+1. 症状の受領
+2. `zeus-debugger` を起動してコードトレース + WebSearch + GitHub Issue 検索で根本原因の仮説を立案
+3. `zeus-debug-validator` で各仮説を実コード照合して root-cause / contributing-factor / red-herring / needs-reproduction に分類
+4. 確定した根本原因を `/zeus:dev` に橋渡しして修正実装
 
-事前にレビュー内容だけ確認したい場合は `/zeus:review <PR番号>`（投稿しないローカル保存型）を使う。
-
-#### プロジェクトメモリ `.zeus/review-memory.md`
-
-`/zeus:pr-review` の comment-response モードで、ユーザーの返信が:
-
-- 「これはプロジェクト方針」「うちは○○を使う」→ `Project Conventions` に追記
-- 「これは意図的」「won't fix」「修正しない」→ `Won't Fix Patterns` に追記
-
-として自動的にこのファイルに蓄積される。**他 PR のレビューでも自動で読み込まれ、同じ指摘を繰り返さない**。
-チームで共有したい場合は `.zeus/review-memory.md` をコミットすればよい（自動コミットはしない、`git add` まで）。
-
-### 5. PR 監視ループ（常駐レビュアー化）
-
-```
-/zeus:pr-watch                                              # 5 分おき loop で常駐 (デフォルト)
-/zeus:pr-watch 15m                                          # 15 分おき loop
-/zeus:pr-watch 1h                                           # 1 時間おき loop
-/zeus:pr-watch --once                                       # 1 サイクルだけ実行
-/zeus:pr-watch repo:owner/another                           # 他リポジトリ
-```
-
-`/zeus:pr-watch` が以下を自動実行する:
-
-1. **モード判定**: 引数なし or `<interval>` のみなら loop モード、`--once` なら単発モード
-2. ユーザーに loop 開始通知（停止方法: Esc / 新規メッセージ送信）
-3. open かつ非 draft かつ非 bot 作成の PR を `gh pr list` で列挙
-4. 各 PR について以下のトリガーを評価:
-   - `fresh-review`: zeus レビューがまだ無い PR（**トリガーコメント不要、全 open PR が対象**）
-   - `re-review`: zeus レビュー済みだが head SHA が変わった
-   - `comment-response`: zeus レビュー済みで、SHA は同じだが新規ユーザーコメントあり
-5. アクション対象が **6 件以上** あれば `AskUserQuestion` で「全件処理 / 上位 5 件 / キャンセル」を確認（初回スパム防止）
-6. トリガー検出した PR を `/zeus:pr-review <N>` に順次委譲（**投稿前承認 UI は挟まず即投稿**、unattended 運用前提）
-7. loop モードならサイクル完了後に `Skill` ツール経由で `/loop {interval} /zeus:pr-watch --once` を起動して常駐化
-8. 状態は **すべて GitHub 側の HTML マーカーから再構築** するためローカル状態ファイル無し → ループが落ちても再起動で完全復旧
-
-PR を open するだけで次のスキャンサイクルで自動レビューが走る（コメントトリガー不要）。
-レビューに対してユーザーが「これは方針」と返信すれば、次サイクルで `.zeus/review-memory.md` に学習が蓄積される。
-特定 PR を即時レビューしたい場合は `/zeus:pr-review 42` で直接呼び出すこともできる。
-
-### 6. プロジェクト PM（セッション横断のコンテキスト管理）
+### 4. プロジェクト PM（セッション横断のコンテキスト管理）
 
 ```
 /zeus:pm-init                    # interactive: team / personal / both を選択
@@ -266,21 +202,21 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 
 ## 出力ディレクトリ
 
-`/zeus:plan` `/zeus:dev` の生成物:
+`/zeus:dev` の生成物:
 
 ```
 .claude/zeus/{ts}-{slug}/
-├── plan.md                 ← /zeus:plan が作成
-├── raw/                    ← 計画フェーズの生レポート
+├── plan.md                    ← 統合プラン（計画フェーズの最終成果物）
+├── raw/                       ← 計画フェーズの生レポート（全文保存）
 │   ├── explorer.md
 │   ├── architect-initial.md
 │   ├── architect-critique.md
 │   ├── plan-review.md
-│   └── architect-revised-{n}.md  ← 差し戻し時のみ（n は 1 始まり）
-├── implementation.md       ← /zeus:dev が作成（動作確認結果も含む）
-├── review.md               ← /zeus:dev が作成
-├── review-{n}.md           ← Critical 修正後の再レビュー（あれば、n は 2 始まり）
-└── fix-log.md              ← 修正ループの履歴
+│   └── architect-revised-{n}.md  ← 差し戻し再策定時のみ（n は 1 始まり）
+├── implementation.md          ← 実装ログ・変更ファイル一覧・動作確認結果
+├── review.md                  ← zeus-reviewer の生レポート
+├── review-{n}.md              ← Critical/Warning 修正後の再レビュー（n は 2 始まり）
+└── fix-log.md                 ← 修正ループの履歴
 ```
 
 `/zeus:spec` の生成物:
@@ -289,7 +225,7 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 .claude/zeus/specs/{ts}-{slug}/
 ├── spec.md                 ← 構造化された仕様書
 ├── interview-log.md        ← ヒアリングのやりとり記録
-└── plan-handoff.md         ← /zeus:plan 橋渡し時の引き継ぎ
+└── plan-handoff.md         ← /zeus:dev 橋渡し時の引き継ぎ
 ```
 
 `/zeus:review` の生成物:
@@ -299,7 +235,7 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 ├── input.md                ← レビュー対象のサマリ
 ├── review.md               ← zeus-reviewer の一次レビュー
 ├── review-validated.md     ← zeus-review-validator の検証済み指摘
-└── plan-handoff.md         ← /zeus:plan へ橋渡し時の修正タスク記述
+└── plan-handoff.md         ← /zeus:dev へ橋渡し時の修正タスク記述
 ```
 
 `/zeus:tech-survey` の生成物:
@@ -310,26 +246,17 @@ PR を open するだけで次のスキャンサイクルで自動レビュー�
 ├── survey.md               ← zeus-tech-surveyor の一次調査レポート
 ├── survey-validated.md     ← zeus-survey-validator の検証済みレポート
 ├── tech-decision.md        ← 採用決定の記録（独立保存選択時のみ）
-└── plan-handoff.md         ← /zeus:plan へ橋渡し時の引き継ぎ
+└── plan-handoff.md         ← /zeus:dev へ橋渡し時の引き継ぎ
 ```
 
-`/zeus:pr-review` の生成物:
+`/zeus:debug` の生成物:
 
 ```
-.claude/zeus/pr-reviews/{ts}-{repo-slug}-{N}-{mode}/
-├── input.md                ← PR 情報・diff・モード判定の根拠
-├── memory-snapshot.md      ← その時点の .zeus/review-memory.md
-├── review.md               ← zeus-reviewer の一次レポート
-├── review-validated.md     ← zeus-review-validator の検証済み指摘
-├── findings-filtered.md    ← メモリ照合で除外/減衰した指摘の最終リスト
-├── comments-payload.md     ← 投稿前の inline + summary 完成形プレビュー
-└── memory-diff.md          ← comment-response モード時のメモリ追記差分
-```
-
-プロジェクトメモリ（リポジトリルートに作成。git で共有可能）:
-
-```
-.zeus/review-memory.md      ← Project Conventions / Won't Fix Patterns を蓄積
+.claude/zeus/debug/{ts}-{slug}/
+├── input.md                ← 報告された症状と再現条件
+├── debug-report.md         ← zeus-debugger の調査レポート（仮説一覧）
+├── debug-validated.md      ← zeus-debug-validator の検証済み根本原因
+└── plan-handoff.md         ← /zeus:dev へ橋渡し時の修正タスク記述
 ```
 
 Zeus PM の生成物（`/zeus:pm-init` がスケルトン生成、`/zeus:pm` で日常更新）:
@@ -354,20 +281,23 @@ PM 利用ルールは `<!-- zeus-pm:start --> ... <!-- zeus-pm:end -->` マー�
 
 Claude がセッション開始時に該当ファイルを読むことで PM を自動参照する。再 init はマーカー内だけを安全に置換するため、ユーザーが追加した独自セクションは保持される。
 
-## ultraplan / feature-dev からの移行
+## ultraplan / feature-dev / 旧 /zeus:plan からの移行
 
 | 旧 | 新 |
 |---|---|
-| `/ultraplan <task>` | `/zeus:plan <task>` |
-| `/feature-dev` の Phase 1-4（計画まで） | `/zeus:plan <task>` |
-| `/feature-dev` の Phase 5-7（実装以降） | `/zeus:dev <plan.md>` |
+| `/ultraplan <task>` | `/zeus:dev <task>` |
+| `/feature-dev <task>` | `/zeus:dev <task>` |
+| `/zeus:plan <task>` + `/zeus:dev <plan.md>` の 2 ステップ | `/zeus:dev <task>` の 1 ステップ |
+
+旧 `/zeus:plan` で作成済みの `plan.md` がある場合は `/zeus:dev <path/to/plan.md>` で実装フェーズだけ実行できる。
 
 ## 設計原則
 
-- **重要ポイントだけ確認**: 細かい質問の連発はしない
+- **ユーザーインタラクション最小**: `EnterPlanMode` は一切使わない。`AskUserQuestion` も要件ヒヤリングや承認では使わない
+- **bypassPermissions と両立**: プランモードに入らない設計なので、リモート bypassPermissions モードでも完走する
 - **生レポート保存厳守**: 後から議論の足跡を辿れる
-- **統合プランは単一案**: A/B 案を残すのは重大トレードオフだけ
-- **計画と実装の分離**: `/zeus:dev` は plan.md 必須（単独起動不可）
+- **統合プランは単一案**: A/B 案を残すのは plan-reviewer で「未解決リスク」として明記された場合だけ
+- **Critical / Warning は自動修正**: Info のみ記録扱い
 - **シンプル優先**: 観点を細分化せず、1 エージェントに統合観点を持たせる
 
 ## ライセンス

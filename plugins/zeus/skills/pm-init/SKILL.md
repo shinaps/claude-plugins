@@ -140,7 +140,7 @@ state.md と違って頻繁に変わらない静的な内容（ブランチ運�
 
 ## レビュープロセス
 
-- {例: PR には必ず /zeus:pr-review を回す（pr-watch で自動）}
+- {例: 単独レビューは /zeus:review、修正実装は /zeus:dev でセルフレビュー込みで進める}
 - {例: Critical 指摘は merge 前に解消、Warning は別 PR で OK}
 
 ## デプロイ / リリース
@@ -337,4 +337,4 @@ team モードのファイルは git で管理される。
 |---|---|
 | **`/zeus:pm-init`** | **初回セットアップ（このスキル）** |
 | `/zeus:pm` | 日常運用: brief / sync / decision / done / next |
-| `/zeus:plan` `/zeus:dev` `/zeus:review` 等 | PM の存在を前提にしない（直接 PM を更新しない）が、CLAUDE.md ルールにより Claude が完了時に `/zeus:pm sync` を呼ぶ習慣を持つ |
+| `/zeus:dev` `/zeus:review` 等 | PM の存在を前提にしない（直接 PM を更新しない）が、CLAUDE.md ルールにより Claude が完了時に `/zeus:pm sync` を呼ぶ習慣を持つ |
