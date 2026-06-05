@@ -17,7 +17,7 @@
 | `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → `zeus-implementer` で実装 + 動作確認まで委譲 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
-| `/zeus:refactor-loop [max=N] [include=<glob>] [exclude=<glob>]` | コードベース全体を無人ループで継続リファクタ。`zeus-refactor-scout` が次の 1 件を返し → `zeus-refactor-implementer` が contract boundary 宣言 → characterization test 整備 → 内部実装の大胆変更 (state 統合・hook 抽出・責務再編) → contract 維持のテスト検証 → 通れば `refactor:` プレフィックスで自動コミットして次ラウンド。失敗ラウンドは `git restore` で破棄。安全性は implementer セルフ + 次ラウンド scout の regression-suspect 再点検で二段防御 |
+| `/zeus:refactor-loop [max=N] [include=<glob>] [exclude=<glob>]` | コードベース全体を無人ループで継続リファクタ。**可読性向上が主軸**: 省略変数の改名・WHY コメント整備・早期リターン化のような細かい改善も、state 統合・hook 抽出・責務再編のような構造改善と同格に扱う。`zeus-refactor-scout` が次の 1 件を返し → `zeus-refactor-implementer` が contract boundary 宣言 → characterization test 整備 (意味構造に触れない軽量リファクタは簡易パスで省略可) → 内部実装の大胆変更 → contract 維持のテスト検証 → 通れば `refactor:` プレフィックスで自動コミットして次ラウンド。失敗ラウンドは `git restore` で破棄。安全性は implementer セルフ + 次ラウンド scout の regression-suspect 再点検で二段防御 |
 
 ## 同梱エージェント (13 体)
 
