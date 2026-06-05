@@ -1,7 +1,7 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 + フィジビリティ調査 → 計画策定 + 実装 + セルフレビュー → デバッグまでを `spec.md` / `plan.md` を介して連携する 6 スキル構成。
+要件定義 + フィジビリティ調査 → 計画策定 + 実装 + セルフレビュー → デバッグまでを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
 
 **設計の核**:
 - **EnterPlanMode は一切使わない** — `bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る
@@ -12,7 +12,6 @@
 
 | スキル | 役割 |
 |---|---|
-| `/zeus:init [shared\|personal]` | プロジェクトに zeus を初期化。CLAUDE.md (shared) または CLAUDE.local.md (personal) にマーカー付きで zeus 利用ガイド (どの作業でどのスキルを使うか) を挿入。personal モードでは `.claude/zeus/` も gitignore して完全 local 構成にできる。これにより Claude が毎セッション開始時に zeus の使い分けを自動参照 |
 | `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + 必要ならプロトタイプ実装) で「ほぼ実現できる」レベルまで仕様を詰める。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
 | `/zeus:tech-survey [spec.md/要望]` | 技術選定特化の深掘り調査。WebSearch / WebFetch で候補を観点別比較。`zeus-tech-surveyor` + `zeus-survey-validator` で鮮度・出典の妥当性も検証 |
 | `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → 実装 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |

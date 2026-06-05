@@ -6,15 +6,13 @@ shinaps が公開する Claude Code プラグインのマーケットプレイ�
 
 | 名前 | 説明 |
 |---|---|
-| `zeus` | feature-dev の上位互換となる開発フロープラグイン。仕様策定 + フィジビリティ調査 → 計画 + 実装 + セルフレビュー → デバッグを 6 スキル + 10 エージェントで連携。[詳細](./plugins/zeus/README.md) |
-| `pm` | プロジェクト継続コンテキスト管理プラグイン。「いま何やってる / 次やる / 進め方 / 過去の意思決定」をセッション横断で `.pm/` `.pm-local/` に蓄積。3 スキル + 1 エージェント。[詳細](./plugins/pm/README.md) |
+| `zeus` | feature-dev の上位互換となる開発フロープラグイン。仕様策定 + フィジビリティ調査 → 計画 + 実装 + セルフレビュー → デバッグを 5 スキル + 10 エージェントで連携。[詳細](./plugins/zeus/README.md) |
 
 ## インストール
 
 ```
 /plugin marketplace add shinaps/claude-plugins
 /plugin install zeus@shinaps
-/plugin install pm@shinaps
 ```
 
 ## アップデート
@@ -26,7 +24,6 @@ GitHub に新バージョンが push されたあと、Claude Code 上で実行:
 ```
 /plugin marketplace update shinaps
 /plugin update zeus@shinaps
-/plugin update pm@shinaps
 ```
 
 `/plugin marketplace update` だけだと marketplace カタログが更新されるのみで、プラグイン本体は変わりません。`/plugin update` までセットで実行してください。
@@ -58,7 +55,6 @@ git push
 
 ```bash
 claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
-claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 ```
 
 起動後、ファイルを編集したら `/reload-plugins` で即時反映。push 前の動作確認に便利です。
@@ -70,16 +66,10 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/pm
 ├── .claude-plugin/
 │   └── marketplace.json        # マーケットプレイス定義（全プラグインを列挙）
 └── plugins/
-    ├── zeus/                   # 開発フロープラグイン
-    │   ├── .claude-plugin/plugin.json
-    │   ├── skills/             # init / spec / tech-survey / dev / review / debug
-    │   │   └── <skill>/SKILL.md
-    │   └── agents/             # 10 体の zeus 専用エージェント
-    │       └── zeus-*.md
-    └── pm/                     # プロジェクト継続コンテキスト管理プラグイン
+    └── zeus/                   # 開発フロープラグイン
         ├── .claude-plugin/plugin.json
-        ├── skills/             # init / ask / sync
+        ├── skills/             # spec / tech-survey / dev / review / debug
         │   └── <skill>/SKILL.md
-        └── agents/
-            └── pm-agent.md
+        └── agents/             # 10 体の zeus 専用エージェント
+            └── zeus-*.md
 ```

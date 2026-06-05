@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。/zeus:init (CLAUDE.md or CLAUDE.local.md に zeus 利用ガイドをマーカー付きで挿入、shared / personal の 2 モード) → /zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review → /zeus:debug。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。10 体の zeus 専用エージェント同梱、6 スキル構成。PM 機能は別プラグイン pm を併用。",
-      "version": "3.4.0",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review → /zeus:debug。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。10 体の zeus 専用エージェント同梱、5 スキル構成。",
+      "version": "4.0.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
@@ -27,27 +27,6 @@
         "code-review",
         "agents",
         "feature-dev"
-      ]
-    },
-    {
-      "name": "pm",
-      "source": "./plugins/pm",
-      "description": "プロジェクト継続コンテキスト管理プラグイン。「いま何やってる / 次やる / 進め方 / 過去の意思決定」をセッション横断で .pm/ (commit) と .pm-local/ (gitignore) に蓄積する。3 スキル構成: /pm:init (初期化、solo / team / personal の 3 モード。solo は .pm/ + CLAUDE.md + 転写なし (1 人 or 全員 pm 入れる前提)、team は solo に加えて PM スキル本体 (ask / sync) と pm-agent を .claude/skills/pm-ask/ .claude/skills/pm-sync/ .claude/agents/pm-agent.md に転写し pm プラグイン未インストールのチームメンバーも /pm-ask /pm-sync で呼べる、personal は .pm-local/ + CLAUDE.local.md + 転写なし)、/pm:sync (直近の git 活動から state.md / decisions.md / roadmap.md への更新案を作成して適用、decision / done / next の単発操作も sync に統合)、/pm:ask (読み取り専用窓口: ブリーフィング + 軽量サマリ + 「先週何やった?」「あの決定の理由は?」などの自由質問に PM ファイル + git log から回答)。personal モードでは PM の存在自体が git に残らない設計。pm-agent 1 体同梱。zeus などの他プラグインから独立して動作。",
-      "version": "0.6.0",
-      "author": {
-        "name": "shinaps",
-        "email": "ryuta@shinaps.jp"
-      },
-      "homepage": "https://github.com/shinaps/claude-plugins",
-      "repository": "https://github.com/shinaps/claude-plugins",
-      "license": "MIT",
-      "category": "productivity",
-      "keywords": [
-        "project-management",
-        "pm",
-        "context",
-        "memory",
-        "session-continuity"
       ]
     }
   ]
