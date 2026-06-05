@@ -14,11 +14,11 @@
 |---|---|
 | `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + 必要ならプロトタイプ実装) で「ほぼ実現できる」レベルまで仕様を詰める。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
 | `/zeus:tech-survey [spec.md/要望]` | 技術選定特化の深掘り調査。WebSearch / WebFetch で候補を観点別比較。`zeus-tech-surveyor` + `zeus-survey-validator` で鮮度・出典の妥当性も検証 |
-| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → 実装 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |
+| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → `zeus-implementer` で実装 + 動作確認まで委譲 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
 
-## 同梱エージェント (10 体)
+## 同梱エージェント (11 体)
 
 | エージェント | 役割 |
 |---|---|
@@ -28,6 +28,7 @@
 | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定 (single best plan + self-critique) |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー (承認 / 条件付き承認 / 差し戻し) |
+| `zeus-implementer` | 確定 plan を忠実に実装、事前整合性チェック + Edit/Write + 動作確認 (型/lint/test) + implementation.md 執筆まで単独完走。メイン context 圧迫回避 + 責務の明確化が目的 |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー (confidence ≥ 80 でフィルタ) |
 | `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証 (false positive 排除 + 追加発見) |
 | `zeus-debugger` | 症状からコードを追跡し、WebSearch / GitHub Issue 検索で根本原因の仮説を立案 |

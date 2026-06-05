@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (explorer → architect → critique → plan-reviewer → 統合プラン → 実装 → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review → /zeus:debug。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。10 体の zeus 専用エージェント同梱、5 スキル構成。",
-      "version": "4.0.0",
+      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + デバッグプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (explorer → architect → critique → plan-reviewer → 統合プラン → zeus-implementer による実装委譲 + 動作確認 → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review → /zeus:debug。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。実装フェーズを zeus-implementer に委譲することでメインスレッドの context 圧迫を防ぎ責務を明確化。11 体の zeus 専用エージェント同梱、5 スキル構成。",
+      "version": "4.1.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"

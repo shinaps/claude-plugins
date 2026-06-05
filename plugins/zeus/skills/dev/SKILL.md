@@ -1,6 +1,6 @@
 ---
 name: dev
-description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 → zeus-architect で実装ブループリント策定 → 第三者レビュー → 実装 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
+description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 → zeus-architect で実装ブループリント策定 → 第三者レビュー → zeus-implementer で実装 + 動作確認 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
 argument-hint: <実装したい機能・解決したい課題>
 ---
 
@@ -39,6 +39,7 @@ argument-hint: <実装したい機能・解決したい課題>
 | Zeus Explorer | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定（初回 + self-critique） |
 | Zeus Plan Reviewer | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー |
+| Zeus Implementer | `zeus-implementer` | 確定 plan を忠実に実装 + 動作確認 (型/lint/test) + implementation.md 執筆まで完走 |
 | Zeus Reviewer | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー |
 
 ## 実行フロー
@@ -115,81 +116,50 @@ argument-hint: <実装したい機能・解決したい課題>
 
 統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に保存。
 
-### Phase 7: 実装事前チェック
+### Phase 7: 実装フェーズ（zeus-implementer 委譲）
 
-1. Phase 6 で作成した `plan.md` から以下要素を抽出:
-   - タスク理解
-   - アーキテクチャ判断
-   - 実装ブループリント（変更/新規ファイル一覧、ビルド順序）
-   - テスト戦略
-2. `raw/` の生レポート（explorer / architect / plan-reviewer）も改めて読む
-3. plan の「変更/新規ファイル一覧」が示すファイルを全て事前 Read する
-4. plan の「ビルド順序」を `TaskCreate` に展開して進捗管理を開始
+`zeus-implementer` を 1 体起動して、Phase 6 で確定した `plan.md` の実装を委ねる。
 
-**既存コードと plan の前提が食い違っていた場合**:
-- plan で「新規作成」とされたファイルが既に存在 → `AskUserQuestion` で「既存実装を活かす / 上書き / 統合」を確認
-- plan で「変更」とされたファイルが存在しない → `AskUserQuestion` で「該当部分スキップ / 新規作成として進む / タスク見直し」を確認
-- 軽微な差分（フォーマット / 追記済み程度）は `implementation.md` に記録して自動進行
+**狙い**: 実装中の Edit/Write 生差分・型/lint/test の生出力・raw レポートの全文 Read をメイン context から切り離し、メインは「plan 確定 → 実装結果サマリ → レビューループ判断」だけを保持する。
 
-### Phase 8: 実装
+#### implementer に渡すプロンプト
 
-plan の「ビルド順序」に従ってフェーズ順に実装する。
+- **タスク要約** (Phase 1 で確定した文字列)
+- **作業ディレクトリ**: `.claude/zeus/{ts}-{slug}/`
+- **plan.md パス**: `${WORK_DIR}/plan.md`
+- **raw レポートパス一覧**: `${WORK_DIR}/raw/explorer*.md`, `architect-initial.md`, `architect-critique.md`, `plan-review.md`, `architect-revised-{n}.md` (あれば)
+- **指示**: 「`zeus-implementer` の責務に従い、Phase A (事前整合性チェック) → Phase B (実装) → Phase C (`implementation.md` 執筆) → Phase D (動作確認) まで完走せよ。不明点・逸脱・既存衝突は必ず `AskUserQuestion` で確認すること」
 
-各フェーズ完了時に:
-- `TaskUpdate` で進捗更新
-- `implementation.md` の「変更ファイル」セクションに追記
+#### implementer の作業内容（参考）
 
-実装中:
-- plan に明示されていない設計判断が必要になった場合、まず `raw/` の関連レポートを参照
-- それでも判断が割れる / 不明な場合は `AskUserQuestion` で必ずユーザーに確認 (回数に制限なし)
-- plan からの **意図的な逸脱** が必要になった場合は `AskUserQuestion` で確認 + `implementation.md` に理由を記録
+| サブフェーズ | 内容 |
+|---|---|
+| A. 事前整合性チェック | plan + raw を全文 Read、変更ファイル群を Read、ビルド順序を `TaskCreate` 展開、既存衝突は `AskUserQuestion` |
+| B. 実装 | ビルド順序に従って Edit/Write、不明点は `AskUserQuestion`、逸脱は `AskUserQuestion` + 記録 |
+| C. `implementation.md` 執筆 | 変更ファイル / 逸脱 / 実装中の判断 / 課題 / 規約衝突を全文記録 |
+| D. 動作確認 | 型 / lint / build / test を順に実行、結果を `implementation.md` の「動作確認結果」に記録、自分のミスは 3 回まで自己修正 |
 
-### Phase 9: 実装ログ保存
+詳細は `agents/zeus-implementer.md` 参照。
 
-`implementation.md` を以下の形式で完成させる:
+#### implementer からの返却内容
 
-```markdown
-# 実装ログ
+implementer の最終応答には以下が含まれる:
 
-- plan: `./plan.md`
-- 実装開始: {YYYY-MM-DD HH:MM:SS}
-- 実装完了: {YYYY-MM-DD HH:MM:SS}
+1. 実装完了サマリ (3〜5 行)
+2. 変更ファイル一覧（パスのみ。詳細は `implementation.md` 参照）
+3. 動作確認結果サマリ（型 / lint / build / test の OK / NG / skip）
+4. 未解決の論点（あれば、メインがレビューループで判断すべき項目）
+5. `AskUserQuestion` で確認した事項の一覧
 
-## 変更ファイル
+メインはこれを受け取って Phase 8 (セルフレビュー) へ進む。`implementation.md` の全文を再読する必要は無い（必要な箇所だけ参照する）。
 
-- `path/to/new-file.ts` (新規) — {責務}
-- `path/to/modified-file.ts` (変更) — {変更内容}
+#### implementer が失敗 / 中断した場合
 
-## plan からの逸脱（あれば）
+- 動作確認の失敗が implementer 内で解消できなかった (3 回試行で直らない / 環境問題 / plan 前提との食い違い) → メインで状況を確認し、Phase 8 のレビュー対象として diff を渡す（reviewer が原因を特定 → 修正ループへ）
+- `AskUserQuestion` でユーザーが「タスク見直し」を選んだ → Phase 6 の plan 統合に戻る (再策定が必要なら `zeus-architect` を再起動)
+- ツールエラー等で implementer 自体が落ちた → メインが状況を `implementation.md` (なければ新規作成) に記録し、ユーザーに `AskUserQuestion` で「メインで続行 / セッション中断」を確認
 
-- {逸脱箇所}: {理由 / ユーザー判断の経緯}
-
-## 実装中の判断（plan に無かった論点）
-
-- {論点}: {採用した選択肢 / ユーザー確認結果}
-
-## 実装中に発見した課題
-
-- {scope 外として残した項目}
-```
-
-### Phase 10: 動作確認（型チェック・ビルド・テスト）
-
-プロジェクトに応じて以下のコマンドを順に試す（package.json / Makefile / pyproject.toml 等から検出）:
-
-- 型チェック: `tsc --noEmit` / `mypy` / `cargo check` 等
-- リント: `eslint` / `ruff` / `golangci-lint` 等
-- ビルド: `npm run build` / `cargo build` 等（必要な場合）
-- テスト: `npm test` / `pytest` / `cargo test` 等（plan で言及があれば）
-
-検出方針:
-- 利用可能なコマンドを試す。存在しないものは skip
-- 失敗があれば `implementation.md` の「動作確認結果」セクションに記録
-- **Critical な失敗（型エラー・テスト失敗等）は Phase 12 の修正ループへ繰り込む**
-
-実行できるコマンドが何もないプロジェクトの場合は、その旨を `implementation.md` に記録してスキップ。
-
-### Phase 11: セルフレビュー
+### Phase 8: セルフレビュー
 
 `zeus-reviewer` を 1 体起動。プロンプトには以下を含める:
 
@@ -199,18 +169,20 @@ plan の「ビルド順序」に従ってフェーズ順に実装する。
 
 応答を省略せず全文 `.claude/zeus/{ts}-{slug}/review.md` に保存。
 
-### Phase 12: 修正ループ
+### Phase 9: 修正ループ
 
 - **Critical は必ず自動修正**（自動進行、承認不要 — 動作を壊している指摘なので）
-- **Phase 10 で検出された動作確認の失敗** も Critical として修正
+- **Phase 7 (implementer の動作確認 Phase D) で検出された動作確認の失敗** も Critical として修正
 - **Warning は `AskUserQuestion` で確認**: 「全部修正 / 個別に確認 / 後回し (Issue 化) / スコープ外として記録」
 - **Info は記録のみで修正しない**
 
 修正を行った場合、`fix-log.md` に「指摘 → 修正内容 → 該当ファイル」を記録。
 
-### Phase 13: 修正後の再レビュー（Critical / Warning 修正時のみ）
+修正実装は **メインが直接 Edit/Write で行う** (implementer を再起動しない)。理由: 修正対象は通常 1〜数ファイルの局所的な変更で、reviewer の指摘文脈をメインが既に持っているため、implementer 委譲のオーバーヘッドが釣り合わない。大規模な再実装が必要な場合は `AskUserQuestion` で「メインで修正 / `zeus-implementer` 再起動 / Phase 6 に戻って plan 再策定」を確認する。
 
-Phase 12 で **Critical または Warning を修正した場合のみ**、もう一度 `zeus-reviewer` を起動する。
+### Phase 10: 修正後の再レビュー（Critical / Warning 修正時のみ）
+
+Phase 9 で **Critical または Warning を修正した場合のみ**、もう一度 `zeus-reviewer` を起動する。
 これは「修正で別バグを生むリスク」を検出するため。
 
 - プロンプトには「修正後の差分」「修正前の指摘」「修正内容」を渡す
