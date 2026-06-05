@@ -1,7 +1,7 @@
 ---
 name: refactor-loop
-description: コードベース全体を継続的にリファクタする無人ループスキル。zeus-refactor-scout が「次にリファクタすべき 1 件」を返し、zeus-refactor-implementer が contract boundary を宣言した上で characterization test 整備 → 内部実装の大胆な変更 (state 統合・hook 抽出・責務再編) → contract 維持のテスト検証まで完走、テスト通過したら refactor: プレフィックスで自動コミットして次ラウンドへ。普通モードはセルフレビュー + 次ラウンド scout の再点検で安全性を担保し、strict モードでは zeus-reviewer も挟む
-argument-hint: [max=N] [strict] [include=<glob>] [exclude=<glob>]
+description: コードベース全体を継続的にリファクタする無人ループスキル。zeus-refactor-scout が「次にリファクタすべき 1 件」を返し、zeus-refactor-implementer が contract boundary を宣言した上で characterization test 整備 → 内部実装の大胆な変更 (state 統合・hook 抽出・責務再編) → contract 維持のテスト検証まで完走、テスト通過したら refactor プレフィックスで自動コミットして次ラウンドへ。安全性は implementer のセルフ検証 + 次ラウンド scout の regression-suspect 再点検で二段防御
+argument-hint: [max=N] [include=<glob>] [exclude=<glob>]
 ---
 
 ## 引数仕様
@@ -10,12 +10,10 @@ argument-hint: [max=N] [strict] [include=<glob>] [exclude=<glob>]
 |---|---|
 | `/zeus:refactor-loop` | 無限ループ。scout が "no-more" を返すまで継続 |
 | `/zeus:refactor-loop max=10` | 最大 10 ラウンドで停止 |
-| `/zeus:refactor-loop strict` | 各ラウンドで `zeus-reviewer` も挟む (重量級、確実性重視) |
-| `/zeus:refactor-loop max=5 strict` | 組み合わせ可 |
 | `/zeus:refactor-loop include="src/**/*.ts"` | scout の探索範囲を絞る |
 | `/zeus:refactor-loop exclude="src/legacy/**"` | デフォルト除外に追加 |
 
-引数は順不同、複数渡し可。`max` は省略可 (デフォルト無限)、`strict` はフラグ。
+引数は順不同、複数渡し可。`max` は省略可 (デフォルト無限)。
 
 ## ディレクトリ規約
 
@@ -26,13 +24,9 @@ argument-hint: [max=N] [strict] [include=<glob>] [exclude=<glob>]
 ├── refactor-1.md                 ← ラウンド 1 の refactor-implementer ログ
 ├── refactor-2.md                 ← ラウンド 2 の refactor-implementer ログ
 ├── ...
-├── raw/
-│   ├── scout-1.md                ← ラウンド 1 の scout 生レポート
-│   ├── scout-2.md
-│   └── ...
-└── strict/                       ← strict モードのみ
-    ├── review-1.md
-    ├── review-2.md
+└── raw/
+    ├── scout-1.md                ← ラウンド 1 の scout 生レポート
+    ├── scout-2.md
     └── ...
 ```
 
@@ -42,7 +36,6 @@ argument-hint: [max=N] [strict] [include=<glob>] [exclude=<glob>]
 |---|---|---|
 | Zeus Refactor Scout | `zeus-refactor-scout` | 改善対象 1 件を返却 + 直近 3 件の regression-suspect 再点検 |
 | Zeus Refactor Implementer | `zeus-refactor-implementer` | contract boundary 宣言 → characterization test → リファクタ → contract 維持検証 |
-| Zeus Reviewer | `zeus-reviewer` | strict モードのみ起動。重量級レビュー (任意) |
 
 ## 実行フロー
 
@@ -50,18 +43,16 @@ argument-hint: [max=N] [strict] [include=<glob>] [exclude=<glob>]
 
 1. 引数を parse:
    - `max=N` → 最大ラウンド数 `MAX_ROUNDS` (省略時は無限、ただし安全のため hard limit 50)
-   - `strict` → `STRICT_MODE = true`
    - `include=<glob>` → 探索範囲 include 上書き
    - `exclude=<glob>` → デフォルト除外に追加
 2. 作業ディレクトリを作成: `.claude/zeus/{YYYYMMDD-HHMMSS}-refactor-loop/`
-3. `raw/` (+ strict 時は `strict/`) サブディレクトリも作成
+3. `raw/` サブディレクトリも作成
 4. `done.md` を初期化:
 
 ```markdown
 # refactor-loop 履歴
 
 開始: {YYYY-MM-DD HH:MM:SS}
-モード: normal | strict
 include: {デフォルト or 引数で上書き}
 exclude: {デフォルト + 引数追加}
 
@@ -112,8 +103,7 @@ implementer は Phase 0〜F を内部で完走し、`refactor-{round}.md` を執
 
 ##### `done` の場合
 
-1. STRICT_MODE なら Phase 2d へ進む (zeus-reviewer 挟む)
-2. STRICT_MODE でなければそのまま Phase 2e へ進む
+そのまま Phase 2e (コミット) へ進む。
 
 ##### `skipped` の場合
 
@@ -145,16 +135,6 @@ git clean -fd  # 新規ファイル (失敗した characterization test 等) も
 
 3. **同じファイルが 2 ラウンド連続で fail した場合**, そのファイルを done.md に `permanently-skipped` 状態で記録し、scout が今後扱わないようにマーク
 4. Phase 2e へ
-
-#### Phase 2d: strict モードレビュー (STRICT_MODE のみ)
-
-`zeus-reviewer` を起動し、ラウンドの diff + `refactor-{round}.md` を渡してレビュー。
-応答を `strict/review-{round}.md` に保存。
-
-| 判定 | アクション |
-|---|---|
-| Critical 無し | Phase 2e へ進む |
-| Critical あり | implementer 内修正は終わっているので、メインで修正 (最大 3 回) → 改善しなければ `git restore` で破棄、done.md に `failed: critical from strict review` 記録 |
 
 #### Phase 2e: コミット & 次ラウンド準備
 
@@ -200,7 +180,6 @@ EOF
 
 - 開始: {YYYY-MM-DD HH:MM:SS}
 - 完了: {YYYY-MM-DD HH:MM:SS}
-- モード: normal | strict
 - 終了理由: max-rounds-reached | no-more | user-interrupted | hard-limit
 - 総ラウンド数: {N}
 - 成功 (committed): {N}
@@ -251,7 +230,6 @@ EOF
 - **無人ループだが安全側に倒す**: 各ラウンドはテスト pass + contract 維持を確認してからコミット
 - **failed は git restore で巻き戻す**: 動作しない状態のコミットは絶対に残さない
 - **scout の再点検でデグレを後追い検出**: 直近 3 ラウンドの結果を次ラウンドの scout が軽く読む
-- **strict は任意挟み**: デフォルトは軽量 (セルフ + scout 再点検)、確実性重視時のみ zeus-reviewer
 - **EnterPlanMode は使わない**: bypassPermissions モードと両立
 - **dirty working tree の扱いは確認**: ユーザー意図を `AskUserQuestion` で確認してから進める
 - **無限ループの hard limit**: 安全のため最大 50 ラウンドで強制停止
