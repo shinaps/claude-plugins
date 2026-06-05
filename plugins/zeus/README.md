@@ -1,7 +1,7 @@
 # Zeus
 
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
-要件定義 + フィジビリティ調査 → 計画策定 + 実装 + セルフレビュー → デバッグまでを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
+要件定義 + フィジビリティ調査 → 計画策定 + 実装 + セルフレビュー → デバッグ → 継続リファクタまでを `spec.md` / `plan.md` を介して連携する 6 スキル構成。
 
 **設計の核**:
 - **EnterPlanMode は一切使わない** — `bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る
@@ -17,8 +17,9 @@
 | `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → `zeus-implementer` で実装 + 動作確認まで委譲 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
+| `/zeus:refactor-loop [max=N] [strict]` | コードベース全体を無人ループで継続リファクタ。`zeus-refactor-scout` が次の 1 件を返し → `zeus-refactor-implementer` が contract boundary 宣言 → characterization test 整備 → 内部実装の大胆変更 (state 統合・hook 抽出・責務再編) → contract 維持のテスト検証 → 通れば `refactor:` プレフィックスで自動コミットして次ラウンド。失敗ラウンドは `git restore` で破棄。strict モードで `zeus-reviewer` も挟める |
 
-## 同梱エージェント (11 体)
+## 同梱エージェント (13 体)
 
 | エージェント | 役割 |
 |---|---|
@@ -29,6 +30,8 @@
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定 (single best plan + self-critique) |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー (承認 / 条件付き承認 / 差し戻し) |
 | `zeus-implementer` | 確定 plan を忠実に実装、事前整合性チェック + Edit/Write + 動作確認 (型/lint/test) + implementation.md 執筆まで単独完走。メイン context 圧迫回避 + 責務の明確化が目的 |
+| `zeus-refactor-scout` | `/zeus:refactor-loop` で次にリファクタすべき 1 件を返却。done.md で既処理除外、直近 3 ラウンドの regression-suspect 軽量再点検も担う |
+| `zeus-refactor-implementer` | `/zeus:refactor-loop` で 1 件のリファクタを実行。**contract boundary を自分で宣言** → characterization test 整備 → contract を守る限り内部 (state 統合・hook 抽出・責務再編・命名刷新) は大胆に変更 → テストで contract 維持検証 → 違反時は `git restore` で破棄 |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー (confidence ≥ 80 でフィルタ) |
 | `zeus-review-validator` | reviewer の指摘を実コードと照合して事実確認・妥当性検証 (false positive 排除 + 追加発見) |
 | `zeus-debugger` | 症状からコードを追跡し、WebSearch / GitHub Issue 検索で根本原因の仮説を立案 |

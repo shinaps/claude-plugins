@@ -56,7 +56,7 @@ claude-plugins/
 
 ## 既存プラグイン
 
-- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / debug の 5 スキル構成
+- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / debug / refactor-loop の 6 スキル構成
 
 ## 関連リンク
 

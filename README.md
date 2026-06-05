@@ -6,7 +6,7 @@ shinaps が公開する Claude Code プラグインのマーケットプレイ�
 
 | 名前 | 説明 |
 |---|---|
-| `zeus` | feature-dev の上位互換となる開発フロープラグイン。仕様策定 + フィジビリティ調査 → 計画 + 実装 + セルフレビュー → デバッグを 5 スキル + 10 エージェントで連携。[詳細](./plugins/zeus/README.md) |
+| `zeus` | feature-dev の上位互換となる開発フロープラグイン。仕様策定 + フィジビリティ調査 → 計画 + 実装 + セルフレビュー → デバッグ → 継続リファクタを 6 スキル + 13 エージェントで連携。[詳細](./plugins/zeus/README.md) |
 
 ## インストール
 
@@ -68,8 +68,8 @@ claude --plugin-dir ~/dev/claude-plugins/plugins/zeus
 └── plugins/
     └── zeus/                   # 開発フロープラグイン
         ├── .claude-plugin/plugin.json
-        ├── skills/             # spec / tech-survey / dev / review / debug
+        ├── skills/             # spec / tech-survey / dev / review / debug / refactor-loop
         │   └── <skill>/SKILL.md
-        └── agents/             # 10 体の zeus 専用エージェント
+        └── agents/             # 13 体の zeus 専用エージェント
             └── zeus-*.md
 ```
