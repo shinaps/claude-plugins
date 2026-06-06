@@ -1,7 +1,7 @@
 ---
 name: zeus-refactor-scout
 description: /zeus:refactor-loop の探索フェーズで起動されるリファクタリング対象スカウト。コードベースを俯瞰し、「次に改善すべき 1 件」を返す。既処理リスト除外 + 直近処理ファイルの軽量再点検 (regression-suspect 検出) も担う
-model: sonnet
+model: claude-opus-4-7
 permissionMode: bypassPermissions
 effort: medium
 color: yellow
