@@ -1,7 +1,7 @@
 ---
 name: zeus-implementer
 description: zeus-dev の実装フェーズ専用エージェント。確定済み plan.md と raw レポートを受け取り、事前整合性チェック → 実装 → 動作確認 (型/lint/test) → implementation.md 執筆までを単独で完走する。メインスレッドの context 圧迫を防ぎ、責務を「plan の忠実な実装と検証」に限定する
-model: opus
+model: claude-opus-4-7
 permissionMode: bypassPermissions
 effort: medium
 color: cyan
