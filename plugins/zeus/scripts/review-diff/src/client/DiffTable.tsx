@@ -34,7 +34,7 @@ type Props = {
   token: string
 } & LineCommentHandlers
 
-export function DiffTable({ file, visibleHunks, expandable, token, ...lc }: Props) {
+export function DiffTable({ file, visibleHunks, expandable, token, ...handlers }: Props) {
   if (file.status === 'binary') {
     return <div className="binary-notice">Binary file (preview not available)</div>
   }
@@ -78,7 +78,7 @@ export function DiffTable({ file, visibleHunks, expandable, token, ...lc }: Prop
             }
             expandable={expandable}
             token={token}
-            lc={lc}
+            handlers={handlers}
           />
         )
       })}
@@ -100,14 +100,14 @@ function HunkBody({
   banner,
   expandable,
   token,
-  lc,
+  handlers,
 }: {
   hunk: Hunk
   file: ParsedFile
   banner: BannerRange | null
   expandable: boolean
   token: string
-  lc: LineCommentHandlers
+  handlers: LineCommentHandlers
 }) {
   // 展開済み行を保持する local state。初期は null、fetch 成功で SideBySideRow[] が入る。
   // null のまま = バナー表示、配列入り = context 行として描画。
@@ -148,7 +148,9 @@ function HunkBody({
     <tbody>
       {banner ? (
         expanded ? (
-          expanded.map((r, i) => <Row key={`exp-${i}`} row={r} file={file} lc={lc} />)
+          expanded.map((r, i) => (
+            <Row key={`exp-${i}`} row={r} file={file} handlers={handlers} />
+          ))
         ) : (
           <tr>
             <td colSpan={4} className="unchanged-banner">
@@ -184,45 +186,79 @@ function HunkBody({
         )
       ) : null}
       {hunk.rows.map((r, i) => (
-        <Row key={i} row={r} file={file} lc={lc} />
+        <Row key={i} row={r} file={file} handlers={handlers} />
       ))}
     </tbody>
   )
 }
 
-function Row({ row, file, lc }: { row: SideBySideRow; file: ParsedFile; lc: LineCommentHandlers }) {
-  // この行のコメント側 (side) と行番号を決める。
-  // 優先: right に line 番号があれば right (context / addition)、無ければ left (deletion)。
-  // どちらにも無ければコメント不可 (empty 行)。
-  const target: { side: 'left' | 'right'; number: number } | null =
-    row.right.line != null
-      ? { side: 'right', number: row.right.line }
-      : row.left.line != null
-        ? { side: 'left', number: row.left.line }
-        : null
+type CommentTarget = { side: 'left' | 'right'; number: number }
 
+// この行のコメント側 (side) と行番号を決める。
+// 優先: right に line 番号があれば right (context / addition)、無ければ left (deletion)。
+// どちらにも無ければコメント不可 (empty 行)。
+function resolveCommentTarget(row: SideBySideRow): CommentTarget | null {
+  if (row.right.line != null) return { side: 'right', number: row.right.line }
+  if (row.left.line != null) return { side: 'left', number: row.left.line }
+  return null
+}
+
+function LineCommentTriggerButton({
+  side,
+  filePath,
+  lineNumber,
+  onOpenLineForm,
+}: {
+  side: 'left' | 'right'
+  filePath: string
+  lineNumber: number
+  onOpenLineForm: LineCommentHandlers['onOpenLineForm']
+}) {
+  return (
+    <button
+      type="button"
+      className="line-comment-trigger"
+      aria-label="Add comment to this line"
+      title="Add comment"
+      onClick={() => onOpenLineForm(filePath, side, lineNumber)}
+    >
+      +
+    </button>
+  )
+}
+
+function Row({
+  row,
+  file,
+  handlers,
+}: {
+  row: SideBySideRow
+  file: ParsedFile
+  handlers: LineCommentHandlers
+}) {
+  const target = resolveCommentTarget(row)
   const key = target ? lineCommentKey(file.path, target.side, target.number) : null
-  const savedList = key ? lc.lineComments.get(key) : undefined
+  const savedList = key ? handlers.lineComments.get(key) : undefined
   const hasSaved = !!savedList && savedList.length > 0
-  const formOpen = key !== null && lc.activeForm === key
+  const formOpen = key !== null && handlers.activeForm === key
+  // 左 gutter は deletion 行 (right に番号が無いケース) のとき、
+  // 右 gutter は context / addition のときにトリガを出す。
+  // 反対側はその行に対しては行番号自体が無いので描画しない。
+  const showLeftTrigger = target?.side === 'left' && !formOpen
+  const showRightTrigger = target?.side === 'right' && !formOpen
 
   return (
     <>
       <tr className="code-row">
         <td className={`ln ln-l ln-${row.left.type}`}>
           {row.left.line ?? ''}
-          {/* 左 gutter は deletion 行 (right に番号が無いケース) のときのみトリガを出す。
-              context / addition では右 gutter 側で扱うので、ここでは描画しない。 */}
-          {target && target.side === 'left' && !formOpen ? (
-            <button
-              type="button"
-              className="line-comment-trigger"
-              aria-label="Add comment to this line"
-              title="Add comment"
-              onClick={() => lc.onOpenLineForm(file.path, 'left', target.number)}
-            >
-              +
-            </button>
+          {showLeftTrigger && target ? (
+            <LineCommentTriggerButton
+              side="left"
+              filePath={file.path}
+              lineNumber={target.number}
+              onOpenLineForm={handlers.onOpenLineForm}
+            />
           ) : null}
         </td>
         <td className={`code code-${row.left.type}`}>
@@ -230,16 +266,13 @@ function Row({ row, file, lc }: { row: SideBySideRow; file: ParsedFile; lc: Line
         </td>
         <td className={`ln ln-r ln-${row.right.type}`}>
           {row.right.line ?? ''}
-          {target && target.side === 'right' && !formOpen ? (
-            <button
-              type="button"
-              className="line-comment-trigger"
-              aria-label="Add comment to this line"
-              title="Add comment"
-              onClick={() => lc.onOpenLineForm(file.path, 'right', target.number)}
-            >
-              +
-            </button>
+          {showRightTrigger && target ? (
+            <LineCommentTriggerButton
+              side="right"
+              filePath={file.path}
+              lineNumber={target.number}
+              onOpenLineForm={handlers.onOpenLineForm}
+            />
           ) : null}
         </td>
         <td className={`code code-${row.right.type}`}>
@@ -258,19 +291,19 @@ function Row({ row, file, lc }: { row: SideBySideRow; file: ParsedFile; lc: Line
                   lineKey={key}
                   index={i}
                   body={body}
-                  editingBody={lc.editing.get(`${key}#${i}`)}
-                  onStartEdit={lc.onStartEditLineComment}
-                  onCancelEdit={lc.onCancelEditLineComment}
-                  onSaveEdit={lc.onSaveEditLineComment}
-                  onDelete={lc.onDeleteLineComment}
+                  editingBody={handlers.editing.get(`${key}#${i}`)}
+                  onStartEdit={handlers.onStartEditLineComment}
+                  onCancelEdit={handlers.onCancelEditLineComment}
+                  onSaveEdit={handlers.onSaveEditLineComment}
+                  onDelete={handlers.onDeleteLineComment}
                 />
               ))}
               {formOpen ? (
                 <NewCommentForm
                   onSave={(body) =>
-                    lc.onAddLineComment(file.path, target.side, target.number, body)
+                    handlers.onAddLineComment(file.path, target.side, target.number, body)
                   }
-                  onCancel={lc.onCloseLineForm}
+                  onCancel={handlers.onCloseLineForm}
                 />
               ) : null}
             </div>
