@@ -56,6 +56,7 @@ export type UseChannelSSEResult = {
     groupId: string,
     direction: 'more' | 'less',
     currentRanges: CurrentRange[],
+    groupTitle?: string,
   ) => Promise<void>
 }
 
@@ -149,6 +150,7 @@ export function useChannelSSE(
     groupId: string,
     direction: 'more' | 'less',
     currentRanges: CurrentRange[],
+    groupTitle?: string,
   ): Promise<void> => {
     // 連打防止: pendingRef が既に立っていれば即 return (state の遅延を待たない)
     if (pendingRef.current != null) return
@@ -164,7 +166,7 @@ export function useChannelSSE(
       await fetchImpl(`/feedback?token=${encodeURIComponent(browserToken)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, groupId, direction, currentRanges }),
+        body: JSON.stringify({ sessionId, groupId, groupTitle, direction, currentRanges }),
       })
     } catch {
       // POST 自体の失敗 (network) なら spinner を即解除して再試行可能にする

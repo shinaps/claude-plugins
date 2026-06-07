@@ -107,6 +107,7 @@ export function buildNotificationFromFeedback(rawData: string, env: SessionEnv):
 } | null {
   let payload: {
     groupId?: unknown
+    groupTitle?: unknown
     direction?: unknown
     currentRanges?: unknown
   }
@@ -118,6 +119,10 @@ export function buildNotificationFromFeedback(rawData: string, env: SessionEnv):
   if (typeof payload.groupId !== 'string') return null
   if (payload.direction !== 'more' && payload.direction !== 'less') return null
   const currentRanges = Array.isArray(payload.currentRanges) ? payload.currentRanges : []
+  // 人間が title で書きやすいよう group_title を別属性で乗せる (groupId は安定 ID `g${i}` で
+  // Claude にとっては意味希薄なため、再生成プロンプトを書くときの取っ掛かりを別途用意する)。
+  // groupTitle 未指定なら空文字を入れる (属性自体は常に出して content schema を一定にする)。
+  const groupTitle = typeof payload.groupTitle === 'string' ? payload.groupTitle : ''
   // content は Claude Code がプロンプト上で読み取る人間可読 + 機械パースしやすい形式。
   // meta に同じ情報を構造化して入れることで、Claude Code 側のどちらの経路でも復元できるようにする。
   return {
@@ -126,15 +131,27 @@ export function buildNotificationFromFeedback(rawData: string, env: SessionEnv):
       content:
         `<channel source="review-diff" event="regen-group" ` +
         `session_id="${env.sessionId}" group_id="${payload.groupId}" ` +
+        `group_title="${escapeAttr(groupTitle)}" ` +
         `direction="${payload.direction}">`,
       meta: {
         sessionId: env.sessionId,
         groupId: payload.groupId,
+        groupTitle,
         direction: payload.direction,
         currentRanges,
       },
     },
   }
+}
+
+// XML 属性値として安全な形に escape する (notification content は Claude Code 側で
+// プロンプトとしてパースされるため、quote / ampersand / 山括弧を最低限処理する)。
+function escapeAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 // reply tool handler の純関数版。fetch を差し替え可能にしてテストする。
@@ -219,7 +236,7 @@ export async function runMcpServer(options: RunOptions = {}): Promise<void> {
   const sessionMap: SessionMap = new Map()
 
   const mcp = new Server(
-    { name: 'review-diff', version: '4.7.0' },
+    { name: 'review-diff', version: '4.7.1' },
     {
       capabilities: {
         experimental: { 'claude/channel': {} },

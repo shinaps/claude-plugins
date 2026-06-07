@@ -440,53 +440,141 @@ body { min-height: 100vh; }
   font-family: ui-monospace, monospace;
 }
 
-/* ---------- Diff table ---------- */
-.panel-table {
-  width: 100%;
-  border-collapse: collapse;
+/* ---------- Diff panel (CSS Grid 構造、v4.7.1 で <table> から置換) ---------- */
+/* 旧 <table> 構造では「左右独立横スクロール + 50/50 + 行高同期」が CSS 仕様上同時充足
+   不可能だったため、div + CSS Grid に全面置換した。
+   - split mode: panel-body を 2 列 grid (minmax(0,1fr) x2) で分割し、各 panel-side が
+     独立した overflow-x: auto スクロールコンテナ。これで「per-side 1 scrollbar + 50/50 +
+     blowout 防止」を構造的に達成。
+   - unified mode: 単一 scroll container 内で 3 列 grid (gutter+gutter+code)。
+   - 行高同期: Panel.tsx の useLayoutEffect (ResizeObserver) が両 side の同一インデックス行の
+     offsetHeight max を min-height として書き戻す JS 同期方式 (subgrid は別 scroll container を
+     またげないため不採用)。 */
+.panel-grid {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  /* table-layout: fixed だと code カラムが親幅に強制縮小されて折り返しが発生する。
-     auto + min-width で「内容に合わせて広がる」挙動にし、親の overflow-x: auto と組み合わせて
-     必要なら横スクロールさせる方針に変更。 */
-  table-layout: auto;
   background: var(--surface);
 }
-.panel-table td { padding: 0 10px; vertical-align: top; line-height: 1.55; }
-.panel-table td.ln {
-  width: 52px;
+
+/* split body: 親 grid 2 列、各 column が独立 scroll container */
+.panel-body-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* 左 side と右 side の境界線 (gap 1px で表現) */
+  background: var(--border-soft);
+  gap: 1px;
+}
+/* 案 F: display: contents 廃止、.code-row 自身を flex box にして row 単位で bg を塗る。
+   理由: display: grid + minmax(max-content, 1fr) + display: contents の組み合わせで Chromium が
+   grid item の background paint area を viewport 幅でクリップする現象 + sticky cell-ln の
+   containing block が壊れる現象 (Adrian Roselli「display: contents は box を消すので bg/border/sticky
+   が機能しない設計」) が確認された。.code-row 自身を flex box にして `min-width: max-content` で
+   widest cell まで row が物理的に広がる → row の bg が paint area = box area = max-content 全幅で
+   確実に描画。sticky cell-ln も flex item として正常動作 (sticky in flex は全ブラウザサポート)。 */
+.panel-side {
+  background: var(--surface);
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  display: block;
+}
+/* panel-side-inner: row 全行を縦に積む inner wrapper。`width: max-content` で「widest cell の幅」、
+   `min-width: 100%` で「container 幅以上」を保証 → 全 row が同じ幅 (uniform) になり、scroll 時にも
+   sticky gutter の containing block が安定。 */
+.panel-side-inner {
+  width: max-content;
+  min-width: 100%;
+}
+/* code-row は inner 内で 100% 幅を取る (= inner の幅 = uniform 全行同幅) */
+.panel-side .code-row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+/* unified body: 単一 scroll container。row 構造は split と同じ flex だが、列が 3 つ (gutter asIs +
+   gutter toBe + code) なので panel-body-unified の row だけ専用クラスで管理。 */
+.panel-body-unified {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.panel-body-unified .code-row {
+  display: flex;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* row 単位の bg: cell-code-* と同じ色を row に塗ることで scrollable overflow rectangle 全幅まで
+   bg が paint される。cell-code 自身の bg は不要 (将来 .cell-code-* セレクタを使う他箇所と
+   重複しないよう注意) → 既存 .cell-code-addition / .cell-code-deletion / .cell-code-empty の
+   背景指定は削除する (下記参照)。 */
+.code-row-addition { background: var(--add-bg); }
+.code-row-deletion { background: var(--del-bg); }
+.code-row-empty { background: rgba(255, 255, 255, 0.015); }
+
+/* segment 区切り (前 segment と次 segment の間に細い divider) */
+.panel-segment-divider {
+  height: 0;
+  border-top: 1px dashed var(--border-soft);
+  margin: 4px 0;
+}
+
+/* gutter cell (旧 td.ln 相当)
+   案 F (flex row): gutter は flex item として `flex: 0 0 52px`、`position: sticky; left: 0` で
+   row 横スクロール中も左端に固定。row 自身が flex で box を持つので sticky の containing block
+   が壊れない (display: contents 時の sticky 貫通バグを回避)。
+   gutter の bg は不透明 surface を必須に: scroll 時 code 文字が裏を流れて gutter を貫通しないよう
+   linear-gradient で row bg 色を載せた不透明レイヤで覆う。 */
+.cell-ln {
+  flex: 0 0 52px;
+  padding: 0 10px;
   text-align: right;
   color: var(--text-dim);
   user-select: none;
   background: var(--surface);
   border-right: 1px solid var(--border-soft);
   font-size: 11px;
+  line-height: 1.55;
   font-variant-numeric: tabular-nums;
-  position: relative;
-  padding-right: 10px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
 }
-/* 両 code カラムを均等幅 (calc((100% - 104px) / 2)) に固定。シンプルさ重視。
-   table-layout: fixed + width: 100% で container 幅に対して均等に半分ずつ占有する。
-   長い行がある場合は親 .panel-block の overflow-x: auto と table の min-width 拡張で
-   パネル全体が横スクロールする (行単位 / セル単位ではなく、左右の対応関係を保ったまま動く)。 */
-.panel-table {
-  table-layout: fixed;
-  width: 100%;
-  /* 内容に応じて min-width で広がる: max-content より大きければそれを採用して
-     パネル全体スクロールを発火させる。 */
-  min-width: max(100%, max-content);
+/* unified mode の 2 つ目の gutter (toBe 側) は最初の gutter (52px) の直後に貼り付ける */
+.panel-body-unified .code-row > .cell-ln + .cell-ln {
+  left: 52px;
 }
-.panel-table td.code {
+/* add/del 行の gutter は row bg が透過なので、不透明 surface ベース + row 色 overlay で覆う */
+.cell-ln-addition {
+  background: linear-gradient(var(--add-bg), var(--add-bg)) var(--surface);
+  color: var(--add-fg);
+}
+.cell-ln-deletion {
+  background: linear-gradient(var(--del-bg), var(--del-bg)) var(--surface);
+  color: var(--del-fg);
+}
+.cell-ln.cell-ln-empty { background: var(--surface); }
+
+/* code cell (旧 td.code 相当)
+   flex: 1 0 auto — 短行では 1fr で container 残幅を埋め、長行では auto で max-content まで広がる。
+   row の min-width: max-content と組み合わせて、row 自体が widest cell まで物理的に広がる。 */
+.cell-code {
+  flex: 1 0 auto;
+  padding: 0 10px;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
   color: var(--text);
-  /* table-layout: fixed の影響で長い行はセルからはみ出すが、min-width: max-content で
-     table 全体が広がっているので、.panel-block の横スクロールで表示できる。
-     セルからのはみ出しは overflow: visible で隣接セルに重ねず table の右側に流す。 */
-  overflow: visible;
+  line-height: 1.55;
+  min-width: 0;
+  /* ドラッグで複数行コメント範囲を切れるよう、コード列のテキスト選択は無効化する。
+     pointerdown 起点のドラッグ = 範囲コメントの開始という UX 上の役割を優先したため、
+     テキスト copy は OS のアクセシビリティ機能 or 行ごとの右クリックで賄う前提。 */
+  user-select: none;
+  cursor: text;
 }
-.panel-table td.code pre {
+.cell-code pre {
   margin: 0;
   background: transparent !important;
   padding: 0;
@@ -496,17 +584,12 @@ body { min-height: 100vh; }
   word-break: normal;
   overflow: visible;
 }
-.panel-table td.code-addition { background: var(--add-bg); }
-.panel-table td.code-deletion { background: var(--del-bg); }
-.panel-table td.code-empty { background: rgba(255,255,255,0.015); }
-.panel-table td.ln.ln-addition { background: var(--add-bg); color: var(--add-fg); }
-.panel-table td.ln.ln-deletion { background: var(--del-bg); color: var(--del-fg); }
+/* cell-code 単位の bg は不要 (row 単位で塗っているため)。残しておくと row bg と重なって
+   色が濃くなるので削除。代わりに syntax highlight された pre は背景透過 (上 cell-code pre rule)。 */
 
 /* ---------- Line comment trigger (Linear / GitHub PR 風) ---------- */
-/* gutter セル内に絶対配置で「+」ボタンを置き、行 hover 時のみ薄く可視化する。
-   ボタン自身の hover で完全不透明 + accent 背景 にして、明確にクリック可能と分かるようにする。
-   pointer-events: none ではダメ (クリックさせたい) なので opacity でフェード制御する。 */
-.panel-table td.ln { position: relative; }
+/* gutter cell 内に絶対配置で「+」ボタンを置き、行 hover 時のみ薄く可視化する。
+   ボタン自身の hover で完全不透明 + accent 背景 にして、明確にクリック可能と分かるようにする。 */
 .line-comment-trigger {
   position: absolute;
   /* gutter の **左端** に配置する。
@@ -542,34 +625,19 @@ body { min-height: 100vh; }
    左 (赤) パネルの gutter / コードをホバー中は左 gutter の + のみ、
    右 (緑) パネルの gutter / コードをホバー中は右 gutter の + のみ可視化する。
    こうすることで「赤と緑どちらの行にコメントしようとしているか」がボタン位置で即わかる。
-   :has() で同じ tr 内の反対 side のセルが hover されているかを判定する。 */
-/* ---------- Hunk origin markers ----------
-   AI が文脈として追加した範囲 (ai-context) や、CLI が小 gap を自動で繋いだ範囲 (auto-bridge) は、
-   diff の主役 ("changed" hunk) と区別したい — ただし「テキスト で説明」してユーザーを読ませるのは
-   設計哲学に反する。視線の流れだけで違いが分かるよう、tbody の左端に細い垂直アクセントを立てる。
-   背景は触らず、code の色も変えない (= 読みやすさを最優先)。 */
-.panel-table tbody.hunk-ai-context td.ln-asis {
-  box-shadow: inset 2px 0 0 var(--accent-soft);
-}
-.panel-table tbody.hunk-auto-bridge td.ln-asis {
-  box-shadow: inset 2px 0 0 var(--border);
-}
-
-.panel-table tr.code-row:has(td.ln-asis:hover, td.code-asis:hover) td.ln-asis .line-comment-trigger { opacity: 0.85; }
-.panel-table tr.code-row:has(td.ln-tobe:hover, td.code-tobe:hover) td.ln-tobe .line-comment-trigger { opacity: 0.85; }
+   grid 化後は left/right が別 scroll container (panel-side-asis / panel-side-tobe) なので、
+   親 wrapper hover で side 全体に効かせる方が自然 (cross-side の :has() は不要)。
+   unified mode は同一 row 内に左右 cell があるので :has() で同様判定する。 */
+/* 案 F: .code-row が box を持つので :hover が正常動作。row hover で対応 side の trigger を点灯。 */
+.panel-side-asis .code-row:hover .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
+.panel-side-tobe .code-row:hover .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
+.panel-body-unified .code-row:has(.cell-ln-asis:hover, .cell-code-asis:hover) .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
+.panel-body-unified .code-row:has(.cell-ln-tobe:hover, .cell-code-tobe:hover) .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
 
 /* ドラッグ中 (snapIndicatorToLine が body.is-dragging-line-range を立てた間) は
    通常の + ボタンを完全に隠す。ドラッグインジケータ (.drag-cursor-indicator) が同じ見た目で
    現在の行に出ているので、開始行のボタンは冗長 (むしろ「位置が違う + が 2 つ」に見えて混乱の元)。 */
 body.is-dragging-line-range .line-comment-trigger { display: none; }
-
-/* 追加 only ファイルでは左カラム (旧コード) は常に空になるので、 列を畳んで右に空間を譲る。
-   colgroup の col に css で width:0 を当てても td 自体は残るため、td.ln-asis と td.code-asis も
-   display: none する。これで sole-added file の diff が code 列いっぱいに広がって読みやすい。 */
-.panel-table[data-no-left="true"] colgroup col:nth-child(1),
-.panel-table[data-no-left="true"] colgroup col:nth-child(2) { display: none; }
-.panel-table[data-no-left="true"] td.ln-asis,
-.panel-table[data-no-left="true"] td.code-asis { display: none; }
 
 /* ドラッグ範囲選択中、カーソル左横に表示される追従インジケータ。
    GitHub PR の挙動を模倣: + アイコンがマウスを追いかけ、「今ドラッグ中で範囲行コメントを
@@ -602,37 +670,34 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 .line-comment-trigger:focus-visible { opacity: 1; outline: 2px solid var(--accent-soft); outline-offset: 1px; }
 
 /* ドラッグ範囲選択中のハイライト。code セルだけでなく gutter (ln) にも被せる方が、
-   どこからどこまで選択中か視線で追いやすい。テキスト選択は drag 中に発生しないよう、
-   コード列の onPointerDown で preventDefault している (DiffTable 側)。
+   どこからどこまで選択中か視線で追いやすい。
    transition は付けない: 1 frame 追従の即時切り替えにすることで「ぐいーっと」スムーズな
-   ドラッグ感を出す (フェードすると遅延を感じる)。 */
-.panel-table tr.code-row.line-selected td.code,
-.panel-table tr.code-row.line-selected td.ln {
+   ドラッグ感を出す (フェードすると遅延を感じる)。
+   grid 化後は .code-row > (.cell-ln, .cell-code) の子セレクタで対応。 */
+.code-row.line-selected > .cell-ln,
+.code-row.line-selected > .cell-code {
   background: rgba(113, 112, 255, 0.28);
   transition: none;
 }
-.panel-table tr.code-row.line-selected td.code { color: var(--text); }
-/* Shiki が <pre style="background-color:#24292e"> をインラインで吐くため、td.code の
+/* sticky gutter は code が裏を流れるので、不透明 surface 層の上にハイライトを載せて透けを防ぐ */
+.code-row.line-selected > .cell-ln {
+  background: linear-gradient(rgba(113, 112, 255, 0.28), rgba(113, 112, 255, 0.28)) var(--surface);
+}
+.code-row.line-selected > .cell-code { color: var(--text); }
+/* Shiki が <pre style="background-color:#24292e"> をインラインで吐くため、.cell-code の
    line-selected 背景が pre の不透明背景に隠れて見えなかった。pre の背景だけを
    透過化して line-selected ハイライトを表面に出す。 */
-.panel-table tr.code-row.line-selected td.code pre { background: transparent !important; }
-/* ドラッグで複数行コメント範囲を切れるよう、コード列のテキスト選択は無効化する。
-   pointerdown 起点のドラッグ = 範囲コメントの開始という UX 上の役割を優先したため、
-   テキスト copy は OS のアクセシビリティ機能 or 行ごとの右クリックで賄う前提。
-   cursor は text にして「ドラッグでテキスト的に範囲選択できる」ことを示唆 (crosshair より
-   既存のテキスト選択メンタルモデルに馴染む)。 */
-.panel-table td.code {
-  user-select: none;
-  cursor: text;
-}
+.code-row.line-selected > .cell-code pre { background: transparent !important; }
 
 /* ---------- Inline comment row (吹き出し + フォーム) ---------- */
-.panel-table tr.comment-row > td {
-  /* code 部分の padding を打ち消して、内側のスレッド領域が全幅で並ぶようにする */
-  padding: 0;
+.comment-row {
   background: var(--surface-2);
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
+}
+.comment-row > .comment-cell {
+  /* code 部分の padding を打ち消して、内側のスレッド領域が全幅で並ぶようにする */
+  padding: 0;
 }
 .comment-thread {
   display: flex;
@@ -741,105 +806,6 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
   color: #fff;
 }
 .comment-btn-save:hover { filter: brightness(1.08); }
-
-/* ---------- Unchanged lines banner ----------
-   「N unchanged lines」の畳まれた領域を示す横長バナー。
-   旧実装 (font-size 11px / monospace / 中央 underline テキスト) は視認性が低く「展開できる」
-   affordance も弱かったため、GitHub PR / Linear 風に: 中央に double-chevron アイコン +
-   太字テキスト + 補助 hint を flex 横並びで並べ、行全体を 1 つの clickable ボタンに置換。
-   colspan={4} で diff の全 4 列を占有する。 */
-.unchanged-banner-row > td {
-  padding: 0;
-  background: var(--surface-2);
-  border-top: 1px solid var(--border-soft);
-  border-bottom: 1px solid var(--border-soft);
-}
-.unchanged-banner-btn {
-  /* min-height 40px でタップターゲットも十分確保 (旧実装は ~30px で狭かった)。 */
-  width: 100%;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 10px 16px;
-  background: transparent;
-  border: 0;
-  color: var(--text-muted);
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
-}
-.unchanged-banner-btn:hover:not(:disabled) {
-  background: var(--surface-3);
-  color: var(--text);
-}
-.unchanged-banner-btn:hover:not(:disabled) .unchanged-banner-icon {
-  color: var(--accent);
-  transform: scale(1.08);
-}
-.unchanged-banner-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.unchanged-banner-btn:disabled { cursor: default; }
-/* PR モード: expand 不可。hover でも色が変わらないようにする (誤クリック誘発防止)。 */
-.unchanged-banner-btn[data-state="readonly"] {
-  cursor: default;
-  color: var(--text-dim);
-}
-.unchanged-banner-btn[data-state="readonly"]:hover {
-  background: transparent;
-  color: var(--text-dim);
-}
-.unchanged-banner-btn[data-state="readonly"]:hover .unchanged-banner-icon {
-  color: var(--text-dim);
-  transform: none;
-}
-
-/* アイコン: 16px 角の double-chevron。color プロパティで stroke 色を引き継がせる。 */
-.unchanged-banner-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-dim);
-  flex-shrink: 0;
-  transition: color 120ms ease, transform 120ms ease;
-}
-.unchanged-banner-icon svg { width: 100%; height: 100%; }
-
-/* メインテキスト: 行数を強調。tabular-nums で N が変わっても揺れない。 */
-.unchanged-banner-text {
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-.unchanged-banner-btn[data-state="readonly"] .unchanged-banner-text { color: var(--text-muted); }
-
-/* 補助 hint: 「Click to expand」「Loading…」など。区切り中点で添える。 */
-.unchanged-banner-hint {
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 400;
-}
-.unchanged-banner-hint::before {
-  content: '·';
-  margin-right: 6px;
-  color: var(--text-dim);
-}
-.unchanged-banner-error {
-  color: var(--danger);
-  font-size: 12px;
-}
-.unchanged-banner-error::before {
-  content: '·';
-  margin-right: 6px;
-  color: var(--text-dim);
-}
 
 /* ---------- comment area ---------- */
 .comment-block {
@@ -1063,7 +1029,8 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
   overflow: hidden;
 }
 .panel-block.is-reviewed { opacity: 0.62; }
-.panel-body { overflow-x: auto; }
+/* .panel-body の overflow は mode 別 (.panel-body-split / .panel-body-unified) で個別に管理。
+   split は per-side scroll、unified は body 全体 scroll なので、ここでは指定しない。 */
 .panel-footer {
   display: flex;
   justify-content: flex-end;
@@ -1142,3 +1109,70 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 
 /* group-panels-column (旧 group-files-column 互換) */
 .group-panels-column { min-width: 0; display: flex; flex-direction: column; }
+
+/* ---------- W-2: unified mode の comment thread + side バッジ ----------
+   unified モードでは comment row が colSpan=3 で全幅 1 セル。thread の左に asIs/toBe バッジを
+   置いて「どちら側に対するコメントか」を即視認できるようにする (split のように左右分割で表現
+   できないため、視覚的に差分側を区別する別手段としての色付きバッジ)。 */
+.comment-thread-unified {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 18px 10px 18px;
+}
+.comment-thread-unified > .comment-thread {
+  flex: 1;
+  /* unified では gutter オフセットを廃止して全幅を使う */
+  padding: 0;
+}
+.comment-side-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.comment-side-badge[data-side="asis"] {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--del-fg);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+.comment-side-badge[data-side="tobe"] {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--add-fg);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
+
+/* ---------- I-4: source 取得失敗バナー (panel 上部) ----------
+   sources Map に panel.file が無いケース (PR の gh api 失敗 or AI による file path typo) を
+   "全行 empty" の panel として黙って描画してしまう旧挙動を、明示的に理由を伝えるバナーで
+   置き換える。情報量を最小化し、原因仮説を 1 文添える (UX 設計哲学に従い long description は
+   付けない)。data-kind に応じて色を変える: pr-fetch-failed は警告、unknown-file は注意。 */
+.sources-unavailable-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(248, 113, 113, 0.08);
+  border-bottom: 1px solid rgba(248, 113, 113, 0.25);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sources-unavailable-banner[data-kind="unknown-file"] {
+  background: rgba(250, 204, 21, 0.08);
+  border-bottom-color: rgba(250, 204, 21, 0.3);
+}
+.sources-unavailable-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.sources-unavailable-text { color: var(--text-muted); }

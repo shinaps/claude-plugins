@@ -17,22 +17,24 @@ console.log('[review-diff] client bundle build:', typeof __BUILD_ID__ !== 'undef
 // ログする。出力例: target=SPAN(.text-token) td-closest=Yes data-side=right data-line=42
 window.addEventListener('pointerdown', (e) => {
   const t = e.target as HTMLElement | null
-  const td = t?.closest?.('td.code[data-side]') as HTMLElement | null
+  // v4.7.1: <table>/<td> → <div class="cell-code"/.cell-ln> grid 化に伴いセレクタ更新。
+  // [data-side][data-line-number] で gutter / code どちらの cell でも当たる。
+  const codeCell = t?.closest?.('.cell-code[data-side]') as HTMLElement | null
+  const cell = t?.closest?.('[data-side][data-line-number]') as HTMLElement | null
   const trigger = t?.closest?.('.line-comment-trigger') as HTMLElement | null
   const modal = t?.closest?.('.modal-dialog')
   const actionBar = t?.closest?.('.action-bar')
-  // クリック座標とその直下にある全要素を「文字列で」一行ログ。配列の展開不要。
   const elsAtPoint = document.elementsFromPoint(e.clientX, e.clientY)
     .slice(0, 6)
     .map((el) => `${el.tagName}.${typeof el.className === 'string' ? el.className.toString().slice(0, 30) : ''}`)
     .join(' > ')
   const triggerRect = trigger?.getBoundingClientRect()
-  const tdRect = (t?.closest?.('td') as HTMLElement | null)?.getBoundingClientRect()
-  const tdClass = (t?.closest?.('td') as HTMLElement | null)?.className
-  const td2 = tdRect ?? { left: 0, top: 0 }
+  const cellRect = cell?.getBoundingClientRect()
+  const cellClass = cell?.className
+  const c2 = cellRect ?? { left: 0, top: 0 }
   const trg2 = triggerRect ?? { left: 0, top: 0 }
   console.log(
-    `[pd] xy=(${e.clientX | 0},${e.clientY | 0}) target=${t?.tagName}.${(t?.className ?? '').toString().slice(0,40)} td=${tdClass}@(${td2.left | 0},${td2.top | 0}) inTdCode=${!!td} inTrigger=${!!trigger} trigger@(${trg2.left | 0},${trg2.top | 0}) stack=[${elsAtPoint}]`
+    `[pd] xy=(${e.clientX | 0},${e.clientY | 0}) target=${t?.tagName}.${(t?.className ?? '').toString().slice(0,40)} cell=${cellClass}@(${c2.left | 0},${c2.top | 0}) inCellCode=${!!codeCell} inTrigger=${!!trigger} trigger@(${trg2.left | 0},${trg2.top | 0}) stack=[${elsAtPoint}]`
   )
 }, true)
 

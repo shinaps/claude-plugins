@@ -12,15 +12,23 @@ import { renderMarkdown } from './markdown'
 type Props = {
   index: number
   total: number
+  groupId: string
   title: string
   description: string
   panels: RenderedPanel[]
   reviewedPanels: Set<string>
   onJumpToPanel: (panelId: string) => void
+  // context+/- 関連: GroupNav (sticky 左 pane) 内のサマリ近くに置くことで視認性を上げる
+  channelsEnabled: boolean
+  ctxDisabled: boolean
+  ctxTooltip: string
+  isPendingHere: boolean
+  onRequestContext: (groupId: string, direction: 'more' | 'less') => void
 }
 
 export function GroupNav({
-  index, total, title, description, panels, reviewedPanels, onJumpToPanel,
+  index, total, groupId, title, description, panels, reviewedPanels, onJumpToPanel,
+  channelsEnabled, ctxDisabled, ctxTooltip, isPendingHere, onRequestContext,
 }: Props) {
   const num = String(index + 1).padStart(2, '0')
   const tot = String(total).padStart(2, '0')
@@ -34,6 +42,19 @@ export function GroupNav({
       <h2 className="group-title">{title}</h2>
       {descHtml ? (
         <div className="group-desc" dangerouslySetInnerHTML={{ __html: descHtml }} />
+      ) : null}
+      {channelsEnabled ? (
+        <div className="group-context-actions" role="group" aria-label="Request more context">
+          <button
+            type="button"
+            className={`btn-context btn-context-more${isPendingHere ? ' is-pending' : ''}`}
+            disabled={ctxDisabled}
+            title={ctxTooltip}
+            onClick={() => onRequestContext(groupId, 'more')}
+          >
+            {isPendingHere ? '⋯' : '+'} context
+          </button>
+        </div>
       ) : null}
       {panels.length ? (
         <div className="group-panel-list">

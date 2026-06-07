@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "review-diff": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/review-diff/dist/channel-server.js"]
+    }
+  }
+}

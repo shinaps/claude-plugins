@@ -1,18 +1,25 @@
-// 1 Panel = 1 <table> でレンダリングするコンポーネント。
+// 1 Panel = 1 CSS Grid (div ベース) でレンダリングするコンポーネント。
 //
-// 設計判断:
-//   - AC-6 (panel 跨ぎコメント不可) を構造的に担保するため、各 panel が独立した <table> + ref を持ち、
-//     pointermove 中の elementFromPoint で取得した td を panelTableRef.contains(cell) で
-//     scope チェックする。別 panel のセルは即 null 化される。
-//   - split / unified モード切替は colgroup を切り替えるだけで row 構造は維持。
-//     split: gutter(asIs) | code(asIs) | gutter(toBe) | code(toBe)  4 列
-//     unified: gutter(asIs+toBe) | gutter(toBe) | code  3 列 (左右 2 つの行番号セル + 1 つのコード列)
-//       実装上は同じ <tr> に asIs/toBe の line セルを左に並べ、code は toBe 優先で出す。
-//   - DOM data 属性は shared/sideToAttr で 'asis'/'tobe' に統一 (既存 data-line-number と整合)。
+// 設計判断 (v4.7.1 grid refactor):
+//   - 旧 <table> 構造では「左右独立横スクロール + 50/50 + 行高同期」が CSS 仕様上同時充足
+//     不可能だった (table cell は per-cell scroll しか出来ず、列方向の cell 群を 1 つの scroll
+//     viewport に束ねる box が CSS table model に存在しない)。
+//     対症療法 (table-layout fixed/auto、useLayoutEffect で table.style.width 実測など 4 回試行)
+//     はすべて根本的に解決不能だったため、DOM 構造そのものを div + CSS Grid に置換した。
+//   - split mode: panel-grid を 2 列 (asIs side + toBe side) で構成。
+//     各 side は独立した overflow-x:auto コンテナで、その中で gutter + code を縦に積む。
+//     これにより「左右独立 1 スクロールバー」+「per-side blowout 防止 (minmax(0, 1fr))」を構造的に達成。
+//   - 行高同期: ResizeObserver で各 side の同一インデックス .code-row の offsetHeight max を
+//     min-height として書き戻す JS 同期方式。
+//     subgrid は同一 scroll container 内でしか機能しないため per-side scroll と排他。
+//   - unified mode: 単一カラム (gutter asIs + gutter toBe + code 1 列) の grid。
+//     左右 scroll 分割は不要なので panel-side wrapper は無い。
+//   - AC-6 (panel 跨ぎコメント不可): panelContainerRef.contains(cell) で構造的に担保。
+//     セレクタは `closest('[data-side][data-line-number]')` に統一 (td/div どちらでも動く)。
 //   - LineCommentHandlers は panelId 単位で thread を管理する。
 //   - sortAnchorKeys: 範囲 → 単一の順、で並べる (旧 DiffTable と同じ UX)。
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
 import { lineCommentKey, parseLineCommentKey } from './state'
@@ -61,7 +68,82 @@ export const Panel = memo(function Panel({
   const { mode, toggle } = usePanelToggle(panel.panelId)
   const [drag, setDrag] = useState<DragState>(null)
   const dragRef = useRef<DragState>(null)
-  const panelTableRef = useRef<HTMLTableElement>(null)
+  // 旧 panelTableRef → panelContainerRef。div ベースに変わったので HTMLDivElement で受ける。
+  // resolveLineAtPoint の AC-6 scope check (別 panel の cell を弾く) で使用。
+  const panelContainerRef = useRef<HTMLDivElement>(null)
+
+  // 行高同期 (split mode のみ): per-side scroll container が分かれた結果、左右で行高がズレる
+  // (例: 左 side のみ wrap して高さが伸びるケース)。subgrid なら親 grid 内で自動的に揃うが、
+  // 本実装では左右が別 scroll container なので subgrid が使えない。
+  // ResizeObserver で各 .code-row を観測し、両 side の同一インデックス行の offsetHeight max を
+  // min-height として書き戻して同期する。requestAnimationFrame で coalesce してレイアウト
+  // スラッシングを防ぐ。
+  useLayoutEffect(() => {
+    if (mode !== 'split') return
+    const container = panelContainerRef.current
+    if (!container) return
+    let raf = 0
+    const sync = () => {
+      raf = 0
+      // 案 F: .code-row が box を持つので row 単位で観測 + min-height を当てる (cell 単位より単純)。
+      const leftRows = container.querySelectorAll<HTMLElement>('.panel-side-asis .code-row')
+      const rightRows = container.querySelectorAll<HTMLElement>('.panel-side-tobe .code-row')
+      const n = Math.min(leftRows.length, rightRows.length)
+      for (let i = 0; i < n; i++) {
+        leftRows[i].style.minHeight = ''
+        rightRows[i].style.minHeight = ''
+      }
+      for (let i = 0; i < n; i++) {
+        const h = Math.max(leftRows[i].offsetHeight, rightRows[i].offsetHeight)
+        leftRows[i].style.minHeight = `${h}px`
+        rightRows[i].style.minHeight = `${h}px`
+      }
+    }
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(sync)
+    }
+    sync()
+    const ro = new ResizeObserver(schedule)
+    container.querySelectorAll<HTMLElement>('.code-row').forEach((el) => ro.observe(el))
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+      container.querySelectorAll<HTMLElement>('.code-row').forEach((el) => {
+        el.style.minHeight = ''
+      })
+    }
+  }, [panel.segments, mode])
+
+  // 左右スクロール同期 (split mode のみ): per-side が独立 overflow-x:auto なので、
+  // 片側を横スクロールすると反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」
+  // = 1 panel 内では asIs / toBe の scrollLeft が常に一致するべき。
+  // 双方向 mirror で sync する。リエントラント防止のため flag で再帰呼び出しを抑止。
+  useLayoutEffect(() => {
+    if (mode !== 'split') return
+    const container = panelContainerRef.current
+    if (!container) return
+    const asis = container.querySelector<HTMLElement>('.panel-side-asis')
+    const tobe = container.querySelector<HTMLElement>('.panel-side-tobe')
+    if (!asis || !tobe) return
+    let syncing = false
+    const mirror = (src: HTMLElement, dst: HTMLElement) => () => {
+      if (syncing) return
+      syncing = true
+      dst.scrollLeft = src.scrollLeft
+      // 次フレームで flag を下ろす (scroll event がもう一方から発火し終わるのを待つ)
+      requestAnimationFrame(() => { syncing = false })
+    }
+    const onAsis = mirror(asis, tobe)
+    const onTobe = mirror(tobe, asis)
+    asis.addEventListener('scroll', onAsis, { passive: true })
+    tobe.addEventListener('scroll', onTobe, { passive: true })
+    return () => {
+      asis.removeEventListener('scroll', onAsis)
+      tobe.removeEventListener('scroll', onTobe)
+    }
+  }, [mode])
+
   const setDragBoth = useCallback((next: DragState) => {
     dragRef.current = next
     setDrag(next)
@@ -106,15 +188,16 @@ export const Panel = memo(function Panel({
   }
 
   // カーソル位置 → 対象行 (panel scoped)。別 panel の cell はここで null に落ちる (AC-6)。
+  // セレクタは td でも div でも動くように `[data-side][data-line-number]` で統一。
   function resolveLineAtPoint(
     clientX: number, clientY: number, expectSide: Side,
   ): number | null {
     const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
     if (!el) return null
-    const cell = el.closest('td[data-side]') as HTMLElement | null
+    const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
     if (!cell) return null
-    // panelTableRef.contains で AC-6 構造的担保: 別 panel の cell は無視
-    if (panelTableRef.current && !panelTableRef.current.contains(cell)) return null
+    // panelContainerRef.contains で AC-6 構造的担保: 別 panel の cell は無視
+    if (panelContainerRef.current && !panelContainerRef.current.contains(cell)) return null
     const sideAttr = cell.dataset.side
     const side = sideAttr ? attrToSide(sideAttr) : null
     const num = cell.dataset.lineNumber
@@ -124,7 +207,7 @@ export const Panel = memo(function Panel({
   }
 
   function handlePointerDown(
-    e: React.PointerEvent<HTMLTableCellElement>,
+    e: React.PointerEvent<HTMLDivElement>,
     side: Side,
     lineNumber: number,
   ) {
@@ -137,7 +220,7 @@ export const Panel = memo(function Panel({
     })
   }
 
-  function handlePointerMove(e: React.PointerEvent<HTMLTableCellElement>) {
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     const cur = dragRef.current
     if (!cur) return
     const next = resolveLineAtPoint(e.clientX, e.clientY, cur.side)
@@ -145,7 +228,7 @@ export const Panel = memo(function Panel({
     setDragBoth({ ...cur, currentNumber: next })
   }
 
-  function handlePointerUp(e: React.PointerEvent<HTMLTableCellElement>) {
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     const cur = dragRef.current
     if (!cur) return
     if (e.type === 'pointerup' && e.button > 0) return
@@ -189,70 +272,247 @@ export const Panel = memo(function Panel({
   }, [handlers.lineComments, handlers.activeForm, panel.panelId])
 
   return (
-    <div className="panel" data-panel-id={panel.panelId}>
+    <div
+      className={`panel-grid panel-grid-${mode}`}
+      data-panel-id={panel.panelId}
+      ref={panelContainerRef}
+    >
       <PanelHeader panel={panel} mode={mode} onToggle={toggle} />
-      <div className="panel-body">
-        <table
-          ref={panelTableRef}
-          className={`panel-table panel-table-${mode}`}
-          data-panel-id={panel.panelId}
-        >
-          {mode === 'split' ? (
-            <colgroup>
-              <col style={{ width: 52 }} />
-              <col style={{ width: 'calc((100% - 104px) / 2)' }} />
-              <col style={{ width: 52 }} />
-              <col style={{ width: 'calc((100% - 104px) / 2)' }} />
-            </colgroup>
-          ) : (
-            <colgroup>
-              <col style={{ width: 52 }} />
-              <col style={{ width: 52 }} />
-              <col style={{ width: 'calc(100% - 104px)' }} />
-            </colgroup>
-          )}
-          {panel.segments.map((seg, si) => (
-            <tbody key={`seg-${si}`} className="panel-segment">
-              {seg.rows.map((row, ri) => (
-                <RowAndComments
-                  key={`r-${si}-${ri}`}
-                  row={row}
-                  mode={mode}
-                  panel={panel}
-                  highlight={highlight}
-                  isInDragRange={isInDragRange}
-                  onLinePointerDown={handlePointerDown}
-                  onLinePointerMove={handlePointerMove}
-                  onLinePointerUp={handlePointerUp}
-                  commentKeysByAnchor={commentKeysByAnchor}
-                  handlers={handlers}
-                />
-              ))}
-            </tbody>
-          ))}
-        </table>
-      </div>
+      {panel.sourcesUnavailable ? (
+        <SourcesUnavailableBanner info={panel.sourcesUnavailable} />
+      ) : null}
+      {mode === 'split' ? (
+        <SplitBody
+          panel={panel}
+          highlight={highlight}
+          commentKeysByAnchor={commentKeysByAnchor}
+          handlers={handlers}
+          isInDragRange={isInDragRange}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        />
+      ) : (
+        <UnifiedBody
+          panel={panel}
+          highlight={highlight}
+          commentKeysByAnchor={commentKeysByAnchor}
+          handlers={handlers}
+          isInDragRange={isInDragRange}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        />
+      )}
     </div>
   )
 })
 
-// 1 行 + その行をアンカーとする comment thread / form を 1 セットで出す。
-function RowAndComments({
-  row, mode, panel, highlight,
-  isInDragRange, onLinePointerDown, onLinePointerMove, onLinePointerUp,
-  commentKeysByAnchor, handlers,
-}: {
-  row: SideBySideRow
-  mode: 'split' | 'unified'
+type RowHandlerProps = {
+  isInDragRange: (side: Side, lineNumber: number | undefined) => boolean
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>, side: Side, lineNumber: number) => void
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void
+}
+
+type BodyProps = {
   panel: RenderedPanel
   highlight: boolean
-  isInDragRange: (side: Side, lineNumber: number | undefined) => boolean
-  onLinePointerDown: (e: React.PointerEvent<HTMLTableCellElement>, side: Side, lineNumber: number) => void
-  onLinePointerMove: (e: React.PointerEvent<HTMLTableCellElement>) => void
-  onLinePointerUp: (e: React.PointerEvent<HTMLTableCellElement>) => void
   commentKeysByAnchor: Map<string, string[]>
   handlers: LineCommentHandlers
-}) {
+} & RowHandlerProps
+
+// split mode body: 親 grid を 2 列に分け、各列を独立 overflow-x:auto コンテナにする。
+// 各 side 内では「コードセル + その下に該当 side のコメントスレッド」を縦に積む。
+// asIs コメントは左 side、toBe コメントは右 side に出る (構造上左右に紐づくので自然)。
+function SplitBody({
+  panel, highlight, commentKeysByAnchor, handlers, ...rowProps
+}: BodyProps) {
+  // 全 row を flatten。segment 区切りは divider 行で表現。
+  const flat: Array<{ row: SideBySideRow; segmentIndex: number; rowIndex: number; isFirstOfSegment: boolean }> = []
+  panel.segments.forEach((seg, si) => {
+    seg.rows.forEach((row, ri) => {
+      flat.push({ row, segmentIndex: si, rowIndex: ri, isFirstOfSegment: ri === 0 && si > 0 })
+    })
+  })
+  return (
+    <div className="panel-body panel-body-split">
+      <div className="panel-side panel-side-asis" data-side-container="asis">
+        {/* panel-side-inner で width: max-content + min-width: 100% を持たせ、内側 row 全行が
+            同じ width (= widest cell)。これで全行で bg paint area が揃い、sticky の containing
+            block が安定 (panel-side が scroll container、inner がその子で flex row を縦に積む)。 */}
+        <div className="panel-side-inner">
+          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment }) => (
+            <SideRow
+              key={`asis-${segmentIndex}-${rowIndex}`}
+              side="asIs"
+              row={row}
+              panel={panel}
+              highlight={highlight}
+              isFirstOfSegment={isFirstOfSegment}
+              commentKeysByAnchor={commentKeysByAnchor}
+              handlers={handlers}
+              {...rowProps}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="panel-side panel-side-tobe" data-side-container="tobe">
+        <div className="panel-side-inner">
+          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment }) => (
+            <SideRow
+              key={`tobe-${segmentIndex}-${rowIndex}`}
+              side="toBe"
+              row={row}
+              panel={panel}
+              highlight={highlight}
+              isFirstOfSegment={isFirstOfSegment}
+              commentKeysByAnchor={commentKeysByAnchor}
+              handlers={handlers}
+              {...rowProps}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// split mode 内の 1 side 1 行 + (その side の) コメント。
+// 行高同期 (ResizeObserver) のために .code-row class を必ず付ける。
+function SideRow({
+  side, row, panel, highlight, isFirstOfSegment,
+  commentKeysByAnchor, handlers,
+  isInDragRange, onPointerDown, onPointerMove, onPointerUp,
+}: {
+  side: Side
+  row: SideBySideRow
+  panel: RenderedPanel
+  highlight: boolean
+  isFirstOfSegment: boolean
+  commentKeysByAnchor: Map<string, string[]>
+  handlers: LineCommentHandlers
+} & RowHandlerProps) {
+  const lang = side === 'asIs' ? (panel.asIsLanguage ?? 'plaintext') : (panel.toBeLanguage ?? 'plaintext')
+  const cell = side === 'asIs' ? row.asIs : row.toBe
+  const html = useMemo(
+    () => highlight ? highlightCode(cell.raw, lang) : escapeHtml(cell.raw),
+    [highlight, cell.raw, lang],
+  )
+
+  const anchorKeys = cell.line != null
+    ? (commentKeysByAnchor.get(`${side}\x1f${cell.line}`) ?? [])
+    : []
+
+  const inRange = isInDragRange(side, cell.line)
+  const selectedClass = inRange ? ' line-selected' : ''
+  const sideClass = side === 'asIs' ? 'asis' : 'tobe'
+
+  function gutterPointerProps(lineNumber: number | undefined) {
+    if (lineNumber == null) return {}
+    return {
+      'data-side': sideToAttr(side),
+      'data-line-number': String(lineNumber),
+      onPointerDown: (e: React.PointerEvent<HTMLDivElement>) =>
+        onPointerDown(e, side, lineNumber),
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel: onPointerUp,
+    }
+  }
+  function codeDataAttrs(lineNumber: number | undefined) {
+    if (lineNumber == null) return {}
+    return {
+      'data-side': sideToAttr(side),
+      'data-line-number': String(lineNumber),
+    }
+  }
+
+  return (
+    <>
+      {isFirstOfSegment ? <div className="panel-segment-divider" aria-hidden="true" /> : null}
+      {/* row 自身に cell.type (context/addition/deletion/empty) のクラスも持たせ、row 単位で bg を
+          塗る (案 F: display: contents 廃止、min-width: max-content の row 全幅で bg paint area が
+          確実に row 物理幅まで広がる)。display: contents だと paint area が viewport 幅で
+          クリップされる Chromium 挙動を回避。 */}
+      <div className={`code-row code-row-${sideClass} code-row-${cell.type}${selectedClass}`}>
+        <div
+          className={`cell-ln cell-ln-${sideClass} cell-ln-${cell.type}`}
+          {...gutterPointerProps(cell.line)}
+        >
+          {cell.line ?? ''}
+          {cell.line != null ? (
+            <LineTrigger
+              panelId={panel.panelId}
+              side={side}
+              lineNumber={cell.line}
+              onOpenLineForm={handlers.onOpenLineForm}
+            />
+          ) : null}
+        </div>
+        <div
+          className={`cell-code cell-code-${sideClass} cell-code-${cell.type}`}
+          {...codeDataAttrs(cell.line)}
+        >
+          <pre dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
+      </div>
+      {anchorKeys.length > 0
+        ? sortAnchorKeys(anchorKeys).map((key) => (
+            <CommentRow
+              key={key}
+              lineKey={key}
+              panel={panel}
+              handlers={handlers}
+              mode="split"
+            />
+          ))
+        : null}
+    </>
+  )
+}
+
+// unified mode body: 単一 scroll container、3 列 grid (asIs gutter + toBe gutter + code)。
+// 表示行は asIs (deletion) / toBe (addition) / context のうち、片側に line がある方を
+// メインで出す。両側 context なら toBe を表示。
+function UnifiedBody({
+  panel, highlight, commentKeysByAnchor, handlers,
+  isInDragRange, onPointerDown, onPointerMove, onPointerUp,
+}: BodyProps) {
+  return (
+    <div className="panel-body panel-body-unified">
+      {panel.segments.map((seg, si) => (
+        <div className="panel-segment" key={`seg-${si}`}>
+          {seg.rows.map((row, ri) => (
+            <UnifiedRow
+              key={`r-${si}-${ri}`}
+              row={row}
+              panel={panel}
+              highlight={highlight}
+              commentKeysByAnchor={commentKeysByAnchor}
+              handlers={handlers}
+              isInDragRange={isInDragRange}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function UnifiedRow({
+  row, panel, highlight, commentKeysByAnchor, handlers,
+  isInDragRange, onPointerDown, onPointerMove, onPointerUp,
+}: {
+  row: SideBySideRow
+  panel: RenderedPanel
+  highlight: boolean
+  commentKeysByAnchor: Map<string, string[]>
+  handlers: LineCommentHandlers
+} & RowHandlerProps) {
   const asIsLang = panel.asIsLanguage ?? 'plaintext'
   const toBeLang = panel.toBeLanguage ?? 'plaintext'
   const asIsHtml = useMemo(
@@ -272,18 +532,18 @@ function RowAndComments({
 
   const asIsInRange = isInDragRange('asIs', row.asIs.line)
   const toBeInRange = isInDragRange('toBe', row.toBe.line)
-  const rowSelectedClass = asIsInRange || toBeInRange ? ' line-selected' : ''
+  const selectedClass = asIsInRange || toBeInRange ? ' line-selected' : ''
 
   function gutterPointerProps(side: Side, lineNumber: number | undefined) {
     if (lineNumber == null) return {}
     return {
       'data-side': sideToAttr(side),
       'data-line-number': String(lineNumber),
-      onPointerDown: (e: React.PointerEvent<HTMLTableCellElement>) =>
-        onLinePointerDown(e, side, lineNumber),
-      onPointerMove: onLinePointerMove,
-      onPointerUp: onLinePointerUp,
-      onPointerCancel: onLinePointerUp,
+      onPointerDown: (e: React.PointerEvent<HTMLDivElement>) =>
+        onPointerDown(e, side, lineNumber),
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel: onPointerUp,
     }
   }
   function codeDataAttrs(side: Side, lineNumber: number | undefined) {
@@ -294,12 +554,17 @@ function RowAndComments({
     }
   }
 
+  const showToBe = row.toBe.type !== 'empty'
+  const codeSide: Side = showToBe ? 'toBe' : 'asIs'
+  const codeCell = showToBe ? row.toBe : row.asIs
+  const codeSideClass = codeSide === 'asIs' ? 'asis' : 'tobe'
+  const codeHtml = showToBe ? toBeHtml : asIsHtml
+
   return (
     <>
-      <tr className={`code-row${rowSelectedClass}`}>
-        {/* asIs gutter */}
-        <td
-          className={`ln ln-asis ln-${row.asIs.type}`}
+      <div className={`code-row code-row-unified code-row-${codeCell.type}${selectedClass}`}>
+        <div
+          className={`cell-ln cell-ln-asis cell-ln-${row.asIs.type}`}
           {...gutterPointerProps('asIs', row.asIs.line)}
         >
           {row.asIs.line ?? ''}
@@ -311,72 +576,28 @@ function RowAndComments({
               onOpenLineForm={handlers.onOpenLineForm}
             />
           ) : null}
-        </td>
-        {mode === 'split' ? (
-          <>
-            <td
-              className={`code code-asis code-${row.asIs.type}`}
-              {...codeDataAttrs('asIs', row.asIs.line)}
-            >
-              <pre dangerouslySetInnerHTML={{ __html: asIsHtml }} />
-            </td>
-            <td
-              className={`ln ln-tobe ln-${row.toBe.type}`}
-              {...gutterPointerProps('toBe', row.toBe.line)}
-            >
-              {row.toBe.line ?? ''}
-              {row.toBe.line != null ? (
-                <LineTrigger
-                  panelId={panel.panelId}
-                  side="toBe"
-                  lineNumber={row.toBe.line}
-                  onOpenLineForm={handlers.onOpenLineForm}
-                />
-              ) : null}
-            </td>
-            <td
-              className={`code code-tobe code-${row.toBe.type}`}
-              {...codeDataAttrs('toBe', row.toBe.line)}
-            >
-              <pre dangerouslySetInnerHTML={{ __html: toBeHtml }} />
-            </td>
-          </>
-        ) : (
-          // unified: asIs gutter + toBe gutter + 単一コード列。
-          // 表示行は asIs (deletion) / toBe (addition) / context のうち、片側に line がある方を
-          // メインで出す。両側 context なら toBeLanguage で highlight した toBeHtml を表示する。
-          <>
-            <td
-              className={`ln ln-tobe ln-${row.toBe.type}`}
-              {...gutterPointerProps('toBe', row.toBe.line)}
-            >
-              {row.toBe.line ?? ''}
-              {row.toBe.line != null ? (
-                <LineTrigger
-                  panelId={panel.panelId}
-                  side="toBe"
-                  lineNumber={row.toBe.line}
-                  onOpenLineForm={handlers.onOpenLineForm}
-                />
-              ) : null}
-            </td>
-            <td
-              className={
-                row.toBe.type !== 'empty'
-                  ? `code code-tobe code-${row.toBe.type}`
-                  : `code code-asis code-${row.asIs.type}`
-              }
-              {...(row.toBe.type !== 'empty'
-                ? codeDataAttrs('toBe', row.toBe.line)
-                : codeDataAttrs('asIs', row.asIs.line))}
-            >
-              <pre dangerouslySetInnerHTML={{
-                __html: row.toBe.type !== 'empty' ? toBeHtml : asIsHtml,
-              }} />
-            </td>
-          </>
-        )}
-      </tr>
+        </div>
+        <div
+          className={`cell-ln cell-ln-tobe cell-ln-${row.toBe.type}`}
+          {...gutterPointerProps('toBe', row.toBe.line)}
+        >
+          {row.toBe.line ?? ''}
+          {row.toBe.line != null ? (
+            <LineTrigger
+              panelId={panel.panelId}
+              side="toBe"
+              lineNumber={row.toBe.line}
+              onOpenLineForm={handlers.onOpenLineForm}
+            />
+          ) : null}
+        </div>
+        <div
+          className={`cell-code cell-code-${codeSideClass} cell-code-${codeCell.type}`}
+          {...codeDataAttrs(codeSide, codeCell.line)}
+        >
+          <pre dangerouslySetInnerHTML={{ __html: codeHtml }} />
+        </div>
+      </div>
       {anchorKeys.length > 0
         ? sortAnchorKeys(anchorKeys).map(key => (
             <CommentRow
@@ -384,7 +605,7 @@ function RowAndComments({
               lineKey={key}
               panel={panel}
               handlers={handlers}
-              mode={mode}
+              mode="unified"
             />
           ))
         : null}
@@ -481,25 +702,50 @@ function CommentRow({
     </div>
   )
 
-  // split: 4 列 (asIs gutter + asIs code + toBe gutter + toBe code)。
-  // unified: 3 列 (asIs gutter + toBe gutter + code)。
-  // どちらでも「asIs 側に thread / toBe 側に空」または「asIs 側に空 / toBe 側に thread」を 1 行で出す。
-  const colsAsIs = mode === 'split' ? 2 : 1
-  const colsToBe = mode === 'split' ? 2 : 2
+  // split mode: comment row は該当 side の scroll container 内 (SideRow の兄弟) として出される。
+  //   親の panel-side が overflow-x:auto なので、コメントは side 幅 (panel の左 or 右半分) に
+  //   フィットして表示される。横スクロールはコード行と共有。
+  // unified mode: 1 column 全幅。W-2 で追加した comment-thread-unified + side バッジで
+  //   「どちら側に対するコメントか」を視覚的に明示する。
+  if (mode === 'unified') {
+    return (
+      <div className="comment-row comment-row-unified" data-comment-side={sideToAttr(parsed.side)}>
+        <div className="comment-cell">
+          <div className="comment-thread-unified">
+            <span
+              className="comment-side-badge"
+              data-side={sideToAttr(parsed.side)}
+              aria-label={parsed.side === 'asIs' ? 'as-is side comment' : 'to-be side comment'}
+            >
+              {parsed.side === 'asIs' ? 'asIs' : 'toBe'}
+            </span>
+            {thread}
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
-    <tr className="comment-row" data-comment-side={sideToAttr(parsed.side)}>
-      {parsed.side === 'asIs' ? (
-        <>
-          <td colSpan={colsAsIs} className="comment-cell">{thread}</td>
-          <td colSpan={colsToBe} className="comment-cell comment-cell-empty" />
-        </>
-      ) : (
-        <>
-          <td colSpan={colsAsIs} className="comment-cell comment-cell-empty" />
-          <td colSpan={colsToBe} className="comment-cell">{thread}</td>
-        </>
-      )}
-    </tr>
+    <div className="comment-row comment-row-split" data-comment-side={sideToAttr(parsed.side)}>
+      <div className="comment-cell">{thread}</div>
+    </div>
+  )
+}
+
+// I-4: panel source unavailable のバナー。kind に応じて文言を変える。
+function SourcesUnavailableBanner({ info }: { info: NonNullable<RenderedPanel['sourcesUnavailable']> }) {
+  const text = info.kind === 'pr-fetch-failed'
+    ? 'Source unavailable: PR base/head fetch failed (gh CLI auth or PR closed?).'
+    : 'Source unavailable: panel file not found in working tree (AI may have mis-typed the file path in summary.json).'
+  const sides: string[] = []
+  if (info.asIs) sides.push('asIs')
+  if (info.toBe) sides.push('toBe')
+  const detail = sides.length > 0 ? ` Affected side: ${sides.join(' + ')}.` : ''
+  return (
+    <div className="sources-unavailable-banner" role="status" data-kind={info.kind}>
+      <span className="sources-unavailable-icon" aria-hidden="true">⚠</span>
+      <span className="sources-unavailable-text">{text}{detail}</span>
+    </div>
   )
 }
 

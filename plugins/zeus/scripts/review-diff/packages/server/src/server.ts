@@ -121,26 +121,29 @@ export function createApp(opts: CreateAppOptions): Hono {
   }
   app.use('*', tokenCheck)
 
-  // 4. POST /result のみ Origin 検証 (CSRF 対策)
-  app.use('/result', async (c, next) => {
-    if (c.req.method !== 'POST') return next()
+  // 4. Origin 検証 (CSRF 対策) を **書き込み系 (GET/HEAD 以外) すべて** に一段で適用する。
+  //
+  // 脅威モデルメモ:
+  //   - ブラウザから来る POST (/result, /feedback) は Origin header を必ず持つので、
+  //     `http://127.0.0.1:<port>` と完全一致で弾けば CSRF (悪意ある別 origin の fetch) を遮断できる。
+  //   - /channel/inbox は Process A (channel-server.js) の loopback → loopback 直 POST で
+  //     Origin header を持たない。ブラウザ経由ではないため CSRF 対象外。
+  //     ORIGIN_EXEMPT_PATHS で skip し、代わりに 32 byte channelToken (URL クエリ) + 共有
+  //     failCount による brute-force ガード + active session file の 0600 perm + token rotation
+  //     で多層防御する。
+  //   - 将来 PUT/PATCH を追加した時もこの一段ミドルウェアが自動で守る (per-path 追加忘れ防止)。
+  const ORIGIN_EXEMPT_PATHS = new Set(['/channel/inbox'])
+  const originCheck: MiddlewareHandler = async (c, next) => {
+    if (c.req.method === 'GET' || c.req.method === 'HEAD') return next()
+    const pathname = new URL(c.req.url).pathname
+    if (ORIGIN_EXEMPT_PATHS.has(pathname)) return next()
     const origin = c.req.header('origin') ?? ''
     if (origin !== `http://127.0.0.1:${getPort()}`) {
       return c.text('forbidden', 403)
     }
     await next()
-  })
-
-  // 4b. POST /feedback も Origin 検証 (ブラウザからしか POST されない、CSRF 対策)。
-  // /channel/inbox は Process A (loopback → loopback) からのみで Origin を持たないため Origin 検証はしない。
-  app.use('/feedback', async (c, next) => {
-    if (c.req.method !== 'POST') return next()
-    const origin = c.req.header('origin') ?? ''
-    if (origin !== `http://127.0.0.1:${getPort()}`) {
-      return c.text('forbidden', 403)
-    }
-    await next()
-  })
+  }
+  app.use('*', originCheck)
 
   // 個別 token を検証するヘルパー。brute force カウンタは default token check と共有する。
   const verifyChannelToken = (got: string | undefined, expected: string): boolean => {
@@ -234,6 +237,7 @@ export function createApp(opts: CreateAppOptions): Hono {
     if (
       typeof body.sessionId !== 'string' ||
       typeof body.groupId !== 'string' ||
+      (body.groupTitle !== undefined && typeof body.groupTitle !== 'string') ||
       (body.direction !== 'more' && body.direction !== 'less') ||
       !Array.isArray(body.currentRanges)
     ) {

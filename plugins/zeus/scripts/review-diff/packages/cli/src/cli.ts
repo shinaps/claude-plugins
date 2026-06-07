@@ -23,7 +23,7 @@ import { homedir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import type { ResultJson, PrMeta, SummaryJson, Panel } from '@zeus/review-diff-shared'
+import type { ResultJson, PrMeta, SummaryJson, Panel, RenderedGroup } from '@zeus/review-diff-shared'
 import {
   parseDiff,
   validateSummarySchema,
@@ -132,10 +132,19 @@ async function main(): Promise<void> {
   }
 
   // 6. 各 panel を side-by-side に展開
-  const renderedGroups = summary.groups.map(g => ({
+  //
+  // W-1: groupId は title に依存せず index ベースの `g${i}` で生成する。
+  //   - 同じ title の group が複数あっても key 衝突しない (App.tsx の React key + Channels
+  //     in-place 再生成のターゲット識別の両方で必要)
+  //   - groupTitle は別 field として保持し、Channels notification の `group_title` 属性 +
+  //     UI 表示に使う。
+  // I-4: renderPanel に summary.mode を渡し、staged / pr で sourcesUnavailable kind を分岐させる。
+  const renderedGroups: RenderedGroup[] = summary.groups.map((g, i) => ({
+    groupId: `g${i}`,
+    groupTitle: g.title || undefined,
     title: g.title,
     description: g.description,
-    panels: g.panels.map(p => renderPanel(p, sources)),
+    panels: g.panels.map(p => renderPanel(p, sources, summary.mode)),
   }))
 
   // 7. channels 設定 + sessionId + token 確定
@@ -229,7 +238,15 @@ async function startServerAndMaybeRegister(params: {
     // cleanup hook: 通常終了 / SIGINT / SIGTERM で active/<sessionId>.json を unlink する。
     // SIGKILL (kill -9) では呼ばれないため、Process A 側で process.kill(pid, 0) による
     // 生存確認 + 死亡 session の unlink で stale を回収する設計 (channel-server.ts 側)。
+    //
+    // I-3 guard: process.exit() は 'exit' イベントを発火し、SIGINT/SIGTERM ハンドラ経由でも
+    // cleanup が呼ばれるため最大 2 回起動する。unlinkSync は try/catch で吸収済みだが、
+    // 多重実行が成立する事実そのものが将来コード追加時の事故になりやすいので明示的に
+    // 1 回保証する (cleanup 内処理を増やしても安全)。同期処理のみのため flag だけで足りる。
+    let cleanedUp = false
     const cleanup = () => {
+      if (cleanedUp) return
+      cleanedUp = true
       try { unlinkSync(join(ACTIVE_DIR, `${params.sessionId}.json`)) } catch { /* race OK */ }
     }
     process.on('exit', cleanup)

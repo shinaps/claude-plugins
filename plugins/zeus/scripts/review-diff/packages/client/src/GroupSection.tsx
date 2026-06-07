@@ -67,11 +67,17 @@ export const GroupSection = memo(function GroupSection({
         <GroupNav
           index={index}
           total={total}
+          groupId={groupId}
           title={title}
           description={description}
           panels={panels}
           reviewedPanels={reviewedPanels}
           onJumpToPanel={onJumpToPanel}
+          channelsEnabled={channelsEnabled}
+          ctxDisabled={ctxDisabled}
+          ctxTooltip={ctxTooltip}
+          isPendingHere={isPendingHere}
+          onRequestContext={onRequestContext}
         />
         <div
           className="nav-resizer"
@@ -91,26 +97,6 @@ export const GroupSection = memo(function GroupSection({
             {...lineCommentHandlers}
           />
         ))}
-        <div className="group-context-actions" role="group" aria-label="Request more or less context">
-          <button
-            type="button"
-            className={`btn-context btn-context-less${isPendingHere ? ' is-pending' : ''}`}
-            disabled={ctxDisabled}
-            title={ctxTooltip}
-            onClick={() => onRequestContext(groupId, 'less')}
-          >
-            {isPendingHere ? '⋯' : '−'} context
-          </button>
-          <button
-            type="button"
-            className={`btn-context btn-context-more${isPendingHere ? ' is-pending' : ''}`}
-            disabled={ctxDisabled}
-            title={ctxTooltip}
-            onClick={() => onRequestContext(groupId, 'more')}
-          >
-            {isPendingHere ? '⋯' : '+'} context
-          </button>
-        </div>
       </div>
     </section>
   )

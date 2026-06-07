@@ -81,6 +81,8 @@ export const sampleData: ClientPayload = {
   prMeta: null,
   groups: [
     {
+      groupId: 'g0',
+      groupTitle: 'Demo Group',
       title: 'Demo Group',
       description: '',
       panels: [panelA, panelB],

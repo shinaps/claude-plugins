@@ -24,11 +24,21 @@ import type {
   RenderedSegment,
   SideBySideRow,
   DisplayRange,
+  SourcesUnavailable,
 } from '@zeus/review-diff-shared'
 import { langForPath } from './diff-parser'
 import type { SourcesMap } from './server'
 
-export function renderPanel(panel: Panel, sources: SourcesMap): RenderedPanel {
+// I-4: panel が言及する file が sources Map に無いケースを UI バナーで明示するため、
+// 呼び出し側 (cli.ts) から mode を受け取り、staged / pr で kind を切り替える。
+// 互換性のため省略可。省略時は kind 判定をスキップ (sourcesUnavailable は undefined)。
+export type RenderMode = 'staged' | 'pr'
+
+export function renderPanel(
+  panel: Panel,
+  sources: SourcesMap,
+  mode?: RenderMode,
+): RenderedPanel {
   const asIsFile = panel.asIs?.file
   const toBeFile = panel.toBe?.file
 
@@ -54,6 +64,26 @@ export function renderPanel(panel: Panel, sources: SourcesMap): RenderedPanel {
     segments.push({ asIsRange: aR, toBeRange: bR, rows })
   }
 
+  // I-4 source 取得失敗の検出: panel が言及した file が sources Map に無いか、
+  // 空文字列で取得失敗フォールバック扱いになっているケースを片側ずつ判定する。
+  // staged モードの「新規ファイルで before が空」のような正当な空ケースを誤検知しないよう、
+  // sources.has(file) === false (= 全く取得しなかった) のみを失敗とみなす。
+  let sourcesUnavailable: SourcesUnavailable | undefined
+  if (mode) {
+    const asIsMissing = asIsFile != null && asIsFile !== '' && !sources.has(asIsFile)
+    const toBeMissing = toBeFile != null && toBeFile !== '' && !sources.has(toBeFile)
+    if (asIsMissing || toBeMissing) {
+      // staged モードで sources Map に無い = panel.file が working tree に存在しない (typo 等)
+      // pr モードで sources Map に無い = base/head どちらも gh api 404 (PR 状態の問題)
+      const kind: SourcesUnavailable['kind'] = mode === 'pr' ? 'pr-fetch-failed' : 'unknown-file'
+      sourcesUnavailable = {
+        kind,
+        ...(asIsMissing ? { asIs: true } : {}),
+        ...(toBeMissing ? { toBe: true } : {}),
+      } as SourcesUnavailable
+    }
+  }
+
   return {
     ...panel,
     asIsLanguage,
@@ -61,6 +91,7 @@ export function renderPanel(panel: Panel, sources: SourcesMap): RenderedPanel {
     segments,
     asIsTotal: asIsFile ? countLinesOfSource(sources, asIsFile, 'before') : undefined,
     toBeTotal: toBeFile ? countLinesOfSource(sources, toBeFile, 'after') : undefined,
+    ...(sourcesUnavailable ? { sourcesUnavailable } : {}),
   }
 }
 

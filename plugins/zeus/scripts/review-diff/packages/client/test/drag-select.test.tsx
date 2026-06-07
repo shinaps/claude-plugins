@@ -1,9 +1,12 @@
-// Panel のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする (v4.7.0 panel model)。
+// Panel のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする (v4.7.1 grid refactor)。
 //
-// 旧 DiffTable 版からの変更点:
-//   - target は file ではなく panelId 単位 (LineTarget は { side, number, endNumber? })
-//   - side: 'left'/'right' → 'asIs'/'toBe' (DOM 上は 'asis'/'tobe')
-//   - cross-panel drag は panelTableRef.contains() で完全に弾かれる (AC-6 構造的担保)
+// 旧 v4.7.0 (table 版) からの変更点:
+//   - DOM 構造が <table>/<tr>/<td> → <div class="panel-grid"> + <div class="code-row"> + cell に置換
+//   - panelTableRef → panelContainerRef (HTMLDivElement)
+//   - セレクタは tagless: `[data-panel-id]` / `[data-side]` / `.cell-ln` / `.cell-code` / `.code-row`
+//   - split mode では asIs row と toBe row が別々の panel-side wrapper 配下に存在する
+//     (panel-side-asis / panel-side-tobe で per-side 独立 scroll container を実現するため)
+//   - cross-panel drag は panelContainerRef.contains() で完全に弾かれる (AC-6 構造的担保)
 
 import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -54,20 +57,20 @@ function makeHandlers(): SpyHandlers {
   return Object.assign(base, { openedCalls })
 }
 
-// 行コメント drag は td.ln (gutter) で開始する設計。td.code はテキスト選択を許すために
-// data 属性のみ付与され、pointer handler は無い。drag-start のテストは td.ln を使う。
+// 行コメント drag は cell-ln (gutter) で開始する設計。cell-code はテキスト選択を許すために
+// data 属性のみ付与され、pointer handler は無い。drag-start のテストは cell-ln を使う。
 function getGutterCell(panelId: string, side: 'asis' | 'tobe', n: number): HTMLElement {
   const el = document.querySelector<HTMLElement>(
-    `table[data-panel-id="${panelId}"] td.ln[data-side="${side}"][data-line-number="${n}"]`,
+    `[data-panel-id="${panelId}"] .cell-ln[data-side="${side}"][data-line-number="${n}"]`,
   )
-  if (!el) throw new Error(`td.ln[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
+  if (!el) throw new Error(`.cell-ln[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
   return el
 }
 function getCodeCell(panelId: string, side: 'asis' | 'tobe', n: number): HTMLElement {
   const el = document.querySelector<HTMLElement>(
-    `table[data-panel-id="${panelId}"] td.code[data-side="${side}"][data-line-number="${n}"]`,
+    `[data-panel-id="${panelId}"] .cell-code[data-side="${side}"][data-line-number="${n}"]`,
   )
-  if (!el) throw new Error(`td.code[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
+  if (!el) throw new Error(`.cell-code[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
   return el
 }
 
@@ -78,15 +81,15 @@ function renderPanel(panelId = 'p1'): { panel: RenderedPanel; handlers: SpyHandl
   return { panel, handlers }
 }
 
-describe('Panel drag select (v4.7.0)', () => {
+describe('Panel drag select (v4.7.1 grid)', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     try { localStorage.clear() } catch { /* noop */ }
   })
 
-  test('td.code carries data-side (asis/tobe) and data-line-number for every row', () => {
+  test('.cell-code carries data-side (asis/tobe) and data-line-number for every row', () => {
     renderPanel()
-    const cells = document.querySelectorAll<HTMLElement>('td.code[data-side]')
+    const cells = document.querySelectorAll<HTMLElement>('.cell-code[data-side]')
     // split mode (初期): 3 行 × 2 side = 6 セル
     expect(cells.length).toBe(6)
     for (const c of cells) {
@@ -95,12 +98,12 @@ describe('Panel drag select (v4.7.0)', () => {
     }
   })
 
-  test('pointerdown on td.ln (gutter) highlights the starting row', async () => {
+  test('pointerdown on .cell-ln (gutter) highlights the starting row', async () => {
     renderPanel()
     const user = userEvent.setup()
     const start = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: start, keys: '[MouseLeft>]' })
-    expect(start.closest('tr.code-row')).toHaveClass('line-selected')
+    expect(start.closest('.code-row')).toHaveClass('line-selected')
   })
 
   test('pointerup on the same row opens single-line form (target.side="toBe")', async () => {
@@ -155,10 +158,10 @@ describe('Panel drag select (v4.7.0)', () => {
     } finally {
       document.elementFromPoint = orig
     }
-    expect(start.closest('tr.code-row')).toHaveClass('line-selected')
-    expect(mid.closest('tr.code-row')).toHaveClass('line-selected')
+    expect(start.closest('.code-row')).toHaveClass('line-selected')
+    expect(mid.closest('.code-row')).toHaveClass('line-selected')
     const out = getGutterCell('p1', 'tobe', 3)
-    expect(out.closest('tr.code-row')).not.toHaveClass('line-selected')
+    expect(out.closest('.code-row')).not.toHaveClass('line-selected')
   })
 
   test('drag clears highlight after pointerup', async () => {
@@ -169,7 +172,7 @@ describe('Panel drag select (v4.7.0)', () => {
       { target: cell, keys: '[MouseLeft>]' },
       { target: cell, keys: '[/MouseLeft]' },
     ])
-    expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
+    expect(cell.closest('.code-row')).not.toHaveClass('line-selected')
   })
 
   test('Escape during drag cancels selection without opening form', async () => {
@@ -178,7 +181,7 @@ describe('Panel drag select (v4.7.0)', () => {
     const cell = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: cell, keys: '[MouseLeft>]' })
     await user.keyboard('{Escape}')
-    expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
+    expect(cell.closest('.code-row')).not.toHaveClass('line-selected')
     await user.pointer({ target: cell, keys: '[/MouseLeft]' })
     expect(handlers.openedCalls).toHaveLength(0)
   })
@@ -188,12 +191,12 @@ describe('Panel drag select (v4.7.0)', () => {
     const user = userEvent.setup()
     const cell = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: cell, keys: '[MouseRight]' })
-    expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
+    expect(cell.closest('.code-row')).not.toHaveClass('line-selected')
     expect(handlers.openedCalls).toHaveLength(0)
   })
 
-  test('td.code carries data-side and data-line-number even though pointer handlers are on td.ln', () => {
-    // td.code は selection / copy のために pointer handler を持たないが、ドラッグ中の
+  test('.cell-code carries data-side and data-line-number even though pointer handlers are on .cell-ln', () => {
+    // .cell-code は selection / copy のために pointer handler を持たないが、ドラッグ中の
     // resolveLineAtPoint が elementFromPoint で拾うため、data 属性は必須。
     renderPanel()
     const c = getCodeCell('p1', 'tobe', 2)
@@ -203,7 +206,7 @@ describe('Panel drag select (v4.7.0)', () => {
 
   test('AC-6: cross-panel drag does NOT register endNumber on the other panel', async () => {
     // p1 と p2 を別々に render し、p1 の cell で down → mock elementFromPoint で p2 の cell を返す。
-    // Panel の resolveLineAtPoint は panelTableRef.contains() で別 panel の cell を弾くので、
+    // Panel の resolveLineAtPoint は panelContainerRef.contains() で別 panel の cell を弾くので、
     // up 時の endNumber は p1 の最終 currentNumber (= startNumber) と等しくなる (= 単一行扱い)。
     const handlersA: SpyHandlers = makeHandlers()
     const handlersB: SpyHandlers = makeHandlers()

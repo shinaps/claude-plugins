@@ -25,5 +25,5 @@ export {
   type CoverageReport,
   type CoverageMiss,
 } from './coverage-validator'
-export { renderPanel } from './panel-renderer'
+export { renderPanel, type RenderMode } from './panel-renderer'
 export { EventBus, type EventBusEventMap } from './event-bus'

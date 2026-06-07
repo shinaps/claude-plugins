@@ -38,6 +38,7 @@ type Tab = 'activity' | 'guide' | 'diff'
 // (現 schema では group に明示的 id field が無い)。
 type AppGroup = {
   groupId: string
+  groupTitle?: string
   title: string
   description: string
   panels: RenderedPanel[]
@@ -46,9 +47,11 @@ type AppGroup = {
 export function App({ payload }: Props) {
   const [groupsState, setGroupsState] = useState<AppGroup[]>(() =>
     payload.groups.map((g, i) => ({
-      // 現 SummaryJson.Group には id field が無いため、title をそのまま groupId として使う。
-      // title が重複する場合は index suffix を付けて衝突回避。
-      groupId: g.title || `group-${i}`,
+      // W-1: CLI が `g${i}` で生成する RenderedGroup.groupId を優先採用。
+      // 古い payload (groupId 未設定) や test fixture 互換のため title / index fallback も残す。
+      // title が重複しても CLI 側 index ベース ID で必ず衝突回避される。
+      groupId: g.groupId || g.title || `group-${i}`,
+      groupTitle: g.groupTitle,
       title: g.title,
       description: g.description,
       panels: g.panels,
@@ -220,7 +223,7 @@ export function App({ payload }: Props) {
         asIs: p.asIs ? { file: p.asIs.file, ranges: p.asIs.ranges } : undefined,
         toBe: p.toBe ? { file: p.toBe.file, ranges: p.toBe.ranges } : undefined,
       }))
-      void channel.sendFeedback(groupId, direction, currentRanges)
+      void channel.sendFeedback(groupId, direction, currentRanges, g.groupTitle ?? g.title)
     },
     [groupsState, channel],
   )

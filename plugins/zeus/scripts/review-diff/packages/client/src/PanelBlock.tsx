@@ -10,9 +10,10 @@
 //   Reviewed 状態は panel の表示モードと無関係に切り替わるので、ラッパで持つ方が
 //   Panel の再 render と Reviewed checkbox の再 render を分離できる。
 
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from './Panel'
+import { useLazyHighlight } from './useLazyHighlight'
 import type { LineCommentHandlers } from './useLineComments'
 
 export type PanelBlockProps = {
@@ -28,12 +29,20 @@ export function PanelBlock(props: PanelBlockProps) {
     onToggleReviewed(panel.panelId, !reviewed)
   }, [onToggleReviewed, panel.panelId, reviewed])
 
+  // viewport 近接時のみ shiki ハイライトを有効化することで、初回マウントのレンダリング負荷を激減させる
+  // (6000+ 行の diff で初回が秒オーダーから 100ms 級まで落ちる)。一度可視になったら以後 true 固定。
+  // 明示的に highlight=false を渡されたら lazy 判定をスキップして常に未ハイライト。
+  const blockRef = useRef<HTMLDivElement>(null)
+  const lazyVisible = useLazyHighlight(blockRef)
+  const effectiveHighlight = highlight !== false && lazyVisible
+
   return (
     <div
+      ref={blockRef}
       className={`panel-block${reviewed ? ' is-reviewed' : ''}`}
       data-panel-id={panel.panelId}
     >
-      <Panel panel={panel} highlight={highlight} {...handlers} />
+      <Panel panel={panel} highlight={effectiveHighlight} {...handlers} />
       <div className="panel-footer">
         <label className="panel-reviewed-label">
           <input
