@@ -25,19 +25,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Hunk, ParsedFile, SideBySideRow } from '../server-side/types.js'
 import { lineCommentKey } from './state.ts'
-
-type LineCommentHandlers = {
-  lineComments: Map<string, string[]>
-  activeForm: string | null
-  editing: Map<string, string>
-  onOpenLineForm: (file: string, side: 'left' | 'right', number: number) => void
-  onCloseLineForm: () => void
-  onAddLineComment: (file: string, side: 'left' | 'right', number: number, body: string) => void
-  onStartEditLineComment: (key: string, index: number, body: string) => void
-  onCancelEditLineComment: (key: string, index: number) => void
-  onSaveEditLineComment: (key: string, index: number, body: string) => void
-  onDeleteLineComment: (key: string, index: number) => void
-}
+import type { LineCommentHandlers } from './useLineComments.ts'
 
 type Props = {
   file: ParsedFile

@@ -18,7 +18,8 @@ import { TabBar } from './TabBar.tsx'
 import { GroupSection } from './GroupSection.tsx'
 import { ActionBar } from './ActionBar.tsx'
 import { renderMarkdown, escapeHtml } from './markdown.ts'
-import { getToken, lineCommentKey, parseLineCommentKey } from './state.ts'
+import { getToken, parseLineCommentKey } from './state.ts'
+import { useLineComments } from './useLineComments.ts'
 
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
@@ -40,14 +41,8 @@ type GroupBucket = {
 export function App({ payload }: Props) {
   const [reviewed, setReviewed] = useState<Set<string>>(() => new Set())
   const [comments, setComments] = useState<Map<string, string>>(() => new Map())
-  // 行コメントの本体。同じ行に複数コメントを許すため、value は string[] にしている。
-  // (各要素 = 1 件のコメント本文。順序 = 投稿順。)
-  const [lineComments, setLineComments] = useState<Map<string, string[]>>(() => new Map())
-  // 現在「新規入力フォーム」を開いている行キー。1 度に 1 箇所だけ開く前提 (Linear / GitHub PR と同じ UX)。
-  const [activeForm, setActiveForm] = useState<string | null>(null)
-  // 「保存済みコメントを編集中」の状態。key = `${lineKey}#${index}`、value = 編集中の本文。
-  // 編集中バッファを別 state に切り出すことで、Cancel で簡単に破棄できる。
-  const [editing, setEditing] = useState<Map<string, string>>(() => new Map())
+  // 行コメント関連の state + 7 ハンドラを hook に集約。詳細は useLineComments.ts。
+  const lineCommentHandlers = useLineComments()
   const [overallComment, setOverallComment] = useState('')
   const [tab, setTab] = useState<Tab>('guide')
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
@@ -87,72 +82,6 @@ export function App({ payload }: Props) {
     })
   }
 
-  // 行コメント関連のハンドラ群。DiffTable まで降ろす。
-  function openLineForm(file: string, side: 'left' | 'right', number: number) {
-    setActiveForm(lineCommentKey(file, side, number))
-  }
-  function closeLineForm() {
-    setActiveForm(null)
-  }
-  function addLineComment(file: string, side: 'left' | 'right', number: number, body: string) {
-    const trimmed = body.trim()
-    if (!trimmed) {
-      setActiveForm(null)
-      return
-    }
-    const key = lineCommentKey(file, side, number)
-    setLineComments((prev) => {
-      const next = new Map(prev)
-      const existing = next.get(key) ?? []
-      next.set(key, [...existing, trimmed])
-      return next
-    })
-    setActiveForm(null)
-  }
-  function startEditLineComment(key: string, index: number, body: string) {
-    setEditing((prev) => {
-      const next = new Map(prev)
-      next.set(`${key}#${index}`, body)
-      return next
-    })
-  }
-  function cancelEditLineComment(key: string, index: number) {
-    setEditing((prev) => {
-      const next = new Map(prev)
-      next.delete(`${key}#${index}`)
-      return next
-    })
-  }
-  function saveEditLineComment(key: string, index: number, body: string) {
-    const trimmed = body.trim()
-    if (!trimmed) {
-      deleteLineComment(key, index)
-      return
-    }
-    setLineComments((prev) => {
-      const next = new Map(prev)
-      const existing = next.get(key)
-      if (!existing) return prev
-      const updated = existing.slice()
-      updated[index] = trimmed
-      next.set(key, updated)
-      return next
-    })
-    cancelEditLineComment(key, index)
-  }
-  function deleteLineComment(key: string, index: number) {
-    setLineComments((prev) => {
-      const next = new Map(prev)
-      const existing = next.get(key)
-      if (!existing) return prev
-      const updated = existing.filter((_, i) => i !== index)
-      if (updated.length === 0) next.delete(key)
-      else next.set(key, updated)
-      return next
-    })
-    cancelEditLineComment(key, index)
-  }
-
   function markAll() {
     setReviewed(new Set(payload.allFiles))
   }
@@ -169,7 +98,7 @@ export function App({ payload }: Props) {
       const trimmed = body.trim()
       if (trimmed) out.push({ file, body: trimmed })
     }
-    for (const [key, bodies] of lineComments) {
+    for (const [key, bodies] of lineCommentHandlers.lineComments) {
       const { file, side, number } = parseLineCommentKey(key)
       for (const body of bodies) {
         const trimmed = body.trim()
@@ -240,19 +169,10 @@ export function App({ payload }: Props) {
             token={tokenRef.current}
             reviewed={reviewed}
             comments={comments}
-            lineComments={lineComments}
-            activeForm={activeForm}
-            editing={editing}
             onJump={jumpToFile}
             onToggleReviewed={toggleReviewed}
             onChangeComment={changeComment}
-            onOpenLineForm={openLineForm}
-            onCloseLineForm={closeLineForm}
-            onAddLineComment={addLineComment}
-            onStartEditLineComment={startEditLineComment}
-            onCancelEditLineComment={cancelEditLineComment}
-            onSaveEditLineComment={saveEditLineComment}
-            onDeleteLineComment={deleteLineComment}
+            {...lineCommentHandlers}
           />
         ))}
         <div className="global-comment-block">

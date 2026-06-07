@@ -15,6 +15,7 @@
 import { useMemo, useState } from 'react'
 import type { ParsedFile } from '../server-side/types.js'
 import { DiffTable } from './DiffTable.tsx'
+import type { LineCommentHandlers } from './useLineComments.ts'
 
 const COLLAPSE_THRESHOLD = 2000
 const WARN_THRESHOLD = 10000
@@ -26,19 +27,9 @@ type Props = {
   token: string
   reviewed: boolean
   comment: string
-  lineComments: Map<string, string[]>
-  activeForm: string | null
-  editing: Map<string, string>
   onToggleReviewed: (path: string, checked: boolean) => void
   onChangeComment: (path: string, body: string) => void
-  onOpenLineForm: (file: string, side: 'left' | 'right', number: number) => void
-  onCloseLineForm: () => void
-  onAddLineComment: (file: string, side: 'left' | 'right', number: number, body: string) => void
-  onStartEditLineComment: (key: string, index: number, body: string) => void
-  onCancelEditLineComment: (key: string, index: number) => void
-  onSaveEditLineComment: (key: string, index: number, body: string) => void
-  onDeleteLineComment: (key: string, index: number) => void
-}
+} & LineCommentHandlers
 
 export function FileBlock({
   file,
@@ -47,18 +38,9 @@ export function FileBlock({
   token,
   reviewed,
   comment,
-  lineComments,
-  activeForm,
-  editing,
   onToggleReviewed,
   onChangeComment,
-  onOpenLineForm,
-  onCloseLineForm,
-  onAddLineComment,
-  onStartEditLineComment,
-  onCancelEditLineComment,
-  onSaveEditLineComment,
-  onDeleteLineComment,
+  ...lineCommentHandlers
 }: Props) {
   // 表示対象 hunks をフィルタ。元順序を維持し、未知 index は黙って捨てる。
   const visibleHunks = useMemo(() => {
@@ -116,16 +98,7 @@ export function FileBlock({
             visibleHunks={visibleHunks}
             expandable={expandable}
             token={token}
-            lineComments={lineComments}
-            activeForm={activeForm}
-            editing={editing}
-            onOpenLineForm={onOpenLineForm}
-            onCloseLineForm={onCloseLineForm}
-            onAddLineComment={onAddLineComment}
-            onStartEditLineComment={onStartEditLineComment}
-            onCancelEditLineComment={onCancelEditLineComment}
-            onSaveEditLineComment={onSaveEditLineComment}
-            onDeleteLineComment={onDeleteLineComment}
+            {...lineCommentHandlers}
           />
           <div className="comment-block">
             <textarea

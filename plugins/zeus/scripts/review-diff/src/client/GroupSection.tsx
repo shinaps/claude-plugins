@@ -5,6 +5,7 @@
 import type { ParsedFile } from '../server-side/types.js'
 import { GroupNav } from './GroupNav.tsx'
 import { FileBlock } from './FileBlock.tsx'
+import type { LineCommentHandlers } from './useLineComments.ts'
 
 // App.tsx の BucketEntry と同じ shape。型重複を避けるためここで再定義しているが、
 // 構造上は App 側がオーナー。
@@ -23,20 +24,10 @@ type Props = {
   token: string
   reviewed: Set<string>
   comments: Map<string, string>
-  lineComments: Map<string, string[]>
-  activeForm: string | null
-  editing: Map<string, string>
   onJump: (path: string) => void
   onToggleReviewed: (path: string, checked: boolean) => void
   onChangeComment: (path: string, body: string) => void
-  onOpenLineForm: (file: string, side: 'left' | 'right', number: number) => void
-  onCloseLineForm: () => void
-  onAddLineComment: (file: string, side: 'left' | 'right', number: number, body: string) => void
-  onStartEditLineComment: (key: string, index: number, body: string) => void
-  onCancelEditLineComment: (key: string, index: number) => void
-  onSaveEditLineComment: (key: string, index: number, body: string) => void
-  onDeleteLineComment: (key: string, index: number) => void
-}
+} & LineCommentHandlers
 
 export function GroupSection({
   index,
@@ -48,19 +39,10 @@ export function GroupSection({
   token,
   reviewed,
   comments,
-  lineComments,
-  activeForm,
-  editing,
   onJump,
   onToggleReviewed,
   onChangeComment,
-  onOpenLineForm,
-  onCloseLineForm,
-  onAddLineComment,
-  onStartEditLineComment,
-  onCancelEditLineComment,
-  onSaveEditLineComment,
-  onDeleteLineComment,
+  ...lineCommentHandlers
 }: Props) {
   const navFiles = entries.map((e) => e.file)
   return (
@@ -86,18 +68,9 @@ export function GroupSection({
             token={token}
             reviewed={reviewed.has(entry.file.path)}
             comment={comments.get(entry.file.path) ?? ''}
-            lineComments={lineComments}
-            activeForm={activeForm}
-            editing={editing}
             onToggleReviewed={onToggleReviewed}
             onChangeComment={onChangeComment}
-            onOpenLineForm={onOpenLineForm}
-            onCloseLineForm={onCloseLineForm}
-            onAddLineComment={onAddLineComment}
-            onStartEditLineComment={onStartEditLineComment}
-            onCancelEditLineComment={onCancelEditLineComment}
-            onSaveEditLineComment={onSaveEditLineComment}
-            onDeleteLineComment={onDeleteLineComment}
+            {...lineCommentHandlers}
           />
         ))}
       </div>
