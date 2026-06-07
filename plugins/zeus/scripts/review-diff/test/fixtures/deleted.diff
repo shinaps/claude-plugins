@@ -1,0 +1,9 @@
+diff --git a/src/gone.ts b/src/gone.ts
+deleted file mode 100644
+index 1111111..0000000
+--- a/src/gone.ts
++++ /dev/null
+@@ -1,3 +0,0 @@
+-export function gone() {
+-  return null
+-}
