@@ -784,8 +784,20 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
    透過化して line-selected ハイライトを表面に出す。 */
 .code-row.line-selected > .cell-code pre { background: transparent !important; }
 
-/* ---------- Inline comment row (吹き出し + フォーム) ---------- */
+/* ---------- Inline comment row (吹き出し + フォーム) ----------
+   panel-side-inner は `width: max-content` で長い行に合わせて伸びるので、その素直な子として
+   comment-row を置くと thread / textarea も max-content (= 数万 px) まで膨らみ「右端まで
+   スクロールしないとフォームが終わらない」UX 破綻が出る。
+   対策: comment-row を `position: sticky; left: 0` で panel-side の左端に貼り付け、幅を
+   viewport 基準 (panel-side の表示幅相当) に明示的に固定する。横スクロール中も常に
+   スレッドが左端に見える + 幅が爆発しない。
+   幅は `calc((100vw - --nav-width - 48px) / 2 - 1px)` で「panel-side-split の各列 50% 幅」を
+   近似 (nav 幅とコンテナ padding を引いて 2 分割、gap 1px 引き)。 */
 .comment-row {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px);
   background: var(--surface-2);
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
