@@ -175,12 +175,63 @@ export const Panel = memo(function Panel({
     }
   }, [setDragBoth, handlers, panel.panelId])
 
+  // ドラッグ中の line-snap インジケータ (GitHub PR 風)。
+  // 仕様: カーソルが横切っている行の gutter 上 (= 普段 + ボタンが出る位置) に `+` をスナップ表示。
+  // 自由追従ではなく「いま hover している行の gutter center」に「いつもの + ボタン」と同じ場所で
+  // 出すことで「ドラッグして範囲選択中」のリアルタイム選択フィードバックになる。
+  // 実装: pointermove で cursor 直下の cell-ln を elementFromPoint → その cell の rect で位置決定。
+  const [dragIndicator, setDragIndicator] = useState<{ left: number; top: number } | null>(null)
+  useEffect(() => {
+    if (!drag) {
+      setDragIndicator(null)
+      document.body.classList.remove('is-dragging-line-range')
+      return
+    }
+    document.body.classList.add('is-dragging-line-range')
+    function onMove(e: PointerEvent) {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+      if (!el) return
+      const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
+      if (!cell || !panelContainerRef.current?.contains(cell)) return
+      // 同じ row の cell-ln (gutter) を取得して位置を決定 (cell-code から hover してても gutter 位置に出す)
+      const row = cell.closest('.code-row') as HTMLElement | null
+      if (!row) return
+      const ln = row.querySelector('.cell-ln') as HTMLElement | null
+      if (!ln) return
+      const lnRect = ln.getBoundingClientRect()
+      // gutter 内の + ボタンと同じ位置: 左端 + 9px (line-comment-trigger の left:2px + ボタン中心)
+      setDragIndicator({
+        left: lnRect.left + 9,
+        top: lnRect.top + lnRect.height / 2,
+      })
+    }
+    window.addEventListener('pointermove', onMove, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      document.body.classList.remove('is-dragging-line-range')
+    }
+  }, [drag])
+
   function isInDragRange(side: Side, lineNumber: number | undefined): boolean {
-    if (!drag || lineNumber == null) return false
-    if (drag.side !== side) return false
-    const lo = Math.min(drag.startNumber, drag.currentNumber)
-    const hi = Math.max(drag.startNumber, drag.currentNumber)
-    return lineNumber >= lo && lineNumber <= hi
+    if (lineNumber == null) return false
+    // drag 中: drag.startNumber..currentNumber を accent ハイライト
+    if (drag && drag.side === side) {
+      const lo = Math.min(drag.startNumber, drag.currentNumber)
+      const hi = Math.max(drag.startNumber, drag.currentNumber)
+      if (lineNumber >= lo && lineNumber <= hi) return true
+    }
+    // form open 中: activeForm が指す行も同じ accent ハイライトを継続。
+    // ユーザー要望: textarea が表示されてる間は「どの行に対するコメントか」が視線で追えるよう、
+    // 選択行 (単一行 or 範囲) の line-selected を維持する。
+    if (handlers.activeForm) {
+      const parsed = parseLineCommentKey(handlers.activeForm)
+      if (parsed.panelId === panel.panelId && parsed.side === side) {
+        const lo = Math.min(parsed.number, parsed.endNumber ?? parsed.number)
+        const hi = Math.max(parsed.number, parsed.endNumber ?? parsed.number)
+        if (lineNumber >= lo && lineNumber <= hi) return true
+      }
+    }
+    return false
   }
 
   // カーソル位置 → 対象行 (panel scoped)。別 panel の cell はここで null に落ちる (AC-6)。
@@ -287,6 +338,15 @@ export const Panel = memo(function Panel({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       />
+      {/* ドラッグ中の line-snap インジケータ。`+` を hover 行の gutter 中央にスナップ表示し、
+          普段の + ボタンと同じ場所で「いま範囲選択中の行」を視認化。 */}
+      {dragIndicator ? (
+        <div
+          className="drag-cursor-indicator"
+          aria-hidden="true"
+          style={{ left: dragIndicator.left, top: dragIndicator.top }}
+        >+</div>
+      ) : null}
     </div>
   )
 })
