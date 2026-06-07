@@ -31,8 +31,16 @@ export type LineCommentHandlers = {
   onDeleteLineComment: (key: string, index: number) => void
 }
 
-export function useLineComments(): LineCommentHandlers {
-  const [lineComments, setLineComments] = useState<Map<string, string[]>>(() => new Map())
+// v4.8.0: regen-group → close-relaunch → restore の経路で、前回起動時の line comments を
+// 引き継いで Map に seed できるよう initial を受け取る。CommentForm 側の draft は sessionStorage
+// 経由で別途復元される (App.tsx mount 時に payload.initialLineCommentDrafts を sessionStorage に
+// 書き戻す)。
+export function useLineComments(
+  initial?: { lineComments?: Map<string, string[]> },
+): LineCommentHandlers {
+  const [lineComments, setLineComments] = useState<Map<string, string[]>>(
+    () => initial?.lineComments ? new Map(initial.lineComments) : new Map(),
+  )
   const [activeForm, setActiveForm] = useState<string | null>(null)
   const [editing, setEditing] = useState<Map<string, string>>(() => new Map())
 

@@ -28,17 +28,15 @@ type Props = {
   panels: RenderedPanel[]
   reviewedPanels: Set<string>
   onJumpToPanel: (panelId: string) => void
-  // context+ 関連: GroupNav 内のサマリ近くに置くことで視認性を上げる
-  channelsEnabled: boolean
-  ctxDisabled: boolean
-  ctxTooltip: string
-  isPendingHere: boolean
-  onRequestContext: (groupId: string, direction: 'more' | 'less') => void
+  // v4.8.0 context+ (close-relaunch): regen 中は全 group の context+ ボタンを止める。
+  // direction 引数も廃止 (常に "more"、Claude 側で「縮める」必要は実用上ほぼないため)。
+  regenPending: boolean
+  onRequestContext: (groupId: string) => void
 }
 
 export function GroupNav({
   index, total, groupId, title, description, panels, reviewedPanels, onJumpToPanel,
-  channelsEnabled, ctxDisabled, ctxTooltip, isPendingHere, onRequestContext,
+  regenPending, onRequestContext,
 }: Props) {
   const num = String(index + 1).padStart(2, '0')
   const tot = String(total).padStart(2, '0')
@@ -99,25 +97,31 @@ export function GroupNav({
         ) : null}
       </header>
 
-      {channelsEnabled ? (
-        <div className="group-context-actions" role="group" aria-label="Request more context">
-          <button
-            type="button"
-            className={`btn-context${isPendingHere ? ' is-pending' : ''}`}
-            disabled={ctxDisabled}
-            title={ctxTooltip}
-            onClick={() => onRequestContext(groupId, 'more')}
-            aria-busy={isPendingHere}
-          >
-            <span className="btn-context-icon" aria-hidden="true">
-              {isPendingHere ? <SpinnerIcon /> : <PlusIcon />}
-            </span>
-            <span className="btn-context-label">
-              {isPendingHere ? 'Regenerating' : 'More context'}
-            </span>
-          </button>
-        </div>
-      ) : null}
+      {/* v4.8.0: context+ は close-relaunch ループの起点。クリックで現状 state を回収して
+          CLI を終了させ、SKILL.md 側で summary.json を再生成してから Skill を再起動する。
+          regenPending=true 中は他 group も含め全ての context+ を disable する (close-relaunch
+          中に他 group の同時 close-relaunch を許すと restore が破綻する)。 */}
+      <div className="group-context-actions" role="group" aria-label="Request more context">
+        <button
+          type="button"
+          className={`btn-context${regenPending ? ' is-pending' : ''}`}
+          disabled={regenPending}
+          title={
+            regenPending
+              ? 'Regenerating — this tab will close and reopen automatically'
+              : 'Request more context for this group (this tab will close and reopen with expanded panels)'
+          }
+          onClick={() => onRequestContext(groupId)}
+          aria-busy={regenPending}
+        >
+          <span className="btn-context-icon" aria-hidden="true">
+            {regenPending ? <SpinnerIcon /> : <PlusIcon />}
+          </span>
+          <span className="btn-context-label">
+            {regenPending ? 'Regenerating' : 'More context'}
+          </span>
+        </button>
+      </div>
 
       {panels.length ? (
         <nav className="group-panel-list" aria-label="Panels in this group">

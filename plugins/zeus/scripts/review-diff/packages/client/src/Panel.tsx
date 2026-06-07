@@ -1,19 +1,19 @@
-// 1 Panel = 1 CSS Grid (div ベース) でレンダリングするコンポーネント。
+// 1 Panel = 1 CSS Grid (div ベース) でレンダリングするコンポーネント (v4.8.0 split only)。
 //
-// 設計判断 (v4.7.1 grid refactor):
+// 設計判断 (v4.7.1 grid refactor → v4.8.0 unified mode 廃止):
 //   - 旧 <table> 構造では「左右独立横スクロール + 50/50 + 行高同期」が CSS 仕様上同時充足
 //     不可能だった (table cell は per-cell scroll しか出来ず、列方向の cell 群を 1 つの scroll
 //     viewport に束ねる box が CSS table model に存在しない)。
 //     対症療法 (table-layout fixed/auto、useLayoutEffect で table.style.width 実測など 4 回試行)
 //     はすべて根本的に解決不能だったため、DOM 構造そのものを div + CSS Grid に置換した。
-//   - split mode: panel-grid を 2 列 (asIs side + toBe side) で構成。
-//     各 side は独立した overflow-x:auto コンテナで、その中で gutter + code を縦に積む。
+//   - panel-grid を 2 列 (asIs side + toBe side) で構成。各 side は独立した overflow-x:auto
+//     コンテナで、その中で gutter + code を縦に積む。
 //     これにより「左右独立 1 スクロールバー」+「per-side blowout 防止 (minmax(0, 1fr))」を構造的に達成。
 //   - 行高同期: ResizeObserver で各 side の同一インデックス .code-row の offsetHeight max を
 //     min-height として書き戻す JS 同期方式。
 //     subgrid は同一 scroll container 内でしか機能しないため per-side scroll と排他。
-//   - unified mode: 単一カラム (gutter asIs + gutter toBe + code 1 列) の grid。
-//     左右 scroll 分割は不要なので panel-side wrapper は無い。
+//   - v4.8.0 で unified mode (単一カラム) を撤去。理由: split mode 一本化で UI 学習コストを下げ、
+//     mode toggle に必要だった localStorage / mode toggle button / comment-side-badge も削減できた。
 //   - AC-6 (panel 跨ぎコメント不可): panelContainerRef.contains(cell) で構造的に担保。
 //     セレクタは `closest('[data-side][data-line-number]')` に統一 (td/div どちらでも動く)。
 //   - LineCommentHandlers は panelId 単位で thread を管理する。
@@ -22,9 +22,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
-import { lineCommentKey, parseLineCommentKey } from './state'
+import { parseLineCommentKey } from './state'
 import type { LineCommentHandlers } from './useLineComments'
-import { usePanelToggle } from './usePanelToggle'
 import { PanelHeader } from './PanelHeader'
 import { CommentForm } from './CommentForm'
 import { createShiki } from './shiki-bundle'
@@ -65,21 +64,19 @@ export const Panel = memo(function Panel({
   highlight = true,
   ...handlers
 }: PanelProps) {
-  const { mode, toggle } = usePanelToggle(panel.panelId)
   const [drag, setDrag] = useState<DragState>(null)
   const dragRef = useRef<DragState>(null)
   // 旧 panelTableRef → panelContainerRef。div ベースに変わったので HTMLDivElement で受ける。
   // resolveLineAtPoint の AC-6 scope check (別 panel の cell を弾く) で使用。
   const panelContainerRef = useRef<HTMLDivElement>(null)
 
-  // 行高同期 (split mode のみ): per-side scroll container が分かれた結果、左右で行高がズレる
+  // 行高同期: per-side scroll container が分かれた結果、左右で行高がズレる
   // (例: 左 side のみ wrap して高さが伸びるケース)。subgrid なら親 grid 内で自動的に揃うが、
   // 本実装では左右が別 scroll container なので subgrid が使えない。
   // ResizeObserver で各 .code-row を観測し、両 side の同一インデックス行の offsetHeight max を
   // min-height として書き戻して同期する。requestAnimationFrame で coalesce してレイアウト
   // スラッシングを防ぐ。
   useLayoutEffect(() => {
-    if (mode !== 'split') return
     const container = panelContainerRef.current
     if (!container) return
     let raf = 0
@@ -113,14 +110,13 @@ export const Panel = memo(function Panel({
         el.style.minHeight = ''
       })
     }
-  }, [panel.segments, mode])
+  }, [panel.segments])
 
-  // 左右スクロール同期 (split mode のみ): per-side が独立 overflow-x:auto なので、
-  // 片側を横スクロールすると反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」
-  // = 1 panel 内では asIs / toBe の scrollLeft が常に一致するべき。
-  // 双方向 mirror で sync する。リエントラント防止のため flag で再帰呼び出しを抑止。
+  // 左右スクロール同期: per-side が独立 overflow-x:auto なので、片側を横スクロールすると
+  // 反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」= 1 panel 内では
+  // asIs / toBe の scrollLeft が常に一致するべき。双方向 mirror で sync する。
+  // リエントラント防止のため flag で再帰呼び出しを抑止。
   useLayoutEffect(() => {
-    if (mode !== 'split') return
     const container = panelContainerRef.current
     if (!container) return
     const asis = container.querySelector<HTMLElement>('.panel-side-asis')
@@ -142,7 +138,7 @@ export const Panel = memo(function Panel({
       asis.removeEventListener('scroll', onAsis)
       tobe.removeEventListener('scroll', onTobe)
     }
-  }, [mode])
+  }, [])
 
   const setDragBoth = useCallback((next: DragState) => {
     dragRef.current = next
@@ -273,37 +269,24 @@ export const Panel = memo(function Panel({
 
   return (
     <div
-      className={`panel-grid panel-grid-${mode}`}
+      className="panel-grid panel-grid-split"
       data-panel-id={panel.panelId}
       ref={panelContainerRef}
     >
-      <PanelHeader panel={panel} mode={mode} onToggle={toggle} />
+      <PanelHeader panel={panel} />
       {panel.sourcesUnavailable ? (
         <SourcesUnavailableBanner info={panel.sourcesUnavailable} />
       ) : null}
-      {mode === 'split' ? (
-        <SplitBody
-          panel={panel}
-          highlight={highlight}
-          commentKeysByAnchor={commentKeysByAnchor}
-          handlers={handlers}
-          isInDragRange={isInDragRange}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-        />
-      ) : (
-        <UnifiedBody
-          panel={panel}
-          highlight={highlight}
-          commentKeysByAnchor={commentKeysByAnchor}
-          handlers={handlers}
-          isInDragRange={isInDragRange}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-        />
-      )}
+      <SplitBody
+        panel={panel}
+        highlight={highlight}
+        commentKeysByAnchor={commentKeysByAnchor}
+        handlers={handlers}
+        isInDragRange={isInDragRange}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      />
     </div>
   )
 })
@@ -464,148 +447,6 @@ function SideRow({
               lineKey={key}
               panel={panel}
               handlers={handlers}
-              mode="split"
-            />
-          ))
-        : null}
-    </>
-  )
-}
-
-// unified mode body: 単一 scroll container、3 列 grid (asIs gutter + toBe gutter + code)。
-// 表示行は asIs (deletion) / toBe (addition) / context のうち、片側に line がある方を
-// メインで出す。両側 context なら toBe を表示。
-function UnifiedBody({
-  panel, highlight, commentKeysByAnchor, handlers,
-  isInDragRange, onPointerDown, onPointerMove, onPointerUp,
-}: BodyProps) {
-  return (
-    <div className="panel-body panel-body-unified">
-      {panel.segments.map((seg, si) => (
-        <div className="panel-segment" key={`seg-${si}`}>
-          {seg.rows.map((row, ri) => (
-            <UnifiedRow
-              key={`r-${si}-${ri}`}
-              row={row}
-              panel={panel}
-              highlight={highlight}
-              commentKeysByAnchor={commentKeysByAnchor}
-              handlers={handlers}
-              isInDragRange={isInDragRange}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function UnifiedRow({
-  row, panel, highlight, commentKeysByAnchor, handlers,
-  isInDragRange, onPointerDown, onPointerMove, onPointerUp,
-}: {
-  row: SideBySideRow
-  panel: RenderedPanel
-  highlight: boolean
-  commentKeysByAnchor: Map<string, string[]>
-  handlers: LineCommentHandlers
-} & RowHandlerProps) {
-  const asIsLang = panel.asIsLanguage ?? 'plaintext'
-  const toBeLang = panel.toBeLanguage ?? 'plaintext'
-  const asIsHtml = useMemo(
-    () => highlight ? highlightCode(row.asIs.raw, asIsLang) : escapeHtml(row.asIs.raw),
-    [highlight, row.asIs.raw, asIsLang],
-  )
-  const toBeHtml = useMemo(
-    () => highlight ? highlightCode(row.toBe.raw, toBeLang) : escapeHtml(row.toBe.raw),
-    [highlight, row.toBe.raw, toBeLang],
-  )
-
-  const asIsAnchor = row.asIs.line != null
-    ? commentKeysByAnchor.get(`asIs\x1f${row.asIs.line}`) ?? [] : []
-  const toBeAnchor = row.toBe.line != null
-    ? commentKeysByAnchor.get(`toBe\x1f${row.toBe.line}`) ?? [] : []
-  const anchorKeys = [...asIsAnchor, ...toBeAnchor]
-
-  const asIsInRange = isInDragRange('asIs', row.asIs.line)
-  const toBeInRange = isInDragRange('toBe', row.toBe.line)
-  const selectedClass = asIsInRange || toBeInRange ? ' line-selected' : ''
-
-  function gutterPointerProps(side: Side, lineNumber: number | undefined) {
-    if (lineNumber == null) return {}
-    return {
-      'data-side': sideToAttr(side),
-      'data-line-number': String(lineNumber),
-      onPointerDown: (e: React.PointerEvent<HTMLDivElement>) =>
-        onPointerDown(e, side, lineNumber),
-      onPointerMove,
-      onPointerUp,
-      onPointerCancel: onPointerUp,
-    }
-  }
-  function codeDataAttrs(side: Side, lineNumber: number | undefined) {
-    if (lineNumber == null) return {}
-    return {
-      'data-side': sideToAttr(side),
-      'data-line-number': String(lineNumber),
-    }
-  }
-
-  const showToBe = row.toBe.type !== 'empty'
-  const codeSide: Side = showToBe ? 'toBe' : 'asIs'
-  const codeCell = showToBe ? row.toBe : row.asIs
-  const codeSideClass = codeSide === 'asIs' ? 'asis' : 'tobe'
-  const codeHtml = showToBe ? toBeHtml : asIsHtml
-
-  return (
-    <>
-      <div className={`code-row code-row-unified code-row-${codeCell.type}${selectedClass}`}>
-        <div
-          className={`cell-ln cell-ln-asis cell-ln-${row.asIs.type}`}
-          {...gutterPointerProps('asIs', row.asIs.line)}
-        >
-          {row.asIs.line ?? ''}
-          {row.asIs.line != null ? (
-            <LineTrigger
-              panelId={panel.panelId}
-              side="asIs"
-              lineNumber={row.asIs.line}
-              onOpenLineForm={handlers.onOpenLineForm}
-            />
-          ) : null}
-        </div>
-        <div
-          className={`cell-ln cell-ln-tobe cell-ln-${row.toBe.type}`}
-          {...gutterPointerProps('toBe', row.toBe.line)}
-        >
-          {row.toBe.line ?? ''}
-          {row.toBe.line != null ? (
-            <LineTrigger
-              panelId={panel.panelId}
-              side="toBe"
-              lineNumber={row.toBe.line}
-              onOpenLineForm={handlers.onOpenLineForm}
-            />
-          ) : null}
-        </div>
-        <div
-          className={`cell-code cell-code-${codeSideClass} cell-code-${codeCell.type}`}
-          {...codeDataAttrs(codeSide, codeCell.line)}
-        >
-          <pre dangerouslySetInnerHTML={{ __html: codeHtml }} />
-        </div>
-      </div>
-      {anchorKeys.length > 0
-        ? sortAnchorKeys(anchorKeys).map(key => (
-            <CommentRow
-              key={key}
-              lineKey={key}
-              panel={panel}
-              handlers={handlers}
-              mode="unified"
             />
           ))
         : null}
@@ -649,12 +490,11 @@ function LineTrigger({
 }
 
 function CommentRow({
-  lineKey, panel, handlers, mode,
+  lineKey, panel, handlers,
 }: {
   lineKey: string
   panel: RenderedPanel
   handlers: LineCommentHandlers
-  mode: 'split' | 'unified'
 }): React.ReactElement | null {
   const parsed = parseLineCommentKey(lineKey)
   const savedList = handlers.lineComments.get(lineKey)
@@ -702,29 +542,9 @@ function CommentRow({
     </div>
   )
 
-  // split mode: comment row は該当 side の scroll container 内 (SideRow の兄弟) として出される。
-  //   親の panel-side が overflow-x:auto なので、コメントは side 幅 (panel の左 or 右半分) に
-  //   フィットして表示される。横スクロールはコード行と共有。
-  // unified mode: 1 column 全幅。W-2 で追加した comment-thread-unified + side バッジで
-  //   「どちら側に対するコメントか」を視覚的に明示する。
-  if (mode === 'unified') {
-    return (
-      <div className="comment-row comment-row-unified" data-comment-side={sideToAttr(parsed.side)}>
-        <div className="comment-cell">
-          <div className="comment-thread-unified">
-            <span
-              className="comment-side-badge"
-              data-side={sideToAttr(parsed.side)}
-              aria-label={parsed.side === 'asIs' ? 'as-is side comment' : 'to-be side comment'}
-            >
-              {parsed.side === 'asIs' ? 'asIs' : 'toBe'}
-            </span>
-            {thread}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // comment row は該当 side の scroll container 内 (SideRow の兄弟) として出される。
+  // 親の panel-side が overflow-x:auto なので、コメントは side 幅 (panel の左 or 右半分) に
+  // フィットして表示される。横スクロールはコード行と共有。
   return (
     <div className="comment-row comment-row-split" data-comment-side={sideToAttr(parsed.side)}>
       <div className="comment-cell">{thread}</div>

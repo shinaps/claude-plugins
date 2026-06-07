@@ -32,12 +32,4 @@ export default defineWorkspace([
       include: ['packages/client/test/**/*.test.{ts,tsx}'],
     },
   },
-  {
-    resolve: { conditions: ['@zeus/source'] },
-    test: {
-      name: 'channel',
-      environment: 'node',
-      include: ['packages/channel/test/**/*.test.ts'],
-    },
-  },
 ])

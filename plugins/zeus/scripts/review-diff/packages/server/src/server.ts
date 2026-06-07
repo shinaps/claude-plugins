@@ -6,6 +6,11 @@
 //   4. POST /result では Origin ヘッダも検証 (CSRF 対策)
 // 加えて token 検証失敗が 20 回貯まったらプロセスごと落として brute force 試行を断つ。
 //
+// v4.8.0 で Channels インフラ (/feedback, /events/*, /channel/inbox) を全廃した。
+// context+ は close-relaunch + state restore モデルに変更され、ブラウザは POST /result に
+// decision='regen-group' を送って window.close() するだけになった。SSE / event bus / 別 token
+// (browserToken / channelToken) も不要になり、middleware と endpoint がシンプルになった。
+//
 // なぜ Hono か:
 //   - middleware を順序付きで宣言できるためセキュリティ層の責務が一目で読める
 //   - app.fetch(Request) でリスナー無しテストが書け、テストの所要時間と flakiness が下がる
@@ -14,11 +19,9 @@
 import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
 import { compress } from 'hono/compress'
-import { streamSSE } from 'hono/streaming'
 import type { MiddlewareHandler } from 'hono'
 import { serve, type ServerType } from '@hono/node-server'
-import type { ResultJson, FeedbackEvent, PanelsUpdatedEvent } from '@zeus/review-diff-shared'
-import { EventBus } from './event-bus'
+import type { ResultJson } from '@zeus/review-diff-shared'
 
 const SECURITY_HEADERS: Record<string, string> = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -49,40 +52,12 @@ export type CreateAppOptions = {
   onBruteForce?: () => void // テスト時は process.exit を差し替えたい
   onResult: (r: ResultJson) => void
   sources?: SourcesMap
-  // v4.7.0 Channels 経路。channelsEnabled=false なら全 channel endpoint が 503 を返す。
-  // browserToken/channelToken は token (= 既存の /、/source、/result 用 token) と
-  // 別の token を使う設計。/feedback と /events/browser はブラウザ用 token、
-  // /events/channel と /channel/inbox は channel-server (Process A) 用 token。
-  // 既存 endpoint と endpoint を共有する middleware を分けたいため、
-  // channel endpoint 側は独立した token 検証経路を持つ。
-  channelsEnabled?: boolean
-  browserToken?: string
-  channelToken?: string
-  eventBus?: EventBus
-}
-
-// 既存の Host + token + Origin チェックを受けない、Channels 専用のルートプレフィックス集。
-// 各 endpoint は独立した token (browserToken/channelToken) を持つため、デフォルト token
-// middleware の対象外にする。
-const CHANNEL_PATHS = new Set([
-  '/feedback',
-  '/events/browser',
-  '/events/channel',
-  '/channel/inbox',
-])
-
-function isChannelPath(pathname: string): boolean {
-  return CHANNEL_PATHS.has(pathname)
 }
 
 export function createApp(opts: CreateAppOptions): Hono {
   const { html, getPort, token, onResult } = opts
   const sources: SourcesMap = opts.sources ?? new Map()
   const onBruteForce = opts.onBruteForce ?? (() => setTimeout(() => process.exit(1), 50))
-  const channelsEnabled = opts.channelsEnabled ?? false
-  const browserToken = opts.browserToken ?? ''
-  const channelToken = opts.channelToken ?? ''
-  const eventBus = opts.eventBus
 
   let failCount = 0
   const app = new Hono()
@@ -104,12 +79,7 @@ export function createApp(opts: CreateAppOptions): Hono {
   app.use('*', hostCheck)
 
   // 3. token 検証 + brute force ガード (20 回失敗で onBruteForce、デフォルトはプロセス自爆)
-  // channel endpoint は独立 token (browserToken/channelToken) を持つため、ここでは skip し
-  // 各 endpoint 内で token 検証する。brute force カウンタは共有 (どの token への試行でも蓄積)。
   const tokenCheck: MiddlewareHandler = async (c, next) => {
-    if (isChannelPath(new URL(c.req.url).pathname)) {
-      return next()
-    }
     if (c.req.query('token') !== token) {
       failCount++
       if (failCount >= MAX_TOKEN_FAILURES) {
@@ -124,19 +94,11 @@ export function createApp(opts: CreateAppOptions): Hono {
   // 4. Origin 検証 (CSRF 対策) を **書き込み系 (GET/HEAD 以外) すべて** に一段で適用する。
   //
   // 脅威モデルメモ:
-  //   - ブラウザから来る POST (/result, /feedback) は Origin header を必ず持つので、
+  //   - ブラウザから来る POST (/result) は Origin header を必ず持つので、
   //     `http://127.0.0.1:<port>` と完全一致で弾けば CSRF (悪意ある別 origin の fetch) を遮断できる。
-  //   - /channel/inbox は Process A (channel-server.js) の loopback → loopback 直 POST で
-  //     Origin header を持たない。ブラウザ経由ではないため CSRF 対象外。
-  //     ORIGIN_EXEMPT_PATHS で skip し、代わりに 32 byte channelToken (URL クエリ) + 共有
-  //     failCount による brute-force ガード + active session file の 0600 perm + token rotation
-  //     で多層防御する。
   //   - 将来 PUT/PATCH を追加した時もこの一段ミドルウェアが自動で守る (per-path 追加忘れ防止)。
-  const ORIGIN_EXEMPT_PATHS = new Set(['/channel/inbox'])
   const originCheck: MiddlewareHandler = async (c, next) => {
     if (c.req.method === 'GET' || c.req.method === 'HEAD') return next()
-    const pathname = new URL(c.req.url).pathname
-    if (ORIGIN_EXEMPT_PATHS.has(pathname)) return next()
     const origin = c.req.header('origin') ?? ''
     if (origin !== `http://127.0.0.1:${getPort()}`) {
       return c.text('forbidden', 403)
@@ -144,16 +106,6 @@ export function createApp(opts: CreateAppOptions): Hono {
     await next()
   }
   app.use('*', originCheck)
-
-  // 個別 token を検証するヘルパー。brute force カウンタは default token check と共有する。
-  const verifyChannelToken = (got: string | undefined, expected: string): boolean => {
-    if (!expected || got !== expected) {
-      failCount++
-      if (failCount >= MAX_TOKEN_FAILURES) onBruteForce()
-      return false
-    }
-    return true
-  }
 
   // 5. gzip / deflate 圧縮 (Web Streams ベース、Node 22.8+ で動く前提)
   // GET / の HTML レスポンスだけ対象になれば十分なので、全ルートにかけても害は無い。
@@ -193,6 +145,10 @@ export function createApp(opts: CreateAppOptions): Hono {
   })
 
   // POST /result → JSON 受信 → 200 を返し切ってから resolve (ブラウザに描画余地を残す)
+  //
+  // v4.8.0: decision='regen-group' もここで受け取る。CLI 側は decision を見ずに
+  // ResultJson をそのまま resolve するので、SKILL.md が JSON.parse で分岐する設計。
+  // approve / reject と同じ close-relaunch ルートで動くので endpoint 追加不要。
   app.post('/result', async (c) => {
     // body size ガード: Content-Length が無いリクエストでも、生バッファを直接読んで上限超過なら 413。
     // c.req.json() に渡す前に上限を実測する。
@@ -206,109 +162,6 @@ export function createApp(opts: CreateAppOptions): Hono {
     }
     // RESULT_SETTLE_MS の猶予をブラウザ描画用に挟んでから resolve する。
     setTimeout(() => onResult(json), RESULT_SETTLE_MS)
-    return c.json({ ok: true })
-  })
-
-  // =====================================================================
-  // v4.7.0 Channels endpoints
-  //   POST /feedback           browser → Hub (feedback-sent を eventBus に publish)
-  //   GET  /events/browser     browser ← Hub SSE (panels-updated を購読)
-  //   GET  /events/channel     channel-server ← Hub SSE (feedback-sent を購読)
-  //   POST /channel/inbox      channel-server → Hub (panels-updated を eventBus に publish)
-  //
-  // channelsEnabled=false なら全 4 endpoint が 503。eventBus 未指定でも 503。
-  // =====================================================================
-
-  app.post('/feedback', async (c) => {
-    if (!channelsEnabled || !eventBus) return c.json({ error: 'channels disabled' }, 503)
-    if (!verifyChannelToken(c.req.query('token'), browserToken)) {
-      return c.text('forbidden', 403)
-    }
-    const buf = await readBodyWithLimit(c.req.raw, MAX_BODY)
-    if (buf === null) return c.text('payload too large', 413)
-    let body: FeedbackEvent
-    try {
-      body = JSON.parse(buf.toString('utf8')) as FeedbackEvent
-    } catch {
-      return c.text('bad json', 400)
-    }
-    // 軽量 shape 検証: 必須 field の型のみ確認 (zod は cli.ts 側で重く回しているため
-    // server runtime には乗せない)。malformed なら eventBus を汚染する前に 400 で弾く。
-    if (
-      typeof body.sessionId !== 'string' ||
-      typeof body.groupId !== 'string' ||
-      (body.groupTitle !== undefined && typeof body.groupTitle !== 'string') ||
-      (body.direction !== 'more' && body.direction !== 'less') ||
-      !Array.isArray(body.currentRanges)
-    ) {
-      return c.text('bad feedback shape', 400)
-    }
-    eventBus.publish('feedback-sent', body)
-    return c.json({ ok: true })
-  })
-
-  app.get('/events/browser', (c) => {
-    if (!channelsEnabled || !eventBus) return c.text('channels disabled', 503)
-    if (!verifyChannelToken(c.req.query('token'), browserToken)) {
-      return c.text('forbidden', 403)
-    }
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ event: 'open', data: 'connected' })
-      const unsub = eventBus.subscribe('panels-updated', async (e) => {
-        try {
-          await stream.writeSSE({ event: 'panels-updated', data: JSON.stringify(e) })
-        } catch {
-          // 接続切れによる writer 失敗。unsubscribe は abort 経路で別途実施される。
-        }
-      })
-      // abort signal が来るまで keep open。abort 時に unsubscribe して listener leak を防ぐ。
-      await new Promise<void>((resolve) => {
-        c.req.raw.signal.addEventListener('abort', () => {
-          unsub()
-          resolve()
-        })
-      })
-    })
-  })
-
-  app.get('/events/channel', (c) => {
-    if (!channelsEnabled || !eventBus) return c.text('channels disabled', 503)
-    if (!verifyChannelToken(c.req.query('token'), channelToken)) {
-      return c.text('forbidden', 403)
-    }
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ event: 'open', data: 'connected' })
-      const unsub = eventBus.subscribe('feedback-sent', async (e) => {
-        try {
-          await stream.writeSSE({ event: 'feedback-sent', data: JSON.stringify(e) })
-        } catch { /* 切断時の writer 失敗を無視 */ }
-      })
-      await new Promise<void>((resolve) => {
-        c.req.raw.signal.addEventListener('abort', () => {
-          unsub()
-          resolve()
-        })
-      })
-    })
-  })
-
-  app.post('/channel/inbox', async (c) => {
-    if (!channelsEnabled || !eventBus) return c.json({ error: 'channels disabled' }, 503)
-    if (!verifyChannelToken(c.req.query('token'), channelToken)) {
-      return c.text('forbidden', 403)
-    }
-    const buf = await readBodyWithLimit(c.req.raw, MAX_BODY)
-    if (buf === null) return c.text('payload too large', 413)
-    let body: PanelsUpdatedEvent
-    try {
-      body = JSON.parse(buf.toString('utf8')) as PanelsUpdatedEvent
-    } catch {
-      return c.text('bad json', 400)
-    }
-    if (typeof body.groupId !== 'string' || !Array.isArray(body.panels)) {
-      return c.text('bad inbox shape', 400)
-    }
-    eventBus.publish('panels-updated', body)
     return c.json({ ok: true })
   })
 
@@ -341,31 +194,17 @@ export type StartServerOptions = {
   // 現状はクライアントペイロード経由で expandable を伝えるため、server 自体は値を保持しない。
   // 将来 server 側で expandable に応じた挙動分岐が必要になれば opts に追加する。
   expandable?: boolean
-  // v4.7.0 Channels
-  channelsEnabled?: boolean
-  // CLI が ClientPayload に埋め込むために事前生成した token を渡せる。
-  // 未指定なら startServer が新規生成する (旧テスト互換)。
-  browserToken?: string
-  channelToken?: string
 }
 export type StartedServer = {
   url: string
   port: number
   waitResult: () => Promise<ResultJson>
   close: () => void
-  // v4.7.0: CLI が active/<sessionId>.json に書き出すために token を返す。
-  // browserToken/channelToken は channelsEnabled=false でも常に生成する (将来の reload 時に使い回せる)。
-  browserToken: string
-  channelToken: string
-  eventBus: EventBus
 }
 
 export async function startServer(opts: StartServerOptions): Promise<StartedServer> {
-  const { html, sources, channelsEnabled = false } = opts
+  const { html, sources } = opts
   const token = randomBytes(32).toString('hex')
-  const browserToken = opts.browserToken ?? randomBytes(32).toString('hex')
-  const channelToken = opts.channelToken ?? randomBytes(32).toString('hex')
-  const eventBus = new EventBus()
 
   let resolveResult!: (r: ResultJson) => void
   const resultPromise = new Promise<ResultJson>((r) => {
@@ -381,10 +220,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     token,
     getPort: () => port,
     sources,
-    channelsEnabled,
-    browserToken,
-    channelToken,
-    eventBus,
     onResult: (json) => {
       resolveResult(json)
       try { server.close() } catch { /* noop */ }
@@ -398,13 +233,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
           fetch: app.fetch,
           port: 0,
           hostname: '127.0.0.1',
-          // SSE の long-lived 接続が @hono/node-server のデフォルト keepAliveTimeout (5秒) で
-          // close されないよう、両方とも 0 (= 無制限) に設定する。SSE は短時間で大量の event を
-          // 流すユースケースではないので、keep-alive timeout を切ってもリソース面の問題は小さい。
-          serverOptions: {
-            keepAliveTimeout: 0,
-            headersTimeout: 0,
-          },
+          // v4.8.0 で SSE 経路を消したので keep-alive を切る必要はもう無い。
+          // 既定値 (Node の default) のままで OK。
         },
         (info) => {
           port = info.port
@@ -424,9 +254,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     close: () => {
       try { server.close() } catch { /* noop */ }
     },
-    browserToken,
-    channelToken,
-    eventBus,
   }
 }
 
@@ -436,37 +263,25 @@ export type CreateTestAppResult = {
   app: Hono
   token: string
   port: number
-  browserToken: string
-  channelToken: string
-  eventBus: EventBus
 }
 export function createTestApp({
   html,
   port = 12345,
   sources,
-  channelsEnabled = false,
 }: {
   html: string
   port?: number
   sources?: SourcesMap
-  channelsEnabled?: boolean
 }): CreateTestAppResult {
   const token = randomBytes(32).toString('hex')
-  const browserToken = randomBytes(32).toString('hex')
-  const channelToken = randomBytes(32).toString('hex')
-  const eventBus = new EventBus()
   const app = createApp({
     html,
     token,
     getPort: () => port,
     sources,
-    channelsEnabled,
-    browserToken,
-    channelToken,
-    eventBus,
     // テストでは brute force しないので exit を抑止 (ガード自体は本番で機能する)。
     onBruteForce: () => { /* noop in tests */ },
     onResult: () => { /* tests use the e2e path for the resolve case */ },
   })
-  return { app, token, port, browserToken, channelToken, eventBus }
+  return { app, token, port }
 }

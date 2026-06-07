@@ -1,31 +1,32 @@
-// アプリのトップレベル (v4.7.0 panel model)。
+// アプリのトップレベル (v4.8.0 panel model + close-relaunch context+)。
 //
 // 設計判断:
 //   - groups[].panels[] を素直に並べる単一スクロール (Linear Guide タブ風)
 //   - Reviewed の単位は file ではなく **panelId** (= reviewedPanels[])
 //   - Comment の構造は scope union ({type:'overall'} / {type:'line', panelId, side, file, line, endLine?})
-//   - Channels: useChannelSSE で /events/browser 購読 + /feedback POST。
-//     channelsEnabled=false なら status='disabled' で context+/- ボタンは disabled
-//   - 'panels-updated' を受けたら setGroupsState で **groupId 単位** の panels を差し替える
-//     (panelId 集合が変わったら orphan draft purge も自動)
+//   - v4.8.0: Channels SSE 経路を全廃。context+ ボタンは「現在 state を回収して POST /result に
+//     `decision: 'regen-group'` を送る → window.close() → SKILL.md 側で summary.json の該当 group
+//     の panels を ±N 行広げて再生成 → restore JSON を渡しつつ Skill 再起動」のループに変更。
+//     initialReviewedPanels / initialComments / initialLineCommentDrafts を payload から受け取って
+//     useState 初期化 + sessionStorage 書き戻しで前回状態をシームレスに復元する。
 //   - AI Review Report カード (page-header) は plan-reviewer C-2 で保持
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClientPayload,
   Comment,
-  Panel,
+  DisplayRange,
   PrMeta,
   RenderedPanel,
+  ResultJson,
 } from '@zeus/review-diff-shared'
 import { TabBar } from './TabBar'
 import { GroupSection } from './GroupSection'
 import { ActionBar } from './ActionBar'
 import { SubmitModal } from './SubmitModal'
 import { renderMarkdown, escapeHtml } from './markdown'
-import { getToken, parseLineCommentKey } from './state'
+import { getToken, lineCommentKey, parseLineCommentKey } from './state'
 import { useLineComments } from './useLineComments'
-import { useChannelSSE, type CurrentRange } from './useChannelSSE'
 
 const NAV_WIDTH_MIN = 240
 const NAV_WIDTH_MAX = 480
@@ -33,92 +34,75 @@ const NAV_WIDTH_MAX = 480
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
 
-// App ローカルの group state。client 側で panels-updated を受けて差し替えるため
-// payload.groups をそのまま使わず useState で持つ。groupId === group title を使う
-// (現 schema では group に明示的 id field が無い)。
+// App ローカルの group state。v4.8.0 で SSE による in-place 差し替えが無くなったので
+// payload.groups から 1 回だけ初期化すれば足りる (regen は close-relaunch で別プロセスへ)。
+// それでも useState 持ちにしておくのは、将来 in-process な local edit (panel 並べ替え等) を
+// 入れる時にスムーズに拡張できるようにするため。
 type AppGroup = {
   groupId: string
-  groupTitle?: string
   title: string
   description: string
   panels: RenderedPanel[]
 }
 
 export function App({ payload }: Props) {
-  const [groupsState, setGroupsState] = useState<AppGroup[]>(() =>
+  const [groupsState] = useState<AppGroup[]>(() =>
     payload.groups.map((g, i) => ({
       // W-1: CLI が `g${i}` で生成する RenderedGroup.groupId を優先採用。
       // 古い payload (groupId 未設定) や test fixture 互換のため title / index fallback も残す。
-      // title が重複しても CLI 側 index ベース ID で必ず衝突回避される。
       groupId: g.groupId || g.title || `group-${i}`,
-      groupTitle: g.groupTitle,
       title: g.title,
       description: g.description,
       panels: g.panels,
     })),
   )
 
-  // groupId → その group が現在持つ panelId 集合のゲッタ用 ref。
-  // useChannelSSE は panels-updated 受信時に **受信 groupId に対応する旧 panel 集合だけ** を
-  // orphan draft purge の oldIds として使う必要がある。全 group flatten を渡すと、SSE で 1
-  // group を更新するたびに他 group の panel が「oldIds にあり newIds に無い」と誤判定され、
-  // 巻き添えで他 group の draft が消える事故が起きる (C-1)。ref で常に最新の groupsState を
-  // 参照することで stale closure も避ける。
-  const groupsStateRef = useRef(groupsState)
-  groupsStateRef.current = groupsState
-  const getPanelIdsForGroup = useCallback((groupId: string): Set<string> => {
-    const s = new Set<string>()
-    const g = groupsStateRef.current.find(x => x.groupId === groupId)
-    if (g) for (const p of g.panels) s.add(p.panelId)
-    return s
-  }, [])
-
-  // panels-updated 受信時の handler。指定 groupId の panels を差し替える。
-  // 注: payload.panels は Panel[] (RenderedPanel ではない) で、segments を持たない。
-  // sources を持たない CLIENT 側では re-render できないため、暫定で intent + asIs/toBe だけ
-  // 上書きし、segments は前回のものを引き継ぐ (理想は CLI が renderPanel を再実行して
-  // /channel/inbox に RenderedPanel を流すが、それは v4.7.x で対応)。
-  const handlePanelsUpdated = useCallback((groupId: string, panels: Array<{ panelId: string }>) => {
-    setGroupsState(prev => prev.map(g => {
-      if (g.groupId !== groupId) return g
-      // 受信 panels (Panel shape) と前回 RenderedPanel をマージ。新規 panelId は segments 空で追加。
-      const prevById = new Map(g.panels.map(p => [p.panelId, p]))
-      const nextPanels: RenderedPanel[] = panels.map(received => {
-        const prevP = prevById.get(received.panelId)
-        const r = received as Panel
-        return {
-          panelId: r.panelId,
-          intent: r.intent,
-          asIs: r.asIs,
-          toBe: r.toBe,
-          segments: prevP?.segments ?? [],
-          asIsLanguage: prevP?.asIsLanguage,
-          toBeLanguage: prevP?.toBeLanguage,
-          asIsTotal: prevP?.asIsTotal,
-          toBeTotal: prevP?.toBeTotal,
-        }
-      })
-      return { ...g, panels: nextPanels }
-    }))
-  }, [])
-
-  // Channels SSE 接続。enabled=false なら no-op で status='disabled'。
-  const channelsEnabled = payload.channelsEnabled
-  const channel = useChannelSSE({
-    enabled: channelsEnabled,
-    browserToken: payload.browserToken,
-    sessionId: payload.sessionId,
-    getPanelIdsForGroup,
-    onPanelsUpdated: handlePanelsUpdated,
+  // initial state seed: payload.initialLineCommentDrafts を sessionStorage に書き戻し、
+  // CommentForm が mount 時にそれを読んで draft フィールドを復元する。
+  // useEffect ではなく useState の lazy initializer で 1 回だけ実行することで、
+  // mount 後の re-render で重複書き込みされる事故を防ぐ (副作用だが mount-time guard 相当)。
+  useState(() => {
+    if (typeof sessionStorage === 'undefined') return null
+    const drafts = payload.initialLineCommentDrafts
+    if (!drafts) return null
+    try {
+      for (const [k, v] of Object.entries(drafts)) {
+        if (typeof v === 'string' && v !== '') sessionStorage.setItem(k, v)
+      }
+    } catch { /* storage unavailable */ }
+    return null
   })
 
-  const [reviewedPanels, setReviewedPanels] = useState<Set<string>>(() => new Set())
-  const lineCommentHandlers = useLineComments()
+  // 前回の line comments (saved) を useLineComments の seed にする。
+  // payload.initialComments のうち scope.type === 'line' のものだけが対象。overall は
+  // submit modal の input に流したいが、modal の入力欄まで貫通する fan は重いので
+  // 一旦 overall は捨てる (regen-group のループでは AI が再 review する前提)。
+  const initialLineCommentsMap = useMemo(() => {
+    const m = new Map<string, string[]>()
+    const list = payload.initialComments
+    if (!list) return m
+    for (const c of list) {
+      if (c.scope.type !== 'line') continue
+      const key = lineCommentKey(c.scope.panelId, c.scope.side, c.scope.line, c.scope.endLine)
+      const arr = m.get(key) ?? []
+      arr.push(c.body)
+      m.set(key, arr)
+    }
+    return m
+  }, [payload.initialComments])
+
+  const [reviewedPanels, setReviewedPanels] = useState<Set<string>>(
+    () => new Set(payload.initialReviewedPanels ?? []),
+  )
+  const lineCommentHandlers = useLineComments({ lineComments: initialLineCommentsMap })
   const [tab, setTab] = useState<Tab>('guide')
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
-  const [submitted, setSubmitted] = useState<null | 'approve' | 'reject'>(null)
+  const [submitted, setSubmitted] = useState<null | 'approve' | 'reject' | 'regen'>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [modalDecision, setModalDecision] = useState<null | 'approve' | 'reject'>(null)
+  // 連打防止 + ボタン disable 用フラグ。close-relaunch は 1 回しか走らないが、ユーザーが
+  // 連打した時に setTimeout(window.close) が複数回走って未確定の close が混乱するのを防ぐ。
+  const [regenPending, setRegenPending] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const tokenRef = useRef<string>(getToken())
@@ -189,6 +173,23 @@ export function App({ payload }: Props) {
     return out
   }
 
+  // sessionStorage 全体を走査して `draft:` prefix の値を Record にまとめる。
+  // regen-group POST 時の lineCommentDrafts に乗せて、SKILL.md 側に渡す → restore JSON に書き出す。
+  // 値が空文字列の draft は除外 (UI 上「書きかけ無し」の状態と等価)。
+  function collectAllDrafts(): Record<string, string> {
+    const out: Record<string, string> = {}
+    if (typeof sessionStorage === 'undefined') return out
+    try {
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i)
+        if (!k || !k.startsWith('draft:')) continue
+        const v = sessionStorage.getItem(k)
+        if (typeof v === 'string' && v !== '') out[k] = v
+      }
+    } catch { /* storage unavailable */ }
+    return out
+  }
+
   async function submit(decision: 'approve' | 'reject', overallBody: string) {
     if (submitted) return
     const cs = collectComments(overallBody)
@@ -200,7 +201,7 @@ export function App({ payload }: Props) {
           decision,
           reviewedPanels: Array.from(reviewedPanels),
           comments: cs,
-        }),
+        } satisfies ResultJson),
       })
       setSubmitted(decision)
       setModalDecision(null)
@@ -213,19 +214,52 @@ export function App({ payload }: Props) {
     }
   }
 
-  // group ごとの context+/- ハンドラ。currentRanges を集約してから sendFeedback。
+  // v4.8.0: context+ ボタンの新動作。現状 state (Reviewed + line comments + 未保存 draft) を
+  // 回収し、decision='regen-group' で POST /result に送ってから window.close()。
+  // SKILL.md 側がこれを受けて summary.json の panels[] を「より広い context」で再生成し、
+  // restore JSON を渡しつつ Skill 再起動するループに繋がる。
   const onRequestContext = useCallback(
-    (groupId: string, direction: 'more' | 'less') => {
+    async (groupId: string) => {
+      if (regenPending || submitted) return
       const g = groupsState.find(x => x.groupId === groupId)
       if (!g) return
-      const currentRanges: CurrentRange[] = g.panels.map(p => ({
+      setRegenPending(true)
+      const currentRanges: Array<{
+        panelId: string
+        asIs?: { file: string; ranges: DisplayRange[] }
+        toBe?: { file: string; ranges: DisplayRange[] }
+      }> = g.panels.map(p => ({
         panelId: p.panelId,
         asIs: p.asIs ? { file: p.asIs.file, ranges: p.asIs.ranges } : undefined,
         toBe: p.toBe ? { file: p.toBe.file, ranges: p.toBe.ranges } : undefined,
       }))
-      void channel.sendFeedback(groupId, direction, currentRanges, g.groupTitle ?? g.title)
+      const cs = collectComments('')
+      const drafts = collectAllDrafts()
+      const body: ResultJson = {
+        decision: 'regen-group',
+        reviewedPanels: Array.from(reviewedPanels),
+        comments: cs,
+        regenGroup: { groupId, currentRanges },
+        lineCommentDrafts: drafts,
+      }
+      try {
+        await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        setSubmitted('regen')
+        // SKILL.md が新しい summary.json で再起動してくれる前提。window.close で UI を畳む。
+        setTimeout(() => {
+          try { window.close() } catch { /* noop */ }
+        }, 300)
+      } catch {
+        setRegenPending(false)
+        setToast('Failed to request context expansion.')
+        setTimeout(() => setToast(null), 3000)
+      }
     },
-    [groupsState, channel],
+    [groupsState, reviewedPanels, regenPending, submitted, lineCommentHandlers.lineComments],
   )
 
   // nav resizer (旧 App から流用、CSS variable 直接書き込み + rAF batch)
@@ -275,7 +309,10 @@ export function App({ payload }: Props) {
   }, [])
 
   if (submitted) {
-    return <div className="done">{submitted} received. You can close this tab.</div>
+    const msg = submitted === 'regen'
+      ? 'Requesting context expansion. You can close this tab — review will re-open with the expanded panels.'
+      : `${submitted} received. You can close this tab.`
+    return <div className="done">{msg}</div>
   }
 
   const meta = formatMeta(payload)
@@ -338,9 +375,7 @@ export function App({ payload }: Props) {
             onJumpToPanel={jumpToPanel}
             onToggleReviewed={toggleReviewed}
             onNavResizerPointerDown={onNavResizerPointerDown}
-            channelsEnabled={channelsEnabled}
-            channelStatus={channel.status}
-            pendingGroupId={channel.pendingGroupId}
+            regenPending={regenPending}
             onRequestContext={onRequestContext}
             {...lineCommentHandlers}
           />

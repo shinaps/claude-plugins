@@ -82,7 +82,6 @@ export const sampleData: ClientPayload = {
   groups: [
     {
       groupId: 'g0',
-      groupTitle: 'Demo Group',
       title: 'Demo Group',
       description: '',
       panels: [panelA, panelB],
@@ -90,7 +89,4 @@ export const sampleData: ClientPayload = {
   ],
   allPanels: [panelA.panelId, panelB.panelId],
   expandable: true,
-  channelsEnabled: false,
-  sessionId: 'dev-session',
-  browserToken: 'dev-browser-token',
 }

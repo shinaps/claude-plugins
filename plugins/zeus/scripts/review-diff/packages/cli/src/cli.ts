@@ -1,29 +1,34 @@
-// CLI エントリ (v4.7.0 panel model)。
+// CLI エントリ (v4.8.0 panel model)。
 //
-// 呼ばれ方:  node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--channels-enabled]
+// 呼ばれ方:  node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]
+//
+// v4.8.0 で Channels インフラを全廃したので、ACTIVE_DIR / sessionId / browserToken /
+// channelToken / SIGINT cleanup hook は消滅した。代わりに --restore-state を追加し、
+// SKILL.md が close-relaunch ループで前回の Reviewed + line comments + 未保存 draft を
+// 注入できるようにしてある。--restore-state を知らない旧 SKILL.md からの fallback 互換も
+// parseArgs の strict:false で吸収する。
 //
 // stdout / stderr 分離方針 (継続):
 //   呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
 //   情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
 //
-// v4.7.0 pipeline:
+// v4.8.0 pipeline:
 //   1. validateSummarySchema (zod + legacy 検出): legacy v4.6 は migration メッセージ付きで exit 1
 //   2. parseDiff → FileChange[] (asIs/toBe 別軸の changed lines)
 //   3. collectAllPanelPaths: panel が言及する全 file (asIs.file + toBe.file) + rename oldPath を union
 //   4. collectStagedSources / collectPrSources: 上記 paths の before/after 原文を取得
 //   5. validateCoverage: panel が diff の changed lines を網羅しているか厳格検証 (miss → exit 1)
 //   6. renderPanel: 各 panel を side-by-side RenderedPanel に展開
-//   7. buildHtml: ClientPayload を inline した HTML 生成
-//   8. startServer: Hub サーバ起動。channelsEnabled=true なら active/<sessionId>.json も書き出し
-//   9. waitResult (タイムアウト 9 分) → 結果を stdout に 1 行 JSON で吐く
+//   7. (任意) --restore-state を読んで ClientPayload.initial* に注入
+//   8. buildHtml: ClientPayload を inline した HTML 生成
+//   9. startServer: Hub サーバ起動
+//  10. waitResult (タイムアウト 9 分) → 結果を stdout に 1 行 JSON で吐く
 
-import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
-import { randomBytes } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import type { ResultJson, PrMeta, SummaryJson, Panel, RenderedGroup } from '@zeus/review-diff-shared'
+import type { ResultJson, PrMeta, SummaryJson, Panel, RenderedGroup, Comment } from '@zeus/review-diff-shared'
 import {
   parseDiff,
   validateSummarySchema,
@@ -43,26 +48,25 @@ const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るた�
 // 大きすぎると rate limit で 403 が増え、小さすぎると待ち時間が伸びる。経験則で 8。
 const PR_FETCH_CONCURRENCY = 8
 
-// ~/.claude/zeus/review-diffs/active/<sessionId>.json の格納場所。
-// Process A (channel-server.js) はここを 5 秒間隔で走査して生存 session を把握する。
-const ACTIVE_DIR = join(homedir(), '.claude/zeus/review-diffs/active')
-
 async function main(): Promise<void> {
+  // parseArgs の strictOption は default true だが、unknown flag を渡された時に process が
+  // 即落ちすると forward compatibility が失われる。SKILL.md と CLI のバージョンがズレた時に
+  // 余計な flag を skip できるように strict:false に倒す (validation は handler 側で行う)。
   const { values } = parseArgs({
     options: {
       summary: { type: 'string' },
       diff: { type: 'string' },
       'pr-meta': { type: 'string' },
-      // Claude Code Channels 経路を有効化する opt-in フラグ。
-      // research preview なので未指定 (= false) がデフォルト。SKILL.md Phase 5 が
-      // Claude Code v2.1.80+ かつ --dangerously-load-development-channels が利用可能な
-      // 環境でだけ true を渡すように案内する。
-      'channels-enabled': { type: 'boolean', default: false },
+      // v4.8.0: regen-group の close-relaunch で、SKILL.md が書き出した restore JSON
+      // (reviewedPanels / comments / lineCommentDrafts) を再起動後の CLI に渡すパス。
+      // 初回起動 (regen ループの外) では未指定で OK。
+      'restore-state': { type: 'string' },
     },
+    strict: false,
   })
 
   if (!values.summary || !values.diff) {
-    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>] [--channels-enabled]\n')
+    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]\n')
     process.exit(1)
   }
 
@@ -70,7 +74,7 @@ async function main(): Promise<void> {
   //    legacy v4.6 schema は SchemaError + migration メッセージで exit 1。
   let rawSummary: unknown
   try {
-    rawSummary = JSON.parse(readFileSync(values.summary, 'utf8'))
+    rawSummary = JSON.parse(readFileSync(values.summary as string, 'utf8'))
   } catch (e) {
     process.stderr.write(`failed to parse summary.json: ${e instanceof Error ? e.message : String(e)}\n`)
     process.exit(1)
@@ -88,9 +92,9 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const diffText = readFileSync(values.diff, 'utf8')
+  const diffText = readFileSync(values.diff as string, 'utf8')
   const prMeta: PrMeta | null = values['pr-meta']
-    ? (JSON.parse(readFileSync(values['pr-meta'], 'utf8')) as PrMeta)
+    ? (JSON.parse(readFileSync(values['pr-meta'] as string, 'utf8')) as PrMeta)
     : null
 
   const lineCount = diffText.split('\n').length
@@ -133,27 +137,22 @@ async function main(): Promise<void> {
 
   // 6. 各 panel を side-by-side に展開
   //
-  // W-1: groupId は title に依存せず index ベースの `g${i}` で生成する。
-  //   - 同じ title の group が複数あっても key 衝突しない (App.tsx の React key + Channels
-  //     in-place 再生成のターゲット識別の両方で必要)
-  //   - groupTitle は別 field として保持し、Channels notification の `group_title` 属性 +
-  //     UI 表示に使う。
+  // W-1: groupId は title に依存せず index ベースの `g${i}` で生成する。同じ title の group が
+  //   複数あっても key 衝突しない (App.tsx の React key と SKILL.md の regen-group 識別の両方で必要)。
   // I-4: renderPanel に summary.mode を渡し、staged / pr で sourcesUnavailable kind を分岐させる。
   const renderedGroups: RenderedGroup[] = summary.groups.map((g, i) => ({
     groupId: `g${i}`,
-    groupTitle: g.title || undefined,
     title: g.title,
     description: g.description,
     panels: g.panels.map(p => renderPanel(p, sources, summary.mode)),
   }))
 
-  // 7. channels 設定 + sessionId + token 確定
-  // browserToken は ClientPayload に埋め込むため、startServer に渡す前にここで生成し、
-  // startServer に opts.browserToken として明示的に渡す (同じ token を payload と server で共有)。
-  const channelsEnabled = !!values['channels-enabled']
-  const sessionId = randomBytes(8).toString('hex')
-  const browserToken = randomBytes(32).toString('hex')
-  const channelToken = randomBytes(32).toString('hex')
+  // 7. restore state を読む (v4.8.0 close-relaunch)。
+  //    restore.json は SKILL.md が前回 CLI 終了時に書き出すもので、形式は:
+  //      { "reviewedPanels": string[], "comments": Comment[], "lineCommentDrafts": Record<string,string> }
+  //    今回再生成された panels と panelId が一致するものだけが UI に活きる
+  //    (panelId は intent 除外 hash なので、context+ で intent が書き直されても安定)。
+  const restore = readRestoreState(values['restore-state'] as string | undefined)
 
   // 8. HTML 生成 + サーバ起動
   const html = buildHtml({
@@ -163,25 +162,19 @@ async function main(): Promise<void> {
     groups: renderedGroups,
     allPanels: allPanels.map(p => p.panelId),
     expandable,
-    channelsEnabled,
-    sessionId,
-    browserToken,
+    initialReviewedPanels: restore?.reviewedPanels,
+    initialComments: restore?.comments,
+    initialLineCommentDrafts: restore?.lineCommentDrafts,
   })
 
-  const started = await startServerAndMaybeRegister({
+  const { startServer } = await import('@zeus/review-diff-server')
+  const started = await startServer({
     html,
     sources,
     expandable,
-    channelsEnabled,
-    sessionId,
-    browserToken,
-    channelToken,
   })
 
   process.stderr.write(`[review-diff] URL: ${started.url}\n`)
-  if (channelsEnabled) {
-    process.stderr.write(`[review-diff] channels enabled; session=${sessionId}\n`)
-  }
   process.stderr.write(`[review-diff] waiting up to ${TIMEOUT_MS / 1000}s for decision...\n`)
   openUrl(started.url)
 
@@ -192,7 +185,7 @@ async function main(): Promise<void> {
   ])
 
   try {
-    const resultPath = `${dirname(values.summary)}/result.json`
+    const resultPath = `${dirname(values.summary as string)}/result.json`
     writeFileSync(resultPath, JSON.stringify(result, null, 2))
   } catch {
     /* noop */
@@ -202,77 +195,36 @@ async function main(): Promise<void> {
   setTimeout(() => process.exit(0), 100)
 }
 
-// startServer + active/<sessionId>.json の atomic write + cleanup hook をまとめたヘルパ。
-// channelsEnabled=false なら active/ への書き出しは skip し、startServer の戻り値だけ返す。
-async function startServerAndMaybeRegister(params: {
-  html: string
-  sources: SourcesMap
-  expandable: boolean
-  channelsEnabled: boolean
-  sessionId: string
-  browserToken: string
-  channelToken: string
-}): Promise<{ url: string; waitResult: () => Promise<ResultJson> }> {
-  // server を遅延 import するのは esbuild bundle で循環参照を避けるため (cli は server に
-  // 依存するが、server の test 経路で cli を import される副作用回避)。
-  const { startServer } = await import('@zeus/review-diff-server')
-  const started = await startServer({
-    html: params.html,
-    sources: params.sources,
-    expandable: params.expandable,
-    channelsEnabled: params.channelsEnabled,
-    browserToken: params.browserToken,
-    channelToken: params.channelToken,
-  })
-
-  if (params.channelsEnabled) {
-    writeActiveSessionFile(params.sessionId, {
-      sessionId: params.sessionId,
-      pid: process.pid,
-      hubUrl: `http://127.0.0.1:${started.port}`,
-      browserToken: started.browserToken,
-      channelToken: started.channelToken,
-      createdAt: Date.now(),
-    })
-
-    // cleanup hook: 通常終了 / SIGINT / SIGTERM で active/<sessionId>.json を unlink する。
-    // SIGKILL (kill -9) では呼ばれないため、Process A 側で process.kill(pid, 0) による
-    // 生存確認 + 死亡 session の unlink で stale を回収する設計 (channel-server.ts 側)。
-    //
-    // I-3 guard: process.exit() は 'exit' イベントを発火し、SIGINT/SIGTERM ハンドラ経由でも
-    // cleanup が呼ばれるため最大 2 回起動する。unlinkSync は try/catch で吸収済みだが、
-    // 多重実行が成立する事実そのものが将来コード追加時の事故になりやすいので明示的に
-    // 1 回保証する (cleanup 内処理を増やしても安全)。同期処理のみのため flag だけで足りる。
-    let cleanedUp = false
-    const cleanup = () => {
-      if (cleanedUp) return
-      cleanedUp = true
-      try { unlinkSync(join(ACTIVE_DIR, `${params.sessionId}.json`)) } catch { /* race OK */ }
-    }
-    process.on('exit', cleanup)
-    process.on('SIGINT', () => { cleanup(); process.exit(130) })
-    process.on('SIGTERM', () => { cleanup(); process.exit(143) })
-  }
-
-  return { url: started.url, waitResult: started.waitResult }
+// restore.json は SKILL が書き出す中間 JSON。存在 / parse / shape 全てに defensive。
+// 1 つでも欠ければ「初回起動」と同じ扱い (initial* を undefined のまま) でフォールバック。
+type RestoreState = {
+  reviewedPanels?: string[]
+  comments?: Comment[]
+  lineCommentDrafts?: Record<string, string>
 }
-
-// atomic write: 同ディレクトリの hidden tmp ファイルに書き出してから rename する。
-// rename は同一ファイルシステム内で atomic に振る舞うため、Process A が走査中に
-// 途中 write の half-written JSON を読む事故が起きない。
-function writeActiveSessionFile(sessionId: string, env: {
-  sessionId: string
-  pid: number
-  hubUrl: string
-  browserToken: string
-  channelToken: string
-  createdAt: number
-}): void {
-  mkdirSync(ACTIVE_DIR, { recursive: true })
-  const finalPath = join(ACTIVE_DIR, `${sessionId}.json`)
-  const tmpPath = join(ACTIVE_DIR, `.${sessionId}.json.tmp`)
-  writeFileSync(tmpPath, JSON.stringify(env, null, 2))
-  renameSync(tmpPath, finalPath)
+function readRestoreState(path: string | undefined): RestoreState | undefined {
+  if (!path) return undefined
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    if (!raw || typeof raw !== 'object') return undefined
+    const r = raw as RestoreState
+    // 部分的に取れるだけでも seed する。型不正な field だけ落とす。
+    const out: RestoreState = {}
+    if (Array.isArray(r.reviewedPanels) && r.reviewedPanels.every(x => typeof x === 'string')) {
+      out.reviewedPanels = r.reviewedPanels
+    }
+    if (Array.isArray(r.comments)) {
+      // shape の細かい検証は client 側で行うので、ここは Array であれば素通し。
+      out.comments = r.comments as Comment[]
+    }
+    if (r.lineCommentDrafts && typeof r.lineCommentDrafts === 'object') {
+      out.lineCommentDrafts = r.lineCommentDrafts as Record<string, string>
+    }
+    return out
+  } catch (e) {
+    process.stderr.write(`[review-diff] restore-state read failed (ignored): ${e instanceof Error ? e.message : String(e)}\n`)
+    return undefined
+  }
 }
 
 // 全 panel が言及する file path を集約。asIs.file + toBe.file + rename oldPath を union。

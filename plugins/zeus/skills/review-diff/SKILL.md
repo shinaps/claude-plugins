@@ -1,6 +1,6 @@
 ---
 name: review-diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 UI でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。v4.7.0 から panel ベース schema + Claude Code Channels による group 単位の in-place 再生成 (research preview) に対応。Approve なら commit に進み、Reject ならコメント反映 → 修正後に Skill ツールで自動再起動。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
+description: 直前の staged diff または既存 PR の diff を Linear 風 UI でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。v4.8.0 で Channels インフラ + unified mode を全廃し、split mode 一本化 + context+ ボタンは close-relaunch + state restore モデルに刷新 (Reviewed / line comments / 未保存 draft を再起動後に復元)。Approve なら commit に進み、Reject ならコメント反映 → 修正後に Skill ツールで自動再起動。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
 argument-hint: <なし | PR番号>
 ---
 
@@ -16,6 +16,12 @@ diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェ�
 - `toBe` (変更後: ファイル + 行範囲集合)
 
 を持つ最小ユニットになっています。git の hunk より粗くも細かくもなれ、cross-file 移動も 1 panel で表現できます。
+
+**v4.8.0 の変更点**:
+- Claude Code Channels の SSE 経路 (`channel-server.js` / `--channels-enabled` / MCP server) を全廃
+- unified mode (単一カラム表示) を全廃、split mode (左右並列) 一本化
+- context+ ボタンは「現状 state を回収して CLI を一度終了 → SKILL が summary.json を再生成 → Skill 自動再起動」の close-relaunch ループに変更
+- 再起動時に前回の Reviewed / line comments / 未保存 draft を `restore.json` 経由で復元
 
 ## 引数仕様と動作モード
 
@@ -37,10 +43,12 @@ diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェ�
 ├── summary.json     ← Write ツールで作成 (heredoc 禁止)
 ├── diff.patch       ← staged または gh pr diff の出力
 ├── pr-meta.json     ← PR モードのみ
-└── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
+├── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
+└── restore.json     ← v4.8.0 regen-group 後の再起動で前回 state を復元するための中間 JSON
 ```
 
 **Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
+**regen-group カウンタ (regenCount) も同様に会話メモリで管理**し、5 回到達で AskUserQuestion で確認。
 
 `slug` の決め方:
 - staged モード: 変更ファイル名から代表的な 1〜2 個を kebab-case で繋ぐ
@@ -57,6 +65,7 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 - **summary.json は必ず Write ツールで作成する** (Bash heredoc 禁止: `$` 展開や引用符のエスケープ事故を避ける)
 - **git add / git commit / git push は必ず別実行で 1 コマンドずつ** (CLAUDE.md ルール)
 - **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
+- **regen-group 連続 5 回でユーザー確認**: regenCount ≥ 5 で `AskUserQuestion` (無限再生成防止)
 - **CLI タイムアウトは 9 分** (Bash ツール 10 分制約のため)
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
@@ -88,45 +97,6 @@ if git diff --cached --quiet; then
 fi
 ```
 
-#### Claude Code Channels (v4.7.0 新機能、research preview) 利用判定
-
-v4.7.0 から **Claude Code Channels** を使った "group 単位の in-place 再生成" がオプションとして利用可能です。
-ブラウザの context+/- ボタンで「この group の context をもっと広げて / 狭めて」とリクエストを送ると、
-Claude Code 親エージェントに通知が届いて panels を再生成し、ブラウザの同じ位置に上書き反映されます。
-
-利用条件 (どれか欠ければ degrade fallback):
-1. **Claude Code v2.1.80+** (`claude --version` で確認)
-2. 起動時に **`--dangerously-load-development-channels server:review-diff`** フラグを指定
-3. Team / Enterprise 環境では組織管理者によるオプトインが必要 (research preview の制約)
-
-利用条件チェック (node のワンライナで semver 比較する。bash の string compare はバグりやすい):
-
-```bash
-CC_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-CHANNELS_OK=$(node -e "const v='$CC_VERSION'.split('.').map(Number); process.stdout.write(v.length===3 && (v[0]>2 || v[0]===2 && (v[1]>1 || v[1]===1 && v[2]>=80)) ? '1' : '')")
-```
-
-`CHANNELS_OK=1` なら Phase 5 で `--channels-enabled` を立てて CLI を起動する。
-そうでなければ Channels なしで CLI を起動し、UI 上の context+/- ボタンは **disabled + tooltip 表示** で degrade される (機能は無効化されるが UI は問題なく動作する)。
-
-##### Channels preflight (W-5: Process A 接続検証)
-
-`CHANNELS_OK=1` でも、Process A (`channel-server.js`) の MCP server が起動されていない環境では
-`--channels-enabled` を立てても feedback がどこにも届かず、UI 上 30 秒の timeout を待つことに
-なります。Phase 5 起動前にユーザー側で `/mcp` 結果を確認するよう案内するのが安全です:
-
-```bash
-# Phase 1 終盤、Channels を使う旨をユーザーに通知する文言例:
-echo "[review-diff] Channels (research preview) を使う場合、Claude Code 起動時に"
-echo "  claude --dangerously-load-development-channels plugin:zeus@shinaps/claude-plugins"
-echo "  (または server:review-diff) フラグが必要です。"
-echo "  起動済みかどうかは Claude Code 内 /mcp で 'review-diff: connected' を確認してください。"
-```
-
-未起動でも Phase 5 は実行可能 (`--channels-enabled` は付くが UI は disconnected fallback)。
-ユーザーが Channels を確実に使いたい場合は preflight 案内に従って Claude Code を起動し直してから
-`/zeus:review-diff` を再実行する。
-
 ### Phase 2: 作業ディレクトリ + CLI パス解決
 
 ```bash
@@ -140,9 +110,6 @@ mkdir -p "$WORK_DIR"
 # marketplace.json の存在で識別して、その場で built した dist/cli.js を優先使用。
 # これによりローカル変更 (pnpm build 直後) を即反映できる。
 # 通常のユーザーは marketplace キャッシュ配下の dist/cli.js を使う。
-#
-# 注: channel-server.js (Process A 用) のパスはここでは解決しない。Phase 5 の起動は
-# `.mcp.json` (plugin 同梱版か手動作成版) で完結し、SKILL.md が個別 path を渡す必要はない。
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 REPO_CLI="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/cli.js"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
@@ -254,7 +221,7 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 #### panelId の規約
 
 - **省略可**: 書かないと CLI がコンテンツ hash (`asIs` + `toBe` のみを対象、`intent` は除外) で `p-<hex10>` を自動生成
-- intent を hash 対象から外しているため、context+/- 再生成で intent を書き直しても **panelId は不変**。draft コメントや Reviewed state が維持される
+- intent を hash 対象から外しているため、context+ 再生成で intent を書き直しても **panelId は不変**。draft コメントや Reviewed state が維持される
 - **安定性を取りたいなら明示**: `"refactor-foo-helper"` のような短い意味のある ID を書く
 - 使える文字: `^[A-Za-z0-9 _-]+$` (英数字 + 空白 + アンダースコア + ハイフン)。空白は CLI が `-` に自動正規化
 - 同じ ID を 2 つの panel に付けると CLI が自動で `-1`, `-2` の suffix を付ける (warn は出ない)
@@ -294,17 +261,16 @@ pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのま�
 Bash 同期実行 (timeout 600000ms = 10 分):
 
 ```bash
-# CHANNELS_OK は Phase 1 で判定済みのフラグ ('1' or 空)
-EXTRA_FLAGS=""
-if [ -n "$CHANNELS_OK" ]; then
-  EXTRA_FLAGS="--channels-enabled"
+# 通常起動 (初回 or rejectループ)
+if [ -n "$PR_META" ]; then
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json"
+else
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch"
 fi
 
-if [ -n "$PR_META" ]; then
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json" $EXTRA_FLAGS
-else
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" $EXTRA_FLAGS
-fi
+# regen-group 後の再起動の場合は --restore-state を追加
+# (Phase 6 の regen-group 分岐から自動的にここに戻ってくる)
+node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json"
 ```
 
 CLI の挙動:
@@ -312,73 +278,9 @@ CLI の挙動:
 - stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
 - CLI 内部タイムアウトは 9 分 (Bash の 10 分より 1 分早く自爆して整合性を取る)
 - 終了時に stdout に **1 行の JSON** が出る:
-  `{"decision":"approve"|"reject"|"timeout","reviewedPanels":[...],"comments":[...]}`
+  `{"decision":"approve"|"reject"|"timeout"|"regen-group", ...}`
 
-#### Channels (--channels-enabled 時) の追加動作
-
-`--channels-enabled` で起動した時のみ、CLI は:
-1. 32 byte の `browserToken` / `channelToken` を生成して in-memory に保持
-2. `~/.claude/zeus/review-diffs/active/<sessionId>.json` に session 情報を atomic write (`{ sessionId, pid, hubUrl, browserToken, channelToken, createdAt }`)
-3. プロセス終了時 (exit / SIGINT / SIGTERM) に上記ファイルを unlink (SIGKILL では消えないが、Process A 側の `process.kill(pid, 0)` 生存確認で stale が回収される)
-
-ブラウザ側 (UI):
-- context+/- ボタンが活性化される (上記条件が揃わなければ disabled + tooltip)
-- ボタン押下で `/feedback` POST → SSE 経由で Claude Code 親エージェントに通知
-- Claude 側で再生成された panels が `/channel/inbox` 経由で SSE プッシュされ、当該 group の panels が in-place 差し替わる
-
-#### Channels MCP server (Process A) の起動
-
-`server:<name>:<path>` 形式の 3 セグメント引数は Claude Code v2.1.80 系で `entries must be tagged: plugin:... or server:...` エラーで reject されるため、MCP server のパスは **`.mcp.json` 経由で解決させる** 必要があります。利用形態に応じて 2 ルートあります。
-
-**ルート A: plugin install ユーザー (推奨)**
-
-zeus プラグインは `.mcp.json` を同梱しているため、以下フラグだけで Process A が立ち上がります:
-
-```bash
-claude --dangerously-load-development-channels plugin:zeus@shinaps/claude-plugins
-```
-
-同梱されている `.mcp.json` (`plugins/zeus/.mcp.json`) は `${CLAUDE_PLUGIN_ROOT}` を使って channel-server.js を参照するため、ユーザー環境のパスを気にせず動きます。
-
-**ルート B: このリポを直接 clone した dogfooding 開発者**
-
-ユーザー設定 (`~/.claude.json`) またはプロジェクト root の `.mcp.json` を **手動作成** してから:
-
-```json
-{
-  "mcpServers": {
-    "review-diff": {
-      "command": "node",
-      "args": ["<absolute path>/plugins/zeus/scripts/review-diff/dist/channel-server.js"]
-    }
-  }
-}
-```
-
-以下フラグで起動:
-
-```bash
-claude --dangerously-load-development-channels server:review-diff
-```
-
-注: リポ root の `.mcp.json` は個人 MCP 設定との衝突を避けるため git untracked 扱いにしています (commit されているのは `plugins/zeus/.mcp.json` のみ)。
-
-**両ルート共通の確認**
-
-起動後 Claude Code 内で `/mcp` を打ち `review-diff: connected` を確認してから `/zeus:review-diff` を実行してください。`--channels-enabled` 付きで CLI を起動したのに Process A が未起動だった場合、ブラウザは Channels 経路を open 状態で error として検知し、ボタンを disabled + "Channel disconnected" tooltip にフォールバックします (機能停止のみ、UI は動作)。
-
-#### research preview の制約
-
-Claude Code Channels は **research preview** の機能であり、以下の制約があります:
-
-1. Claude Code **v2.1.80 以降** が必須
-2. 起動時に `--dangerously-load-development-channels` フラグが必要 (恒久 enable には別途設定が必要になる予定)
-3. Team / Enterprise plan では **組織管理者の opt-in** が必要 (個人 plan では制約なし)
-4. プロトコル仕様は予告なく変わる可能性があり、本スキルが将来追従できない可能性がある
-
-これらを許容できない場合は `--channels-enabled` なしで起動して旧来の動作 (Reject → 修正 → 再起動) で運用してください。
-
-#### Comment / Result shape (v4.7.0)
+#### Comment / Result shape (v4.8.0)
 
 `comments[]` の各要素は scope union 構造:
 - `{ "body": "...", "scope": { "type": "overall" } }` — 全体コメント
@@ -388,9 +290,16 @@ Claude Code Channels は **research preview** の機能であり、以下の制�
 ResultJson 全体:
 ```json
 {
-  "decision": "approve" | "reject" | "timeout",
+  "decision": "approve" | "reject" | "timeout" | "regen-group",
   "reviewedPanels": ["panel-id-1", "panel-id-2"],
-  "comments": [ /* 上記 shape */ ]
+  "comments": [ /* 上記 shape */ ],
+  "regenGroup": {            // decision='regen-group' の時のみ
+    "groupId": "g2",
+    "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ]
+  },
+  "lineCommentDrafts": {      // regen-group の時に restore で活きる、それ以外は無視可
+    "draft:p1:asis:42": "draft body..."
+  }
 }
 ```
 
@@ -401,7 +310,7 @@ ResultJson 全体:
 
 ### Phase 6: 結果分岐
 
-stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.json` にも自動保存されている。
+stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WORK_DIR}/result.json` にも自動保存されている。
 
 #### approve
 
@@ -428,6 +337,44 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
    - pr モードなら同じ PR 番号を渡す
    - Skill ツールが使えない環境では `AskUserQuestion` で「もう一度 /zeus:review-diff を手動実行してください」と告げる
 
+#### regen-group (v4.8.0 新規)
+
+ブラウザの context+ ボタン押下で `decision: 'regen-group'` が返る。これは「現在の group の context が
+狭すぎる、もっと広げて見たい」という人間からのリクエスト。close-relaunch + state restore で対応する。
+
+手順:
+
+1. **regenCount をメインの会話メモリで +1**。`regenCount >= 5` なら **AskUserQuestion** で
+   「このまま広げ続ける / 中止して再起動なし / 方針見直し」を聞き、停止判断を仰ぐ (無限再生成防止)。
+2. `result.json` から `regenGroup.groupId` と `regenGroup.currentRanges` を取得。
+3. **work-dir はクリーンアップしない** (summary.json / diff.patch は再利用、restore.json を作る)。
+4. **summary.json を Read → 該当 group の panels[] を再生成** して Write:
+   - `currentRanges` を参考に、各 panel の `asIs.ranges` / `toBe.ranges` を **±5〜10 行拡張**
+   - 必要なら file 全体を覆う追加 panel を当該 group に挿入
+   - 他の group / 他 group の panels は触らない (cross-group 影響を作らない)
+   - panelId は安定 ID (intent 除外 hash) を保持するため、asIs/toBe の file を変えない限り変わらない
+5. **`restore.json` を Write** で書き出す:
+   ```json
+   {
+     "reviewedPanels": ["..."],
+     "comments": [...],
+     "lineCommentDrafts": {"draft:p1:asis:42": "..."}
+   }
+   ```
+   `result.json` の `reviewedPanels` / `comments` / `lineCommentDrafts` をそのままコピーする。
+6. **`Skill('zeus:review-diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
+   - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
+   - Phase 5 の CLI 起動に `--restore-state "$WORK_DIR/restore.json"` を追加する
+7. Skill ツールが使えない環境では `AskUserQuestion` で「context を広げた summary.json で再 review するには
+   もう一度 /zeus:review-diff を手動実行してください (restore.json が work-dir に残っているので Reviewed と
+   draft は維持されます)」と告げる。
+
+実装メモ:
+- regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
+  Phase 2 の `WORK_DIR` 決定ロジックで「直近の review-diff の work-dir に restore.json があれば再利用」する分岐を入れる。
+- CLI は `--restore-state` を知らないバージョン (v4.7.x cache) でも `parseArgs({strict:false})` で unknown flag を skip するので、
+  fail せず通常起動に degrade する (前回 state は失われるが UI は動く)。
+
 #### timeout
 
 `AskUserQuestion` で次のアクションを確認:
@@ -438,19 +385,22 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
   rm -rf "$WORK_DIR"
   ```
 
-## Channels in-place 再生成の範囲 (v4.7.x AC)
+## context+ 再生成の範囲 (v4.8.0 AC)
 
-v4.7.x の Channels in-place 再生成は **同一 group の panels[] 入れ替えのみ** をサポートします。
-以下の操作は **v4.7.x では out-of-scope** で、将来 v4.8.0+ で対応予定:
+v4.8.0 の context+ 再生成は **同一 group の panels[] 拡張のみ** をサポートします。
+以下の操作は **v4.8.0 では out-of-scope** で、将来別 release で対応する可能性があります:
 
 - 新規 group の追加 / 既存 group の削除 / group の並び替え
 - group の `title` / `description` の変更
 - cross-group での panel 移動
+- panel 範囲の **縮小** (より狭い context へ。Plan で UX 検証が必要と判断)
 
-Claude が `reply` ツールに渡す `panels[]` は、`groupId` で特定された既存 group の panels を
-そのまま差し替える形でしか反映されません。
+`regenGroup.groupId` で特定された既存 group の panels を、より広い asIs.ranges / toBe.ranges を
+持つ panels に差し替える形でしか反映されません。panelId は intent 除外 hash で安定なので、
+asIs/toBe の file を変えない限り Reviewed / line comments / draft は維持されます。
 
 ## 不明点があれば AskUserQuestion で聞く
 
-`description` / `groups` の切り方、`panel` の境界、`intent` 文言、commit メッセージの prefix、reject 時の修正範囲など、
-判断に迷ったら遠慮なく `AskUserQuestion` で選択肢提示形式で確認すること。
+`description` / `groups` の切り方、`panel` の境界、`intent` 文言、commit メッセージの prefix、reject 時の修正範囲、
+context+ で広げるべき行数の幅、regen 上限到達時の判断など、判断に迷ったら遠慮なく `AskUserQuestion` で
+選択肢提示形式で確認すること。

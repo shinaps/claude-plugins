@@ -542,13 +542,14 @@ body { min-height: 100vh; }
   font-family: ui-monospace, monospace;
 }
 
-/* ---------- Diff panel (CSS Grid 構造、v4.7.1 で <table> から置換) ---------- */
+/* ---------- Diff panel (CSS Grid 構造、v4.7.1 で <table> から置換、v4.8.0 で split only) ---------- */
 /* 旧 <table> 構造では「左右独立横スクロール + 50/50 + 行高同期」が CSS 仕様上同時充足
    不可能だったため、div + CSS Grid に全面置換した。
    - split mode: panel-body を 2 列 grid (minmax(0,1fr) x2) で分割し、各 panel-side が
      独立した overflow-x: auto スクロールコンテナ。これで「per-side 1 scrollbar + 50/50 +
      blowout 防止」を構造的に達成。
-   - unified mode: 単一 scroll container 内で 3 列 grid (gutter+gutter+code)。
+   - v4.8.0 で unified mode (単一 scroll container 内 3 列 grid) を撤去。UI 学習コスト
+     削減と mode toggle 由来の state 管理 (localStorage / toggle button) を削れたため。
    - 行高同期: Panel.tsx の useLayoutEffect (ResizeObserver) が両 side の同一インデックス行の
      offsetHeight max を min-height として書き戻す JS 同期方式 (subgrid は別 scroll container を
      またげないため不採用)。 */
@@ -606,28 +607,6 @@ body { min-height: 100vh; }
   width: 100%;
 }
 
-/* unified body: 単一 scroll container。row 構造は split と同じ flex だが、列が 3 つ (gutter asIs +
-   gutter toBe + code) なので panel-body-unified の row だけ専用クラスで管理。 */
-.panel-body-unified {
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-color: var(--border) transparent;
-  scrollbar-width: thin;
-}
-.panel-body-unified::-webkit-scrollbar { height: 8px; }
-.panel-body-unified::-webkit-scrollbar-track { background: transparent; }
-.panel-body-unified::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
-}
-.panel-body-unified::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
-.panel-body-unified .code-row {
-  display: flex;
-  align-items: stretch;
-  width: max-content;
-  min-width: 100%;
-}
-
 /* row 単位の bg: cell-code-* と同じ色を row に塗ることで scrollable overflow rectangle 全幅まで
    bg が paint される。cell-code 自身の bg は不要 (将来 .cell-code-* セレクタを使う他箇所と
    重複しないよう注意) → 既存 .cell-code-addition / .cell-code-deletion / .cell-code-empty の
@@ -663,10 +642,6 @@ body { min-height: 100vh; }
   position: sticky;
   left: 0;
   z-index: 1;
-}
-/* unified mode の 2 つ目の gutter (toBe 側) は最初の gutter (52px) の直後に貼り付ける */
-.panel-body-unified .code-row > .cell-ln + .cell-ln {
-  left: 52px;
 }
 /* add/del 行の gutter は row bg が透過なので、不透明 surface ベース + row 色 overlay で覆う */
 .cell-ln-addition {
@@ -749,13 +724,10 @@ body { min-height: 100vh; }
    右 (緑) パネルの gutter / コードをホバー中は右 gutter の + のみ可視化する。
    こうすることで「赤と緑どちらの行にコメントしようとしているか」がボタン位置で即わかる。
    grid 化後は left/right が別 scroll container (panel-side-asis / panel-side-tobe) なので、
-   親 wrapper hover で side 全体に効かせる方が自然 (cross-side の :has() は不要)。
-   unified mode は同一 row 内に左右 cell があるので :has() で同様判定する。 */
+   親 wrapper hover で side 全体に効かせる方が自然 (cross-side の :has() は不要)。 */
 /* 案 F: .code-row が box を持つので :hover が正常動作。row hover で対応 side の trigger を点灯。 */
 .panel-side-asis .code-row:hover .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
 .panel-side-tobe .code-row:hover .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
-.panel-body-unified .code-row:has(.cell-ln-asis:hover, .cell-code-asis:hover) .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
-.panel-body-unified .code-row:has(.cell-ln-tobe:hover, .cell-code-tobe:hover) .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
 
 /* ドラッグ中 (snapIndicatorToLine が body.is-dragging-line-range を立てた間) は
    通常の + ボタンを完全に隠す。ドラッグインジケータ (.drag-cursor-indicator) が同じ見た目で
@@ -1107,7 +1079,7 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 /* report-index: グループが多いと縦に長くなり画面下端に消えるため、固定高 + スクロール (I-2) */
 .report-index { max-height: 40vh; overflow-y: auto; }
 
-/* panel-header (intent + ファイル名 + split/unified トグル) */
+/* panel-header (intent + ファイル名) — v4.8.0 で split/unified トグルボタンは撤去済み */
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -1131,18 +1103,6 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 .panel-file-asis { color: var(--del-fg); }
 .panel-file-tobe { color: var(--add-fg); }
 .panel-file-arrow { color: var(--text-dim); }
-.panel-header-actions { display: flex; gap: 6px; }
-.panel-mode-toggle {
-  padding: 4px 10px;
-  font-size: 11px;
-  background: var(--surface-3);
-  color: var(--text);
-  border: 1px solid var(--border-dim);
-  border-radius: 4px;
-  cursor: pointer;
-}
-.panel-mode-toggle:hover { background: var(--surface-4, var(--surface-3)); }
-
 /* panel-block: PanelHeader + Panel.body + panel-footer の縦コンテナ */
 .panel-block {
   background: var(--surface-1);
@@ -1152,8 +1112,8 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
   overflow: hidden;
 }
 .panel-block.is-reviewed { opacity: 0.62; }
-/* .panel-body の overflow は mode 別 (.panel-body-split / .panel-body-unified) で個別に管理。
-   split は per-side scroll、unified は body 全体 scroll なので、ここでは指定しない。 */
+/* .panel-body の overflow は .panel-body-split (per-side scroll) で個別に管理する。
+   v4.8.0 で unified mode を廃止したため body 全体 scroll の指定は不要。 */
 .panel-footer {
   display: flex;
   justify-content: flex-end;
@@ -1362,47 +1322,6 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 
 /* group-panels-column (旧 group-files-column 互換) */
 .group-panels-column { min-width: 0; display: flex; flex-direction: column; }
-
-/* ---------- W-2: unified mode の comment thread + side バッジ ----------
-   unified モードでは comment row が colSpan=3 で全幅 1 セル。thread の左に asIs/toBe バッジを
-   置いて「どちら側に対するコメントか」を即視認できるようにする (split のように左右分割で表現
-   できないため、視覚的に差分側を区別する別手段としての色付きバッジ)。 */
-.comment-thread-unified {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px 18px 10px 18px;
-}
-.comment-thread-unified > .comment-thread {
-  flex: 1;
-  /* unified では gutter オフセットを廃止して全幅を使う */
-  padding: 0;
-}
-.comment-side-badge {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  margin-top: 2px;
-}
-.comment-side-badge[data-side="asis"] {
-  background: rgba(248, 113, 113, 0.15);
-  color: var(--del-fg);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-}
-.comment-side-badge[data-side="tobe"] {
-  background: rgba(74, 222, 128, 0.15);
-  color: var(--add-fg);
-  border: 1px solid rgba(74, 222, 128, 0.4);
-}
 
 /* ---------- I-4: source 取得失敗バナー (panel 上部) ----------
    sources Map に panel.file が無いケース (PR の gh api 失敗 or AI による file path typo) を
