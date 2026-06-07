@@ -477,7 +477,19 @@ body { min-height: 100vh; }
   overflow-y: hidden;
   min-width: 0;
   display: block;
+  /* ダークテーマ統一: thumb=border (薄い灰)、track=transparent。
+     scrollbar-color は Firefox / Chromium 共通の標準プロパティ。 */
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
 }
+/* WebKit (Chrome/Safari) は scrollbar-color が部分対応なので ::-webkit-scrollbar も合わせ指定 */
+.panel-side::-webkit-scrollbar { height: 8px; }
+.panel-side::-webkit-scrollbar-track { background: transparent; }
+.panel-side::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.panel-side::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 /* panel-side-inner: row 全行を縦に積む inner wrapper。`width: max-content` で「widest cell の幅」、
    `min-width: 100%` で「container 幅以上」を保証 → 全 row が同じ幅 (uniform) になり、scroll 時にも
    sticky gutter の containing block が安定。 */
@@ -497,7 +509,16 @@ body { min-height: 100vh; }
 .panel-body-unified {
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
 }
+.panel-body-unified::-webkit-scrollbar { height: 8px; }
+.panel-body-unified::-webkit-scrollbar-track { background: transparent; }
+.panel-body-unified::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.panel-body-unified::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 .panel-body-unified .code-row {
   display: flex;
   align-items: stretch;
