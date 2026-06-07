@@ -1,0 +1,8 @@
+diff --git a/src/baz.ts b/src/baz.ts
+index 1111111..2222222 100644
+--- a/src/baz.ts
++++ b/src/baz.ts
+@@ -5,0 +6,3 @@ const before = 1
++const added1 = 10
++const added2 = 20
++const added3 = 30

@@ -79,15 +79,86 @@ body { min-height: 100vh; }
 .tab:disabled { cursor: not-allowed; opacity: 0.45; }
 .tabbar-meta { margin-left: auto; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 
-/* ---------- Page Header (overall summary) ---------- */
-/* 旧仕様では max-width 1480px だったが、大型モニターで diff の横スクロールが発生していたのを
-   嫌い、フルブリード (max-width 撤廃) に変更。読み物 (markdown/meta) は内側で 760px に絞る。 */
+/* ---------- Page Header (AI Review Report card) ----------
+   設計哲学: ユーザーに読ませる文章は最小限。代わりに「report-card」という独立した視覚パネルを
+   作ってサマリの存在を明示し、その下に group の Index を出すことで「この変更の全体構造」を
+   スクロールせず scan できる装いにする。文量は増やさず、レイアウトでナビゲーションを語る。
+   フルブリード (max-width 撤廃) で大型モニターでも diff 横スクロールを抑える。 */
 .page-header {
   margin: 0;
-  padding: 32px 24px 8px;
+  padding: 24px 24px 8px;
   width: 100%;
 }
-.page-header h1 { margin: 0 0 8px; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.report-card {
+  max-width: 960px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--background) 100%);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 24px 28px 20px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+}
+.report-card-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.report-card h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+.report-card .meta { color: var(--text-muted); font-size: 12px; margin-bottom: 16px; font-family: ui-monospace, monospace; }
+.report-card .markdown {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.65;
+  max-width: 760px;
+}
+.report-card .markdown :first-child { margin-top: 0; }
+.report-card .markdown :last-child { margin-bottom: 0; }
+
+/* Group index: summary.json の groups を 1 行ずつ scannable に並べる。
+   テキストは title だけ。ファイル数は副情報、番号は順序提示。クリックで該当 group へ jump。
+   AI は「順番で語る」ことができ、ユーザーは「全体マップを 3 秒で把握」できる。 */
+.report-index {
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.report-index-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.report-index-item:hover { background: var(--surface-2); }
+.report-index-number {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+}
+.report-index-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.report-index-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* h1 / meta は report-card 内で参照されるので互換のため元のセレクタも残しておく
+   (外側 .page-header > h1 直書きが他の場所にあったときの保険)。 */
+.page-header h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
 .page-header .meta { color: var(--text-muted); font-size: 12px; margin-bottom: 20px; font-family: ui-monospace, monospace; }
 .page-header .markdown {
   color: var(--text-muted);
@@ -462,6 +533,18 @@ body { min-height: 100vh; }
    右 (緑) パネルの gutter / コードをホバー中は右 gutter の + のみ可視化する。
    こうすることで「赤と緑どちらの行にコメントしようとしているか」がボタン位置で即わかる。
    :has() で同じ tr 内の反対 side のセルが hover されているかを判定する。 */
+/* ---------- Hunk origin markers ----------
+   AI が文脈として追加した範囲 (ai-context) や、CLI が小 gap を自動で繋いだ範囲 (auto-bridge) は、
+   diff の主役 ("changed" hunk) と区別したい — ただし「テキスト で説明」してユーザーを読ませるのは
+   設計哲学に反する。視線の流れだけで違いが分かるよう、tbody の左端に細い垂直アクセントを立てる。
+   背景は触らず、code の色も変えない (= 読みやすさを最優先)。 */
+.diff-table tbody.hunk-ai-context td.ln-l {
+  box-shadow: inset 2px 0 0 var(--accent-soft);
+}
+.diff-table tbody.hunk-auto-bridge td.ln-l {
+  box-shadow: inset 2px 0 0 var(--border);
+}
+
 .diff-table tr.code-row:has(td.ln-l:hover, td.code-l:hover) td.ln-l .line-comment-trigger { opacity: 0.85; }
 .diff-table tr.code-row:has(td.ln-r:hover, td.code-r:hover) td.ln-r .line-comment-trigger { opacity: 0.85; }
 
@@ -649,16 +732,103 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 }
 .comment-btn-save:hover { filter: brightness(1.08); }
 
-.unchanged-banner {
-  padding: 8px 14px;
+/* ---------- Unchanged lines banner ----------
+   「N unchanged lines」の畳まれた領域を示す横長バナー。
+   旧実装 (font-size 11px / monospace / 中央 underline テキスト) は視認性が低く「展開できる」
+   affordance も弱かったため、GitHub PR / Linear 風に: 中央に double-chevron アイコン +
+   太字テキスト + 補助 hint を flex 横並びで並べ、行全体を 1 つの clickable ボタンに置換。
+   colspan={4} で diff の全 4 列を占有する。 */
+.unchanged-banner-row > td {
+  padding: 0;
   background: var(--surface-2);
-  color: var(--text-dim);
-  font-size: 11px;
-  text-align: center;
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
+}
+.unchanged-banner-btn {
+  /* min-height 40px でタップターゲットも十分確保 (旧実装は ~30px で狭かった)。 */
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.unchanged-banner-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.unchanged-banner-btn:hover:not(:disabled) .unchanged-banner-icon {
+  color: var(--accent);
+  transform: scale(1.08);
+}
+.unchanged-banner-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.unchanged-banner-btn:disabled { cursor: default; }
+/* PR モード: expand 不可。hover でも色が変わらないようにする (誤クリック誘発防止)。 */
+.unchanged-banner-btn[data-state="readonly"] {
   cursor: default;
-  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+}
+.unchanged-banner-btn[data-state="readonly"]:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+.unchanged-banner-btn[data-state="readonly"]:hover .unchanged-banner-icon {
+  color: var(--text-dim);
+  transform: none;
+}
+
+/* アイコン: 16px 角の double-chevron。color プロパティで stroke 色を引き継がせる。 */
+.unchanged-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: color 120ms ease, transform 120ms ease;
+}
+.unchanged-banner-icon svg { width: 100%; height: 100%; }
+
+/* メインテキスト: 行数を強調。tabular-nums で N が変わっても揺れない。 */
+.unchanged-banner-text {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.unchanged-banner-btn[data-state="readonly"] .unchanged-banner-text { color: var(--text-muted); }
+
+/* 補助 hint: 「Click to expand」「Loading…」など。区切り中点で添える。 */
+.unchanged-banner-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+.unchanged-banner-hint::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--text-dim);
+}
+.unchanged-banner-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+.unchanged-banner-error::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--text-dim);
 }
 
 /* ---------- comment area ---------- */

@@ -468,6 +468,69 @@ type BannerRange = {
   endBefore: number
 }
 
+// 「N unchanged lines」の畳まれた領域を表すバナー。
+// HunkBody (hunk 間ギャップ) と TrailingBanner (最終 hunk 後の末尾) の両方から呼ばれる。
+// 内部状態は持たず、loading / error / expand トリガは親から props で受ける純粋表示コンポーネント。
+// 親 (HunkBody / TrailingBanner) が「state を持つ」「expand fetch を実行する」責務を負い、
+// このコンポーネントは「現状をどう見せるか」だけに集中するため、表示パターンが追加されても
+// 状態管理に波及しない。
+function UnchangedBanner({
+  lines,
+  expandable,
+  loading,
+  error,
+  onExpand,
+}: {
+  lines: number
+  expandable: boolean
+  loading: boolean
+  error: string | null
+  onExpand: () => void
+}) {
+  const state = expandable ? 'interactive' : 'readonly'
+  const label = `${lines.toLocaleString()} unchanged line${lines === 1 ? '' : 's'}`
+  const hint = !expandable
+    ? 'Expand unavailable in PR mode'
+    : loading
+      ? 'Loading…'
+      : 'Click to expand'
+  return (
+    <tr className="unchanged-banner-row">
+      <td colSpan={4}>
+        <button
+          type="button"
+          className="unchanged-banner-btn"
+          data-state={state}
+          onClick={expandable ? onExpand : undefined}
+          disabled={loading || !expandable}
+          aria-label={`${label}. ${expandable ? 'Click to expand.' : 'Expand unavailable.'}`}
+        >
+          {/* double-chevron アイコン: 「上下に展開できる」ことを直感的に示す。
+              GitHub PR の expand icon と同じ「˅ ˄」スタイル。stroke で描画し
+              親 button の color を継承させて hover で accent 色に変わる。 */}
+          <span className="unchanged-banner-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path
+                d="M4 5.5L8 2L12 5.5M4 10.5L8 14L12 10.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="unchanged-banner-text">{label}</span>
+          {error ? (
+            <span className="unchanged-banner-error">Retry ({error})</span>
+          ) : (
+            <span className="unchanged-banner-hint">{hint}</span>
+          )}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
 type RowInteractionProps = {
   commentKeysByAnchor: Map<string, string[]>
   isInDragRange: (side: 'left' | 'right', lineNumber: number | undefined) => boolean
@@ -535,8 +598,18 @@ function HunkBody({
     }
   }
 
+  // origin に応じた最小限の視覚マーカー。テキストでは説明せず、
+  // 左端の細いアクセントバーだけ立てる (= 視線の流れで「これは AI が付けたコンテキスト」と分かる)。
+  const origin = hunk.origin ?? 'changed'
+  const originClass =
+    origin === 'ai-context'
+      ? ' hunk-ai-context'
+      : origin === 'auto-bridge'
+        ? ' hunk-auto-bridge'
+        : ''
+
   return (
-    <tbody>
+    <tbody className={`hunk-body${originClass}`}>
       {banner ? (
         expanded ? (
           expanded.map((r, i) => (
@@ -554,37 +627,13 @@ function HunkBody({
             />
           ))
         ) : (
-          <tr>
-            <td colSpan={4} className="unchanged-banner">
-              {expandable ? (
-                <button
-                  type="button"
-                  // インラインで装飾を少しだけ調整 (テキストリンク風)。CSS にクラスを増やす
-                  // ほどの差分ではないため、ここでスタイル指定する。
-                  style={{
-                    background: 'transparent',
-                    border: 0,
-                    color: 'inherit',
-                    cursor: loading ? 'wait' : 'pointer',
-                    font: 'inherit',
-                    textDecoration: 'underline',
-                  }}
-                  onClick={expand}
-                  disabled={loading}
-                >
-                  {loading
-                    ? `Loading ${banner.lines} unchanged lines…`
-                    : error
-                      ? `⇕ ${banner.lines} unchanged lines (error: ${error}, click to retry)`
-                      : `⇕ ${banner.lines} unchanged lines`}
-                </button>
-              ) : (
-                <span>
-                  ⇕ {banner.lines} unchanged lines (Expand unavailable in PR mode)
-                </span>
-              )}
-            </td>
-          </tr>
+          <UnchangedBanner
+            lines={banner.lines}
+            expandable={expandable}
+            loading={loading}
+            error={error}
+            onExpand={expand}
+          />
         )
       ) : null}
       {hunk.rows.map((r, i) => (
@@ -675,47 +724,16 @@ function TrailingBanner({
           />
         ))
       ) : (
-        <tr>
-          <td colSpan={4} className="unchanged-banner">
-            {expandable ? (
-              <button
-                type="button"
-                style={{
-                  background: 'transparent',
-                  border: 0,
-                  color: 'inherit',
-                  cursor: loading ? 'wait' : 'pointer',
-                  font: 'inherit',
-                  textDecoration: 'underline',
-                }}
-                onClick={expand}
-                disabled={loading}
-              >
-                {loading
-                  ? `Loading ${banner.lines} unchanged lines…`
-                  : error
-                    ? `⇕ ${banner.lines} unchanged lines (error: ${error}, click to retry)`
-                    : `⇕ ${banner.lines} unchanged lines`}
-              </button>
-            ) : (
-              <span>⇕ {banner.lines} unchanged lines (Expand unavailable in PR mode)</span>
-            )}
-          </td>
-        </tr>
+        <UnchangedBanner
+          lines={banner.lines}
+          expandable={expandable}
+          loading={loading}
+          error={error}
+          onExpand={expand}
+        />
       )}
     </tbody>
   )
-}
-
-type CommentTarget = { side: 'left' | 'right'; number: number }
-
-// この行のコメント側 (side) と行番号を決める。
-// 優先: right に line 番号があれば right (context / addition)、無ければ left (deletion)。
-// どちらにも無ければコメント不可 (empty 行)。
-function resolveCommentTarget(row: SideBySideRow): CommentTarget | null {
-  if (row.right.line != null) return { side: 'right', number: row.right.line }
-  if (row.left.line != null) return { side: 'left', number: row.left.line }
-  return null
 }
 
 function LineCommentTriggerButton({
@@ -780,11 +798,25 @@ function Row({
     () => (highlight ? highlightCode(row.right.raw, file.language) : escapeHtml(row.right.raw)),
     [highlight, row.right.raw, file.language],
   )
-  const target = resolveCommentTarget(row)
   // この行を anchor (= endNumber || number) として持つコメント key 一覧。
   // 単一行コメント、範囲コメント (この行が終端)、現在開いているフォームの全部が含まれ得る。
-  const anchorKeys = target
-    ? commentKeysByAnchor.get(`${target.side}\x1f${target.number}`) ?? []
+  //
+  // ⚠ 左右独立に lookup する: 旧実装は resolveCommentTarget(row) で「target を 1 個」に
+  //   絞ってから片側だけ引いていたが、context 行 (両側 line 有) では target が常に right に
+  //   なるため、left 側でドラッグして開いた form の key (left\x1fN) が anchorKeys に乗らず、
+  //   赤側のコメント form が DOM に出ない症状を生んでいた (zeus-debug 確信度 95)。
+  //   formOpenFor が既に side 独立で評価されているのと同じ設計に揃え、ここでも左右の
+  //   row.left.line / row.right.line から独立に lookup して連結する。
+  const leftAnchorKeys =
+    row.left.line != null
+      ? commentKeysByAnchor.get(`left\x1f${row.left.line}`) ?? []
+      : []
+  const rightAnchorKeys =
+    row.right.line != null
+      ? commentKeysByAnchor.get(`right\x1f${row.right.line}`) ?? []
+      : []
+  const anchorKeys = leftAnchorKeys.length || rightAnchorKeys.length
+    ? [...leftAnchorKeys, ...rightAnchorKeys]
     : []
   const formOpenKey = handlers.activeForm
   // 左右それぞれの side で「単一行フォームがこの行に開いているか」を判定し、
@@ -839,11 +871,11 @@ function Row({
             (= テキスト選択 / コピーが普通にできる)。 */}
         <td className={`ln ln-l ln-${row.left.type}`} {...gutterPointerPropsFor('left', row.left.line)}>
           {row.left.line ?? ''}
-          {showLeftTrigger && target ? (
+          {showLeftTrigger && row.left.line != null ? (
             <LineCommentTriggerButton
               side="left"
               filePath={file.path}
-              lineNumber={target.number}
+              lineNumber={row.left.line}
               onOpenLineForm={handlers.onOpenLineForm}
             />
           ) : null}
@@ -856,11 +888,11 @@ function Row({
         </td>
         <td className={`ln ln-r ln-${row.right.type}`} {...gutterPointerPropsFor('right', row.right.line)}>
           {row.right.line ?? ''}
-          {showRightTrigger && target ? (
+          {showRightTrigger && row.right.line != null ? (
             <LineCommentTriggerButton
               side="right"
               filePath={file.path}
-              lineNumber={target.number}
+              lineNumber={row.right.line}
               onOpenLineForm={handlers.onOpenLineForm}
             />
           ) : null}

@@ -82,6 +82,7 @@ function fileToParsed(f: AnyFile): ParsedFile {
         newStart: toRange.start,
         newLines: toRange.lines,
         rows,
+        origin: 'changed',
       })
       totalLines += rows.length
       hunkIndex++

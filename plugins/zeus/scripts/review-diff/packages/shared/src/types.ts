@@ -8,9 +8,20 @@ export type SummaryJson = {
   groups: Group[]
 }
 
-// 1 ファイルが複数の目的にまたがる場合、Group ごとに該当 hunk だけを表示できるよう
-// union 型にしてある。string なら「ファイル全体を含める」、object なら hunks 指定。
-export type GroupFileRef = string | { path: string; hunks: number[] }
+// 意味的レビュー範囲指定。after ファイル (= 変更後) の行番号で範囲を指定する。
+// changed 行を含むかどうかは問わない: range が hunk と被ったら自動で包含、被らなければ
+// 「AI が文脈として見せたい unchanged 範囲」として展開される。範囲は inclusive, 1-based。
+export type DisplayRange = { start: number; end: number }
+
+// 1 ファイルが複数の目的にまたがる場合、Group ごとに該当範囲だけを表示できるよう union 型にしてある。
+//   - string: ファイル全体を含める
+//   - { path, hunks: [...] }: parse-git-diff の chunk index で範囲指定 (low-level, 後方互換)
+//   - { path, displayRanges: [...] }: after 行範囲で「ここを見せて」と AI が意味的に指示 (推奨)
+// displayRanges と hunks の併用は不可。両方ある場合は displayRanges を優先する。
+export type GroupFileRef =
+  | string
+  | { path: string; hunks: number[] }
+  | { path: string; displayRanges: DisplayRange[] }
 
 export type Group = {
   title: string
@@ -61,16 +72,24 @@ export type SideBySideRow = {
   right: { type: 'context' | 'addition' | 'empty'; line?: number; raw: string }
 }
 
+// 「この Hunk がどう生まれたか」の出自。UI は origin に応じて視覚処理を変える:
+//   - 'changed': 通常の差分 hunk (一番強調)
+//   - 'ai-context': AI が displayRanges で「文脈として見せる」と指定した範囲
+//   - 'auto-bridge': hunk 間の小さい gap (≤ threshold) を埋めるための自動展開
+// origin 省略時は 'changed' とみなす (後方互換)。
+export type HunkOrigin = 'changed' | 'ai-context' | 'auto-bridge'
+
 // parse-git-diff の chunk 単位。oldStart/newStart は 1-based の元ファイル行番号。
 // unchanged-lines バナーから「次の hunk まで何行 unchanged を fetch すべきか」を
 // 計算するため、新旧両方の開始行と長さをそのまま持っておく。
 export type Hunk = {
-  index: number               // parse-git-diff の chunks 順、0-based
+  index: number               // 表示単位順の番号 (composeHunks 後で再採番)。0-based
   oldStart: number
   oldLines: number
   newStart: number
   newLines: number
   rows: SideBySideRow[]
+  origin?: HunkOrigin
 }
 
 export type ParsedFile = {

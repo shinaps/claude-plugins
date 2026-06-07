@@ -10,3 +10,4 @@ export {
   type SourcesMap,
 } from './server'
 export { parseDiff, langForPath } from './diff-parser'
+export { composeHunks, type ComposeHunksOptions } from './hunk-composer'

@@ -1,0 +1,14 @@
+diff --git a/src/bar.ts b/src/bar.ts
+index 1111111..2222222 100644
+--- a/src/bar.ts
++++ b/src/bar.ts
+@@ -4,3 +3,0 @@ export const head = 1
+-// removed mid line 1
+-// removed mid line 2
+-// removed mid line 3
+@@ -10,3 +7,4 @@ export function bar() {
+   const x = 1
+-  return x
++  return x + 1
++  // tail added
+ }

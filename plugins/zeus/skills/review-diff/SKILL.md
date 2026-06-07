@@ -141,33 +141,77 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 2. pr モードなら `pr-meta.json` も Read
 3. **`Write` ツールで `summary.json` を作成する** (Bash heredoc は禁止)
 
-`summary.json` のスキーマ:
+#### 設計哲学 (最重要)
+
+このツールは **AI (= 君) が人間レビュアーに「自分が何をしたか」を引き渡すためのチャネル** である。
+レビュアーの読む量を増やすのではなく、**diff の表示そのものを工夫して意味が立ち上がる** ようにする。
+
+具体的には:
+- `overallSummary` は **長文で説明しない**。1〜3 文の総括だけ。
+- 各 group の `description` も **1〜2 文の短い枠組み説明** に留める。「何を読めば良いか」を解説しない。
+- **AI が伝えるべき情報は、ファイル / 範囲 / 順序 で表現する**:
+  - どの group にどのファイルが入るか → 論理的な塊
+  - 各 group / file 内の順序 → ストーリー順 (因果 / 抽象→具象)
+  - `displayRanges` で見せる範囲 → 「変更だけでなく文脈ごと見せたい論理単位」
+- 「ここをレビューしてほしい」「ここはリスク高」のような **人間に向けた注釈テキストは書かない**。
+  そういう情報はコード自体で語れていなければならない。AI 自身が「読ませないと伝わらない」と
+  感じたら、コードのコメント / コミットメッセージ / 構造で伝わるよう実装し直す。
+
+#### スキーマ
 
 ```json
 {
   "mode": "staged",
   "pr": null,
-  "overallSummary": "Markdown で書く全体サマリ",
+  "overallSummary": "1〜3 文の総括 (Markdown 可、長文禁止)",
   "groups": [
     {
       "title": "グループタイトル (例: UI 改修)",
-      "description": "何をしているグループか 1〜2 文",
+      "description": "1〜2 文の枠組み説明",
       "files": [
         "src/foo.ts",
-        { "path": "src/bar.ts", "hunks": [0, 2] }
+        { "path": "src/bar.ts", "hunks": [0, 2] },
+        { "path": "src/baz.ts", "displayRanges": [{ "start": 40, "end": 95 }] }
       ]
     }
   ]
 }
 ```
 
-- `files[]` は **string** で「ファイル全体を含める」、**`{ path, hunks: number[] }`** で
-  「該当 hunk index (0-based、parse-git-diff の chunks 順) だけを含める」を指定できる。
-- **1 ファイルの変更が複数の目的にまたがる場合は hunks 指定で分割せよ。** 例: `src/api.ts` の
-  hunk[0] が「スキーマ刷新」、hunk[1] が「UI 連動の handler 修正」ならそれぞれを別 group に
-  振り分けると、レビュアーが各 group のコンテキストで該当 hunk だけを読める。
-- pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのまま入れる。
-- ファイルを意味的にグルーピングして UI のサイドバーから飛びやすくするのがこの工程の主目的。
+`files[]` の 3 形式:
+- **string** — ファイル全体を含める
+- **`{ path, hunks: number[] }`** — parse-git-diff の chunk index で範囲指定 (low-level, 後方互換)
+- **`{ path, displayRanges: DisplayRange[] }`** — **推奨**。after 行範囲で「ここを見せて」と意味的に指示
+  - `DisplayRange = { start, end }` で 1-based, inclusive
+  - 変更行を含まなくてもよい (= 関数全体を context として見せられる)
+  - 既存 hunk と被ったら CLI 側で自動 union
+  - 隣接 hunk / displayRange の gap が ≤10 行なら **CLI が自動で繋ぐ** (auto-bridge)。
+    小さい gap のために `displayRanges` を書く必要は無い。
+- displayRanges と hunks は **排他**: 同じファイルに両方書かない。
+
+#### displayRanges を使う判断軸
+
+「変更行だけ見せて意味が通るか?」を 1 ファイルごとに自問する。
+
+- 通るなら → string か hunks のまま
+- 通らないなら → **そのファイルだけ Read** して関数 / 論理単位の境界を取り、displayRanges を作る
+
+判断軸:
+- changed lines が ≤ 5 で diff の context (-U3) 内に関数シグネチャが見えない → Read 推奨
+- hunk が関数の真ん中で唐突に始まっている → Read 推奨
+- 1 ファイルに散在する小さい hunk が同じ class / 同じ概念 → まとめて 1 つの displayRange に
+- リネームのみ / フォーマットのみ → Read 不要、現状通り
+- **全ファイル Read は禁止**: 大規模 PR でトークンが爆発する
+
+#### 順序の使い方 (AI のもう 1 つの語り口)
+
+UI は summary.json の `groups` 順 / `files` 順 / hunk 順 を **そのまま** 表示する。
+順序自体が AI からのナラティブ:
+- group は「読むべき順番」で並べる (抽象 → 具象、原因 → 結果、コア → 周辺)
+- 同じ group 内では「最初に読むべきファイル」を先頭に
+- 同じファイル内では現状 hunk は git diff 順 (変更しない)
+
+pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのまま入れる。
 
 ### Phase 5: CLI 起動
 

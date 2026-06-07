@@ -266,11 +266,30 @@ export function App({ payload }: Props) {
     <>
       <TabBar active={tab} onChange={setTab} meta={`${payload.allFiles.length} files`} />
       <div className="page-header">
-        <h1>{title}</h1>
-        <div className="meta" dangerouslySetInnerHTML={{ __html: meta }} />
-        {overallHtml ? (
-          <div className="markdown" dangerouslySetInnerHTML={{ __html: overallHtml }} />
-        ) : null}
+        <div className="report-card">
+          <div className="report-card-eyebrow">AI Review Report</div>
+          <h1>{title}</h1>
+          <div className="meta" dangerouslySetInnerHTML={{ __html: meta }} />
+          {overallHtml ? (
+            <div className="markdown" dangerouslySetInnerHTML={{ __html: overallHtml }} />
+          ) : null}
+          {buckets.length > 0 ? (
+            <ul className="report-index">
+              {buckets.map((b, i) => (
+                <li
+                  key={i}
+                  className="report-index-item"
+                  onClick={() => b.entries[0] && jumpToFile(b.entries[0].file.path)}
+                  title="Jump to this group"
+                >
+                  <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="report-index-title">{b.title}</span>
+                  <span className="report-index-meta">{b.entries.length} file{b.entries.length === 1 ? '' : 's'}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </div>
       {/* style に --nav-width を渡さない: 値は onNavResizerPointerDown 内で DOM に直接書き込む。
           初期表示は CSS 側の var(--nav-width, 320px) フォールバックが効く。 */}
@@ -329,7 +348,14 @@ function buildBuckets(payload: ClientPayload): GroupBucket[] {
       const path = typeof ref === 'string' ? ref : ref.path
       const f = byPath.get(path)
       if (!f) continue
-      const hunks: number[] | 'all' = typeof ref === 'string' ? 'all' : ref.hunks
+      // displayRanges 形式は CLI 側 composeHunks で既に「表示すべき hunks」だけに絞られているため、
+      // client では 'all' として扱う (再 index フィルタ不要)。
+      // 既存 { path, hunks: [n] } 形式は従来通り index フィルタを通す。
+      const hunks: number[] | 'all' = typeof ref === 'string'
+        ? 'all'
+        : 'displayRanges' in ref
+          ? 'all'
+          : ref.hunks
       entries.push({ file: f, hunks })
       seen.add(path)
     }

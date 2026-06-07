@@ -8,12 +8,18 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import type { SummaryJson, ResultJson, PrMeta } from '@zeus/review-diff-shared'
-import { parseDiff, startServer, type SourcesMap } from '@zeus/review-diff-server'
+import type { SummaryJson, ResultJson, PrMeta, DisplayRange } from '@zeus/review-diff-shared'
+import { parseDiff, composeHunks, startServer, type SourcesMap } from '@zeus/review-diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
 
 const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るため、1 分早めに自爆して整合性を取る
+
+// 隣接 hunk 間の gap がこの行数以下なら、CLI 側で 1 つの表示単位に統合する。
+// 「変更ハンクの間に 5-10 行 unchanged が挟まる」程度なら最初から繋げて見せた方が
+// レビューしやすい (zeus:review-diff の設計哲学: ユーザーに読ませる量を増やさず差分表示の工夫で語る)。
+// 10 行は GitHub PR / Linear の expand behavior に近く、保守的に効く目安。
+const AUTO_BRIDGE_THRESHOLD = 10
 
 // gh api への並列度上限。GitHub の rate limit (authenticated 5000 req/hour) に余裕を残しつつ、
 // N ファイル × 2 (base/head) の blob 取得を現実的な時間で終わらせるための値。
@@ -80,7 +86,40 @@ async function main(): Promise<void> {
     f.afterTotal = countLines(src.after)
   }
 
-  const html = buildHtml({ summary, prMeta, files, allFiles, expandable })
+  // summary.groups から path → DisplayRange[] のマップを構築。
+  // 同一 path が複数 group / 複数 entry に分散していたら union を取る。
+  // string 形式 (= ファイル全体) や hunks 指定 (= 既存 low-level 指定) は除外、
+  // displayRanges 形式だけを集める。
+  const rangesByPath = collectDisplayRanges(summary)
+
+  // composeHunks で「表示単位の Hunk 列」に再編する:
+  //   - sources がある file: displayRanges を反映 + 小 gap を auto-bridge
+  //   - sources が無い file: no-op (元の hunks のまま、graceful degrade)
+  const composedFiles = files.map((f) =>
+    composeHunks({
+      file: f,
+      source: sources.get(f.path),
+      displayRanges: rangesByPath.get(f.path),
+      autoBridgeThreshold: AUTO_BRIDGE_THRESHOLD,
+    }),
+  )
+
+  // composeHunks 後の hunk 数を集計してログる (デバッグ性)。
+  const counts = composedFiles.reduce(
+    (acc, f) => {
+      for (const h of f.hunks) {
+        const k = h.origin ?? 'changed'
+        acc[k] = (acc[k] ?? 0) + 1
+      }
+      return acc
+    },
+    { changed: 0, 'ai-context': 0, 'auto-bridge': 0 } as Record<string, number>,
+  )
+  process.stderr.write(
+    `[review-diff] composed hunks: changed=${counts.changed} ai-context=${counts['ai-context']} auto-bridge=${counts['auto-bridge']}\n`,
+  )
+
+  const html = buildHtml({ summary, prMeta, files: composedFiles, allFiles, expandable })
 
   const { url, waitResult } = await startServer({ html, sources, expandable })
   process.stderr.write(`[review-diff] URL: ${url}\n`)
@@ -105,6 +144,23 @@ async function main(): Promise<void> {
   process.stdout.write(JSON.stringify(result) + '\n')
   // openUrl で detach した子プロセスや未解放ハンドルでイベントループが残るケースに備え、明示終了。
   setTimeout(() => process.exit(0), 100)
+}
+
+// summary.groups を走査し、各 file への DisplayRange[] を集約する。
+// 同じ path が複数 group / 複数 entry に分かれている場合は素朴に concat (composeHunks 側で
+// sort + merge してくれるので、ここで重複排除する必要は無い)。
+function collectDisplayRanges(summary: SummaryJson): Map<string, DisplayRange[]> {
+  const out = new Map<string, DisplayRange[]>()
+  for (const group of summary.groups ?? []) {
+    for (const ref of group.files ?? []) {
+      if (typeof ref === 'string') continue
+      if (!('displayRanges' in ref)) continue
+      if (!Array.isArray(ref.displayRanges) || ref.displayRanges.length === 0) continue
+      const prev = out.get(ref.path) ?? []
+      out.set(ref.path, [...prev, ...ref.displayRanges])
+    }
+  }
+  return out
 }
 
 // staged モード: 各ファイルの「現在 index にある内容 (after)」と「HEAD の内容 (before)」を
