@@ -1,2 +1,3 @@
 packages:
   - "plugins/*/scripts/*"
+  - "plugins/*/scripts/*/packages/*"

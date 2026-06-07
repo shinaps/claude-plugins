@@ -1,0 +1,28 @@
+{
+  "name": "@zeus/review-diff-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "@zeus/source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "echo 'server: no build (cli bundles via esbuild with @zeus/source condition)'",
+    "test": "vitest run --project server",
+    "clean": "true"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "@zeus/review-diff-shared": "workspace:*",
+    "hono": "^4.12.23",
+    "parse-git-diff": "0.0.20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.0"
+  }
+}

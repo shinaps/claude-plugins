@@ -3,9 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "test:review-diff": "pnpm --filter zeus-review-diff-cli test",
-    "build:review-diff": "pnpm --filter zeus-review-diff-cli build",
-    "dev:review-diff": "pnpm --filter zeus-review-diff-cli dev"
+    "test:review-diff": "pnpm --filter @zeus/review-diff test",
+    "build:review-diff": "pnpm --filter @zeus/review-diff build",
+    "dev:review-diff": "pnpm --filter @zeus/review-diff dev"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

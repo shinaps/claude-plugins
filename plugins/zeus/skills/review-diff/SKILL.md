@@ -30,9 +30,12 @@ diff を Linear 風のローカル UI で開き、ファイル単位 Reviewed �
 ├── summary.json     ← Write ツールで作成 (heredoc 禁止)
 ├── diff.patch       ← staged または gh pr diff の出力
 ├── pr-meta.json     ← PR モードのみ
-├── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
-└── state.json       ← Reject カウンタ等 ({ "rejectCount": N, "parentDir": "..." })
+└── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
 ```
+
+**Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
+1 セッション内で人間ゲートを担うだけなので disk persistence は不要であり、
+work-dir を Phase 6 でまるごと削除できるよう設計を単純化した。
 
 `slug` の決め方:
 - staged モード: 変更ファイル名から代表的な 1〜2 個を kebab-case で繋ぐ
@@ -48,7 +51,7 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 
 - **summary.json は必ず Write ツールで作成する** (Bash heredoc 禁止: `$` 展開や引用符のエスケープ事故を避けるため)
 - **git add / git commit / git push は必ず別実行で 1 コマンドずつ** (CLAUDE.md ルール)
-- **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
+- **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」(rejectCount はメインエージェントの会話メモリで管理。ファイル永続化はしない)
 - **CLI タイムアウトは 9 分** (Bash ツール 10 分制約のため)
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
@@ -187,7 +190,9 @@ fi
 - `comments[]` の各要素は以下のいずれか:
   - `{ "file": null, "body": "..." }`                              — 全体コメント
   - `{ "file": "path/to/foo.ts", "body": "..." }`                  — ファイル単位コメント
-  - `{ "file": "path/to/foo.ts", "body": "...", "line": { "side": "left"|"right", "number": 42 } }` — 行コメント
+  - `{ "file": "path/to/foo.ts", "body": "...", "line": { "side": "left"|"right", "number": 42 } }` — 単一行コメント
+  - `{ "file": "path/to/foo.ts", "body": "...", "line": { "side": "left"|"right", "number": 42, "endNumber": 58 } }` — 行範囲コメント (number〜endNumber、両端含む)
+  - `endNumber` は range の場合のみ含まれる。単一行は `endNumber` フィールドそのものが省略される (number === endNumber を含めない)
   - `side` は side-by-side diff の左/右に対応。`left` = before、`right` = after / context
 
 ### Phase 6: 結果分岐
@@ -199,14 +204,24 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
 - commit メッセージを diff から生成 (semantic prefix + 簡潔な要約)
 - **git add / commit / push は必ず別コマンドで実行** (CLAUDE.md ルール)
 - push はユーザーから明示要求がない限りしない
+- commit (+ push) が完了したら **work-dir をクリーンアップ**:
+  ```bash
+  rm -rf "$WORK_DIR"
+  ```
+  result.json / summary.json / diff.patch / pr-meta.json 全て不要になっているため。
 
 #### reject
 
-1. `state.json` を読んで `rejectCount` を +1 (初回は新規作成)。schema は `{"rejectCount": N, "parentDir": "..."}`
+1. **rejectCount をメインの会話メモリで +1** (state.json は使わない)。初回 reject なら 1、2 回目なら 2…
 2. UI で集めた `comments` 配列をユーザーに提示し、どの指摘を反映するか合意を取る
 3. `rejectCount >= 3` の場合は **必ず `AskUserQuestion`** で「このまま続行 / 中止 / 方針見直し」を聞く
 4. 修正実装を行う (大きい変更なら `/zeus:dev` への橋渡しを提案)
-5. 修正完了後、`Skill('zeus:review-diff', args)` で自動再起動
+5. 修正完了後、Skill 自動再起動の **直前** に work-dir をクリーンアップ:
+   ```bash
+   rm -rf "$WORK_DIR"
+   ```
+   再起動された Skill は新しい WORK_DIR を Phase 2 で作るので、古い work-dir を残す必要はない。
+6. `Skill('zeus:review-diff', args)` で自動再起動
    - staged モードなら args は空
    - pr モードなら同じ PR 番号を渡す
    - Skill ツールが使えない環境では `AskUserQuestion` で「もう一度 /zeus:review-diff を手動実行してください」と告げる
@@ -214,9 +229,12 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
 #### timeout
 
 `AskUserQuestion` で次のアクションを確認:
-- 再 review (もう一度 CLI を起動)
-- 修正したい点を聞いてから再開
-- 終了
+- 再 review (もう一度 CLI を起動) → **work-dir はそのまま残す** (次の review で同じ diff を使う可能性があるため)
+- 修正したい点を聞いてから再開 → 修正後の判断に従う (再 review なら残す / 終了なら削除)
+- 終了 → **work-dir をクリーンアップ**:
+  ```bash
+  rm -rf "$WORK_DIR"
+  ```
 
 ## 不明点があれば AskUserQuestion で聞く
 

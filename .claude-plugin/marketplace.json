@@ -12,7 +12,7 @@
       "name": "zeus",
       "source": "./plugins/zeus",
       "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + 最終承認ゲート + デバッグ + 継続リファクタプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:tech-survey → /zeus:dev (explorer → architect → critique → plan-reviewer → 統合プラン → zeus-implementer による実装委譲 + 動作確認 → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定) → /zeus:review → /zeus:review-diff (staged diff または PR の diff を Linear 風 UI でブラウザに開き、ファイル単位 Reviewed チェック + コメント + Approve/Reject で人間が最終承認するゲート、Reject 時はコメント反映 → 自動再起動) → /zeus:debug → /zeus:refactor-loop (可読性向上が主軸: 省略変数の改名・WHY コメント整備・早期リターン化のような細かい改善も大規模な構造改善と同格に扱う。zeus-refactor-scout が次の 1 件を返し zeus-refactor-implementer が contract boundary 宣言 → characterization test (軽量リファクタは簡易パスで省略可) → 内部実装の大胆変更 → contract 維持検証 → refactor 自動コミット → 次ラウンド、安全性は implementer セルフ + 次ラウンド scout の regression-suspect 再点検で二段防御、コードベース全体を無人ループで継続リファクタ)。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性を詰めることで dev での差し戻しをほぼゼロにする。実装フェーズを責務別の専用 implementer に委譲することでメインスレッドの context 圧迫を防ぎ責務を明確化。13 体の zeus 専用エージェント同梱、7 スキル構成。",
-      "version": "4.4.0",
+      "version": "4.5.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
