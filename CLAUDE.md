@@ -41,6 +41,9 @@ Claude Code はインストール済みプラグインのバージョン比較�
 claude-plugins/
 ├── .claude-plugin/
 │   └── marketplace.json        ← マーケットプレイス定義（全プラグインを列挙）
+├── pnpm-workspace.yaml         ← pnpm workspace 定義（plugins/*/scripts/* を登録）
+├── package.json                ← workspace ルート（private、pnpm.onlyBuiltDependencies に esbuild）
+├── pnpm-lock.yaml              ← 全 workspace の依存ロック
 ├── plugins/
 │   └── <plugin-name>/
 │       ├── .claude-plugin/
@@ -49,14 +52,66 @@ claude-plugins/
 │       ├── skills/
 │       │   └── <skill-name>/
 │       │       └── SKILL.md
-│       └── agents/
-│           └── <agent-name>.md
+│       ├── agents/
+│       │   └── <agent-name>.md
+│       └── scripts/            ← Node CLI 同梱が必要なスキル用（任意）
+│           └── <skill-name>/
+│               ├── package.json (workspace 内パッケージ、ESM)
+│               ├── tsconfig.json
+│               ├── build.mjs (esbuild バンドラ)
+│               ├── .gitattributes (dist/cli.js text eol=lf)
+│               ├── .gitignore (node_modules/, .tmp/, .screenshots/)
+│               ├── src/
+│               └── dist/cli.js ← **git commit 対象**（shebang + 755）
 └── CLAUDE.md                   ← このファイル
 ```
 
+## Node CLI 同梱スキルの規約
+
+スキルが Node CLI を必要とする場合（例: `/zeus:review-diff`）は、以下を守る。
+
+### バンドル成果物を commit する
+- `dist/cli.js` を **git commit する**（postinstall ビルドはユーザー環境で破綻するため）
+- `.gitattributes` で `dist/cli.js text eol=lf` を必須（Windows CRLF で shebang 崩壊防止）
+- esbuild の `banner: { js: '#!/usr/bin/env node' }` + build script で `chmod 755`
+
+### pnpm workspace に登録
+- `pnpm-workspace.yaml` の `packages: ["plugins/*/scripts/*"]` で自動認識
+- ルートで `pnpm install` すれば全 CLI の deps が入る
+- `pnpm --filter <package-name> build` で個別ビルド可
+
+### SKILL.md の CLI パス解決
+`${CLAUDE_PLUGIN_ROOT}` は空のことがあるため、以下の二段解決を SKILL.md に入れる:
+
+```bash
+# Dogfooding 優先: claude-plugins リポ自身なら local dist/cli.js を使う
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+REPO_CLI="${REPO_ROOT}/plugins/<plugin>/scripts/<skill>/dist/cli.js"
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
+  CLI="$REPO_CLI"
+else
+  # 通常: marketplace cache 配下の最新版
+  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/shinaps/<plugin>/*/ 2>/dev/null | head -1)
+  CLI="${ZEUS_DIR}scripts/<skill>/dist/cli.js"
+fi
+[ -f "$CLI" ] || { echo "CLI not found at $CLI"; exit 1; }
+```
+
+これによりリポ内で開発中は `pnpm build` だけで即反映（push + marketplace update 不要）。
+
+### Dogfooding 手順
+1. `plugins/<plugin>/scripts/<skill>/src/` でコード変更
+2. `pnpm --filter <package-name> build` で `dist/cli.js` 再生成
+3. リポ内で `/<plugin>:<skill>` を起動 → ローカル `dist/cli.js` が使われる
+4. 動作 OK ならコミット・push（dist/cli.js も含める）
+
+### dist/cli.js の更新タイミング
+- `src/` を触ったら必ず rebuild + commit（SKILL.md 変更だけなら不要）
+- バージョン上げは「src/ または SKILL.md に意味のある変更があったとき」
+
 ## 既存プラグイン
 
-- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / debug / refactor-loop の 6 スキル構成
+- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / review-diff / debug / refactor-loop の 7 スキル構成。`review-diff` は Node CLI（React + Hono + Shiki）を `scripts/review-diff/` に同梱
 
 ## 関連リンク
 
