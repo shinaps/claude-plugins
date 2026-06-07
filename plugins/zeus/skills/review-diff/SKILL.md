@@ -89,14 +89,18 @@ SLUG=...
 WORK_DIR=".claude/zeus/review-diffs/${TS}-${SLUG}"
 mkdir -p "$WORK_DIR"
 
-# プラグインのインストールパスは ${CLAUDE_PLUGIN_ROOT} が空のことがあるため、
-# キャッシュディレクトリ配下で最新の zeus を ls で探す。
-ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/shinaps/zeus/*/ 2>/dev/null | head -1)
-CLI="${ZEUS_DIR}scripts/review-diff/dist/cli.js"
-if [ ! -f "$CLI" ]; then
-  # 開発リポジトリで直接動かしているケースのフォールバック
-  REPO_CLI="$(git rev-parse --show-toplevel)/plugins/zeus/scripts/review-diff/dist/cli.js"
-  [ -f "$REPO_CLI" ] && CLI="$REPO_CLI"
+# Dogfooding 優先: 現在の git リポが claude-plugins 開発リポ自身なら、
+# marketplace.json の存在で識別して、その場で built した dist/cli.js を優先使用。
+# これによりローカル変更 (pnpm build 直後) を即反映できる。
+# 通常のユーザーは marketplace キャッシュ配下の dist/cli.js を使う。
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+REPO_CLI="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/cli.js"
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
+  CLI="$REPO_CLI"
+else
+  # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で最新の zeus を ls で探す
+  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/shinaps/zeus/*/ 2>/dev/null | head -1)
+  CLI="${ZEUS_DIR}scripts/review-diff/dist/cli.js"
 fi
 [ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
 ```
