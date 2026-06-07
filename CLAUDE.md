@@ -90,9 +90,9 @@ REPO_CLI="${REPO_ROOT}/plugins/<plugin>/scripts/<skill>/dist/cli.js"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
   CLI="$REPO_CLI"
 else
-  # 通常: marketplace cache 配下の最新版
-  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/shinaps/<plugin>/*/ 2>/dev/null | head -1)
-  CLI="${ZEUS_DIR}scripts/<skill>/dist/cli.js"
+  # 通常: marketplace cache 配下の最新版。owner 名は glob で抽象化して fork 対応
+  PLUGIN_DIR=$(ls -td ~/.claude/plugins/cache/*/<plugin>/*/ 2>/dev/null | head -1)
+  CLI="${PLUGIN_DIR}scripts/<skill>/dist/cli.js"
 fi
 [ -f "$CLI" ] || { echo "CLI not found at $CLI"; exit 1; }
 ```

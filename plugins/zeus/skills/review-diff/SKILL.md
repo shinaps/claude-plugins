@@ -98,8 +98,10 @@ REPO_CLI="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/cli.js"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
   CLI="$REPO_CLI"
 else
-  # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で最新の zeus を ls で探す
-  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/shinaps/zeus/*/ 2>/dev/null | head -1)
+  # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で zeus プラグインを ls で探す。
+  # owner 名 (cache/<owner>/) は glob で抽象化: marketplace fork や別 owner の配布にも対応するため
+  # ハードコードしない。同名 zeus が複数 owner にある場合は最終更新を ls -td で採用。
+  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/*/zeus/*/ 2>/dev/null | head -1)
   CLI="${ZEUS_DIR}scripts/review-diff/dist/cli.js"
 fi
 [ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
