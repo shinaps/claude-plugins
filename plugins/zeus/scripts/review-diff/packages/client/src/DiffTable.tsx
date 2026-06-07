@@ -543,6 +543,56 @@ type RowInteractionProps = {
   onLinePointerUp: (e: React.PointerEvent<HTMLTableCellElement>) => void
 }
 
+// unchanged 領域の lazy 展開を司る hook。HunkBody / TrailingBanner で重複していた
+// expand fetch ロジックを 1 箇所に集約 (A3)。banner=null のときは expand 自体が何もしない。
+function useExpandSource(params: {
+  filePath: string
+  token: string
+  expandable: boolean
+  startAfter: number | null
+  endAfter: number | null
+  startBefore: number | null
+  startAfterForBefore?: number | null
+}): {
+  expanded: SideBySideRow[] | null
+  loading: boolean
+  error: string | null
+  expand: () => Promise<void>
+} {
+  const { filePath, token, expandable, startAfter, endAfter, startBefore } = params
+  const [expanded, setExpanded] = useState<SideBySideRow[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function expand() {
+    if (!expandable || loading || expanded) return
+    if (startAfter == null || endAfter == null || startBefore == null) return
+    setLoading(true)
+    setError(null)
+    try {
+      const url = `/source?token=${encodeURIComponent(token)}&path=${encodeURIComponent(
+        filePath,
+      )}&side=after&start=${startAfter}&end=${endAfter}`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`status ${res.status}`)
+      const text = await res.text()
+      const lines = text.split('\n')
+      // unchanged 行なので before/after の raw は同じ。行番号だけ起点を分けて連番化する。
+      const rows: SideBySideRow[] = lines.map((line, i) => ({
+        left: { type: 'context', line: startBefore + i, raw: line },
+        right: { type: 'context', line: startAfter + i, raw: line },
+      }))
+      setExpanded(rows)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return { expanded, loading, error, expand }
+}
+
 function HunkBody({
   hunk,
   file,
@@ -565,38 +615,16 @@ function HunkBody({
   highlight: boolean
   handlers: LineCommentHandlers
 } & RowInteractionProps) {
-  // 展開済み行を保持する local state。初期は null、fetch 成功で SideBySideRow[] が入る。
-  // null のまま = バナー表示、配列入り = context 行として描画。
-  const [expanded, setExpanded] = useState<SideBySideRow[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function expand() {
-    if (!expandable || loading || expanded) return
-    setLoading(true)
-    setError(null)
-    try {
-      const url = `/source?token=${encodeURIComponent(token)}&path=${encodeURIComponent(
-        file.path,
-      )}&side=after&start=${banner!.startAfter}&end=${banner!.endAfter}`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`status ${res.status}`)
-      const text = await res.text()
-      const lines = text.split('\n')
-      // unchanged 行なので before/after を同じ内容で並べる。
-      // 行番号: before 側は startBefore から、after 側は startAfter から連番。
-      // raw は素のコード文字列。レンダリング時に DiffTable 側の Shiki で highlight する。
-      const rows: SideBySideRow[] = lines.map((line, i) => ({
-        left: { type: 'context', line: banner!.startBefore + i, raw: line },
-        right: { type: 'context', line: banner!.startAfter + i, raw: line },
-      }))
-      setExpanded(rows)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
+  // unchanged 領域 (banner) の展開状態を hook に集約 (A3)。
+  // banner=null のときは startAfter 等が null になり expand 自体が no-op になる。
+  const { expanded, loading, error, expand } = useExpandSource({
+    filePath: file.path,
+    token,
+    expandable,
+    startAfter: banner?.startAfter ?? null,
+    endAfter: banner?.endAfter ?? null,
+    startBefore: banner?.startBefore ?? null,
+  })
 
   // origin に応じた最小限の視覚マーカー。テキストでは説明せず、
   // 左端の細いアクセントバーだけ立てる (= 視線の流れで「これは AI が付けたコンテキスト」と分かる)。
@@ -678,33 +706,14 @@ function TrailingBanner({
   highlight: boolean
   handlers: LineCommentHandlers
 } & RowInteractionProps) {
-  const [expanded, setExpanded] = useState<SideBySideRow[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function expand() {
-    if (!expandable || loading || expanded) return
-    setLoading(true)
-    setError(null)
-    try {
-      const url = `/source?token=${encodeURIComponent(token)}&path=${encodeURIComponent(
-        file.path,
-      )}&side=after&start=${banner.startAfter}&end=${banner.endAfter}`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`status ${res.status}`)
-      const text = await res.text()
-      const lines = text.split('\n')
-      const rows: SideBySideRow[] = lines.map((line, i) => ({
-        left: { type: 'context', line: banner.startBefore + i, raw: line },
-        right: { type: 'context', line: banner.startAfter + i, raw: line },
-      }))
-      setExpanded(rows)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
+  const { expanded, loading, error, expand } = useExpandSource({
+    filePath: file.path,
+    token,
+    expandable,
+    startAfter: banner.startAfter,
+    endAfter: banner.endAfter,
+    startBefore: banner.startBefore,
+  })
 
   return (
     <tbody>

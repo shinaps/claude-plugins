@@ -32,7 +32,7 @@
 //   DiffTable の gapStartBefore = prev.oldStart + prev.oldLines 計算が before 軸で
 //   連続するように設計されている (banner 表示用の before 範囲算出)。
 
-import type { DisplayRange, Hunk, HunkOrigin, ParsedFile, SideBySideRow } from '@zeus/review-diff-shared'
+import { countLines, type DisplayRange, type Hunk, type HunkOrigin, type ParsedFile, type SideBySideRow } from '@zeus/review-diff-shared'
 import type { FileSource } from './server'
 
 // after 行範囲を表す内部型。inclusive。
@@ -63,12 +63,12 @@ export function composeHunks(opts: ComposeHunksOptions): ParsedFile {
   // file.hunks の全件を使うので mapping 自体は引き続き正しい。
   const positiveHunks = file.hunks.filter((h) => h.newLines > 0)
 
-  // fast path: displayRanges 未指定 かつ positive hunks 間に bridgeable gap 無し → 元のまま返す。
-  // 既存 `{ path, hunks: [n] }` 指定で index が壊れないよう、必要が無いなら一切触らない。
-  // fast-path 経路では pure-deletion を含む元 hunks がそのまま流れる (従来 UX 維持)。
-  // gap 計算に positiveHunks を使うのは、pure-deletion を間に挟むと gap が虚偽の値を
-  // 取り意図せず非 fast-path 経路に落ちるのを防ぐため。
-  if (ranges.length === 0 && !hasAnyBridgeableGap(positiveHunks, autoBridgeThreshold)) {
+  // fast path: displayRanges 未指定なら元 file をそのまま返す。
+  // 「AUTO_BRIDGE は ranges 指定時のみ発火」設計: ranges 空のまま auto-bridge を効かせると、
+  // 既存 `{ path, hunks: [n] }` 指定の hunk index が再採番で意図せず崩れるケースがあった (W2)。
+  // ranges を指定したときだけ auto-bridge が動く形にすることで、AI が「意味的範囲を見せたい」と
+  // 明示したときの副次効果として merge を起動する設計に揃え、後方互換 を守る。
+  if (ranges.length === 0) {
     return file
   }
 
@@ -116,7 +116,9 @@ export function composeHunks(opts: ComposeHunksOptions): ParsedFile {
 
   const afterLines = source.after.split('\n')
   const beforeLines = source.before ? source.before.split('\n') : null
-  const afterMax = afterLines.length
+  // 末尾 \n を 1 行として数えないよう countLines と整合させる (CLI の afterTotal と同じ式)。
+  // 末尾近くを range で指定したとき phantom 空 row が 1 行余分に出るのを防ぐ (A2)。
+  const afterMax = countLines(source.after)
 
   const newHunks: Hunk[] = []
   let idx = 0
@@ -161,16 +163,6 @@ export function composeHunks(opts: ComposeHunksOptions): ParsedFile {
     hunks: newHunks,
     totalLines,
   }
-}
-
-function hasAnyBridgeableGap(hunks: Hunk[], threshold: number): boolean {
-  for (let i = 1; i < hunks.length; i++) {
-    const prev = hunks[i - 1]
-    const cur = hunks[i]
-    const gap = cur.newStart - (prev.newStart + prev.newLines)
-    if (gap >= 0 && gap <= threshold) return true
-  }
-  return false
 }
 
 function strongerOrigin(a: HunkOrigin, b: HunkOrigin): HunkOrigin {

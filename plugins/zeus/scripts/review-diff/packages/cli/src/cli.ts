@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import type { SummaryJson, ResultJson, PrMeta, DisplayRange } from '@zeus/review-diff-shared'
+import { countLines, getRefKind, type SummaryJson, type ResultJson, type PrMeta, type DisplayRange } from '@zeus/review-diff-shared'
 import { parseDiff, composeHunks, startServer, type SourcesMap } from '@zeus/review-diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
@@ -149,15 +149,21 @@ async function main(): Promise<void> {
 // summary.groups を走査し、各 file への DisplayRange[] を集約する。
 // 同じ path が複数 group / 複数 entry に分かれている場合は素朴に concat (composeHunks 側で
 // sort + merge してくれるので、ここで重複排除する必要は無い)。
+// 判別は shared/getRefKind を通すことで client (App.tsx:buildBuckets) と挙動を統一する (W1)。
+// hunks と displayRanges が併用された不正 ref を検出したら stderr 警告 (I2)。
 function collectDisplayRanges(summary: SummaryJson): Map<string, DisplayRange[]> {
   const out = new Map<string, DisplayRange[]>()
   for (const group of summary.groups ?? []) {
     for (const ref of group.files ?? []) {
-      if (typeof ref === 'string') continue
-      if (!('displayRanges' in ref)) continue
-      if (!Array.isArray(ref.displayRanges) || ref.displayRanges.length === 0) continue
-      const prev = out.get(ref.path) ?? []
-      out.set(ref.path, [...prev, ...ref.displayRanges])
+      if (typeof ref !== 'string' && 'hunks' in ref && 'displayRanges' in ref) {
+        process.stderr.write(
+          `[review-diff:compose] WARN: ${ref.path} で hunks と displayRanges が併用されています。displayRanges を優先します。\n`,
+        )
+      }
+      const kind = getRefKind(ref)
+      if (kind.kind !== 'ranges') continue
+      const prev = out.get(kind.path) ?? []
+      out.set(kind.path, [...prev, ...kind.displayRanges])
     }
   }
   return out
@@ -175,14 +181,6 @@ function collectStagedSources(paths: string[]): SourcesMap {
     out.set(path, { before, after })
   }
   return out
-}
-
-// ファイル末尾の改行で空行が 1 行多く数えられるのを避けるため、最後が \n なら 1 減らす。
-// (git show / GitHub Contents API の raw はどちらも末尾 \n 付きで返ってくる前提)
-function countLines(text: string): number {
-  if (text === '') return 0
-  const n = text.split('\n').length
-  return text.endsWith('\n') ? n - 1 : n
 }
 
 function gitShow(ref: string): string {

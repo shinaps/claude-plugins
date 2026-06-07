@@ -13,7 +13,7 @@
 //     (DOM querySelector を render 内で叩かないため)。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClientPayload, Comment, ParsedFile, PrMeta } from '@zeus/review-diff-shared'
+import { getRefKind, type ClientPayload, type Comment, type ParsedFile, type PrMeta } from '@zeus/review-diff-shared'
 import { TabBar } from './TabBar.tsx'
 import { GroupSection } from './GroupSection.tsx'
 import { ActionBar } from './ActionBar.tsx'
@@ -276,15 +276,19 @@ export function App({ payload }: Props) {
           {buckets.length > 0 ? (
             <ul className="report-index">
               {buckets.map((b, i) => (
-                <li
-                  key={i}
-                  className="report-index-item"
-                  onClick={() => b.entries[0] && jumpToFile(b.entries[0].file.path)}
-                  title="Jump to this group"
-                >
-                  <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
-                  <span className="report-index-title">{b.title}</span>
-                  <span className="report-index-meta">{b.entries.length} file{b.entries.length === 1 ? '' : 's'}</span>
+                <li key={i}>
+                  {/* button でラップして keyboard / focus / aria を成立させる。
+                      li 直 onClick は Tab で到達不可 / Enter で発火不可だった (W4)。 */}
+                  <button
+                    type="button"
+                    className="report-index-item"
+                    onClick={() => b.entries[0] && jumpToFile(b.entries[0].file.path)}
+                    aria-label={`Jump to group ${i + 1}: ${b.title}`}
+                  >
+                    <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
+                    <span className="report-index-title">{b.title}</span>
+                    <span className="report-index-meta">{b.entries.length} file{b.entries.length === 1 ? '' : 's'}</span>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -345,19 +349,16 @@ function buildBuckets(payload: ClientPayload): GroupBucket[] {
   for (const g of groups) {
     const entries: BucketEntry[] = []
     for (const ref of g.files || []) {
-      const path = typeof ref === 'string' ? ref : ref.path
-      const f = byPath.get(path)
+      const kind = getRefKind(ref)
+      const f = byPath.get(kind.path)
       if (!f) continue
       // displayRanges 形式は CLI 側 composeHunks で既に「表示すべき hunks」だけに絞られているため、
       // client では 'all' として扱う (再 index フィルタ不要)。
-      // 既存 { path, hunks: [n] } 形式は従来通り index フィルタを通す。
-      const hunks: number[] | 'all' = typeof ref === 'string'
-        ? 'all'
-        : 'displayRanges' in ref
-          ? 'all'
-          : ref.hunks
+      // hunks 形式は従来通り index フィルタ。判別は shared/getRefKind を通すことで
+      // CLI 側 (collectDisplayRanges) と挙動を統一する (W1)。
+      const hunks: number[] | 'all' = kind.kind === 'hunks' ? kind.hunks : 'all'
       entries.push({ file: f, hunks })
-      seen.add(path)
+      seen.add(kind.path)
     }
     if (entries.length === 0) continue
     buckets.push({ title: g.title, description: g.description || '', entries })
