@@ -1,161 +1,129 @@
-// DiffTable のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする。
+// Panel のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする (v4.7.0 panel model)。
 //
-// なぜ Vitest + happy-dom + @testing-library を選んだか:
-//   - happy-dom は jsdom より軽量で Pointer Events / setPointerCapture を初期サポート。
-//     jsdom はかつて setPointerCapture を no-op にしていた経緯があり、ドラッグ実装の
-//     回帰テスト用途では happy-dom が素直に動く。
-//   - userEvent.pointer は keys: '[MouseLeft>]' / '[/MouseLeft]' で down → up を切り分けられ、
-//     fireEvent より「実機の連続イベント」に近いシーケンスを生成できる。
-//   - ただし happy-dom の elementFromPoint はモック動作 (座標を持たず最後に追加された
-//     要素を返す類) のため、座標起点の resolveLineAtPoint テストは「up 時に同じ td が
-//     返るか」までは保証できない。そのため up のターゲットを「最終 td」に明示する形で
-//     userEvent.pointer のシーケンスを組み立てる。
+// 旧 DiffTable 版からの変更点:
+//   - target は file ではなく panelId 単位 (LineTarget は { side, number, endNumber? })
+//   - side: 'left'/'right' → 'asIs'/'toBe' (DOM 上は 'asis'/'tobe')
+//   - cross-panel drag は panelTableRef.contains() で完全に弾かれる (AC-6 構造的担保)
 
-import { render, screen } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect, beforeEach } from 'vitest'
-import { DiffTable } from '../src/DiffTable.tsx'
-import type { LineCommentHandlers, LineTarget } from '../src/useLineComments.ts'
-import type { Hunk, ParsedFile } from '@zeus/review-diff-shared'
+import type { RenderedPanel } from '@zeus/review-diff-shared'
+import { Panel } from '../src/Panel'
+import type { LineCommentHandlers, LineTarget } from '../src/useLineComments'
 
-// 共有の最小ファイル fixture。
-//   - context 行 3 行のみ。addition/deletion は今回のシナリオでは不要。
-//   - raw フィールドは生コード文字列。client 側 DiffTable が Shiki に通してハイライトする。
-//     happy-dom 環境下では Shiki が言語を解決できれば <span> 列が返り、screen.getByText で拾える。
-function makeFile(): ParsedFile {
-  const mkRow = (n: number, text: string) => ({
-    left: { type: 'context' as const, line: n, raw: text },
-    right: { type: 'context' as const, line: n, raw: text },
-  })
-  const hunk: Hunk = {
-    index: 0,
-    oldStart: 1,
-    oldLines: 3,
-    newStart: 1,
-    newLines: 3,
-    rows: [mkRow(1, 'const a'), mkRow(2, 'const b'), mkRow(3, 'const c')],
-  }
+function makePanel(panelId = 'p1'): RenderedPanel {
+  // context 3 行のシンプルな panel。各 row は両側 context (= 行番号が両側 1..3)。
   return {
-    path: 'foo.ts',
-    status: 'modified',
-    language: 'typescript',
-    additions: 0,
-    deletions: 0,
-    totalLines: 3,
-    afterTotal: 3,
-    hunks: [hunk],
+    panelId,
+    intent: 'test',
+    asIs: { file: 'foo.ts', ranges: [{ start: 1, end: 3 }] },
+    toBe: { file: 'foo.ts', ranges: [{ start: 1, end: 3 }] },
+    asIsLanguage: 'typescript',
+    toBeLanguage: 'typescript',
+    segments: [{
+      asIsRange: { start: 1, end: 3 },
+      toBeRange: { start: 1, end: 3 },
+      rows: [
+        { asIs: { type: 'context', line: 1, raw: 'const a' }, toBe: { type: 'context', line: 1, raw: 'const a' } },
+        { asIs: { type: 'context', line: 2, raw: 'const b' }, toBe: { type: 'context', line: 2, raw: 'const b' } },
+        { asIs: { type: 'context', line: 3, raw: 'const c' }, toBe: { type: 'context', line: 3, raw: 'const c' } },
+      ],
+    }],
   }
 }
 
-// onOpenLineForm をスパイ可能にした handlers を返す。
-function makeHandlers(overrides: Partial<LineCommentHandlers> = {}): LineCommentHandlers & {
-  openedCalls: Array<{ file: string; target: LineTarget }>
-} {
-  const openedCalls: Array<{ file: string; target: LineTarget }> = []
+type SpyHandlers = LineCommentHandlers & {
+  openedCalls: Array<{ panelId: string; target: LineTarget }>
+}
+
+function makeHandlers(): SpyHandlers {
+  const openedCalls: Array<{ panelId: string; target: LineTarget }> = []
   const base: LineCommentHandlers = {
     lineComments: new Map(),
     activeForm: null,
     editing: new Map(),
-    onOpenLineForm: (file, target) => {
-      openedCalls.push({ file, target })
-    },
-    onCloseLineForm: () => {},
-    onAddLineComment: () => {},
-    onStartEditLineComment: () => {},
-    onCancelEditLineComment: () => {},
-    onSaveEditLineComment: () => {},
-    onDeleteLineComment: () => {},
-    ...overrides,
+    onOpenLineForm: (panelId, target) => { openedCalls.push({ panelId, target }) },
+    onCloseLineForm: () => { /* noop */ },
+    onAddLineComment: () => { /* noop */ },
+    onStartEditLineComment: () => { /* noop */ },
+    onCancelEditLineComment: () => { /* noop */ },
+    onSaveEditLineComment: () => { /* noop */ },
+    onDeleteLineComment: () => { /* noop */ },
   }
-  // openedCalls は副作用配列なので、overrides で onOpenLineForm を差し替えた場合でも
-  // 元のスパイ動作を維持できるよう、ラップした handlers を返す。
   return Object.assign(base, { openedCalls })
 }
 
-// 指定 (side, lineNumber) の td.code を data 属性で直接引く。
-// screen.getByText('const a').closest('td.code') だと left/right どちらの td かを
-// 切り分けにくいため、data-side + data-line-number で取得する。
-function getCodeCell(side: 'left' | 'right', n: number): HTMLElement {
+// 行コメント drag は td.ln (gutter) で開始する設計。td.code はテキスト選択を許すために
+// data 属性のみ付与され、pointer handler は無い。drag-start のテストは td.ln を使う。
+function getGutterCell(panelId: string, side: 'asis' | 'tobe', n: number): HTMLElement {
   const el = document.querySelector<HTMLElement>(
-    `td.code[data-side="${side}"][data-line-number="${n}"]`,
+    `table[data-panel-id="${panelId}"] td.ln[data-side="${side}"][data-line-number="${n}"]`,
   )
-  if (!el) throw new Error(`td.code[data-side=${side}][data-line-number=${n}] not found`)
+  if (!el) throw new Error(`td.ln[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
+  return el
+}
+function getCodeCell(panelId: string, side: 'asis' | 'tobe', n: number): HTMLElement {
+  const el = document.querySelector<HTMLElement>(
+    `table[data-panel-id="${panelId}"] td.code[data-side="${side}"][data-line-number="${n}"]`,
+  )
+  if (!el) throw new Error(`td.code[data-side=${side}][data-line-number=${n}] (panel=${panelId}) not found`)
   return el
 }
 
-function renderTable(handlersOverrides: Partial<LineCommentHandlers> = {}) {
-  const file = makeFile()
-  const handlers = makeHandlers(handlersOverrides)
-  render(
-    <DiffTable
-      file={file}
-      visibleHunks={file.hunks}
-      expandable={false}
-      token="t"
-      {...handlers}
-    />,
-  )
-  return { file, handlers }
+function renderPanel(panelId = 'p1'): { panel: RenderedPanel; handlers: SpyHandlers } {
+  const panel = makePanel(panelId)
+  const handlers = makeHandlers()
+  render(<Panel panel={panel} {...handlers} />)
+  return { panel, handlers }
 }
 
-describe('DiffTable drag select', () => {
+describe('Panel drag select (v4.7.0)', () => {
   beforeEach(() => {
-    // happy-dom はテスト間で document を保持するため、render の cleanup 確認を兼ねる。
     document.body.innerHTML = ''
+    try { localStorage.clear() } catch { /* noop */ }
   })
 
-  test('td.code carries data-side and data-line-number attributes (regression: empty 行や undefined 化していない)', () => {
-    renderTable()
-    // context 行 3 件 × left/right = 6 セル全てに data 属性が付くこと。
-    // バグ仮説で「String(undefined) で "undefined" 文字列になっている」可能性があったため、
-    // 数値文字列のみが入っていることを明示的にチェックする。
+  test('td.code carries data-side (asis/tobe) and data-line-number for every row', () => {
+    renderPanel()
     const cells = document.querySelectorAll<HTMLElement>('td.code[data-side]')
+    // split mode (初期): 3 行 × 2 side = 6 セル
     expect(cells.length).toBe(6)
     for (const c of cells) {
-      expect(c.dataset.side).toMatch(/^(left|right)$/)
+      expect(c.dataset.side).toMatch(/^(asis|tobe)$/)
       expect(c.dataset.lineNumber).toMatch(/^\d+$/)
     }
   })
 
-  test('pointerdown on td.code highlights the starting row', async () => {
-    renderTable()
+  test('pointerdown on td.ln (gutter) highlights the starting row', async () => {
+    renderPanel()
     const user = userEvent.setup()
-    const start = getCodeCell('right', 1)
-    // keys: '[MouseLeft>]' で down のみ発火、up は別ステップに分離。
+    const start = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: start, keys: '[MouseLeft>]' })
-    const row = start.closest('tr.code-row')
-    expect(row).toHaveClass('line-selected')
+    expect(start.closest('tr.code-row')).toHaveClass('line-selected')
   })
 
-  test('pointerup on the same row opens single-line form', async () => {
-    const { file, handlers } = renderTable()
+  test('pointerup on the same row opens single-line form (target.side="toBe")', async () => {
+    const { handlers } = renderPanel()
     const user = userEvent.setup()
-    const cell = getCodeCell('right', 2)
-    // 同じセルで down → up。CLICK_THRESHOLD_MS=200ms 以内なら単一行扱い。
+    const cell = getGutterCell('p1', 'tobe', 2)
     await user.pointer([
       { target: cell, keys: '[MouseLeft>]' },
       { target: cell, keys: '[/MouseLeft]' },
     ])
     expect(handlers.openedCalls).toEqual([
-      { file: file.path, target: { side: 'right', number: 2 } },
+      { panelId: 'p1', target: { side: 'toBe', number: 2 } },
     ])
   })
 
-  test('pointerup on a different row opens range-line form', async () => {
-    const { file, handlers } = renderTable()
+  test('pointerup on a different row opens range-line form (endNumber set)', async () => {
+    const { handlers } = renderPanel()
     const user = userEvent.setup()
-    const start = getCodeCell('right', 1)
-    const end = getCodeCell('right', 3)
-    // happy-dom の elementFromPoint は座標→要素の解決を持たず null を返す。
-    // 実装は currentTarget ではなく document.elementFromPoint で「カーソル直下の行」を
-    // 引く方式なので、テストでは pointermove/up の event.target を見て対応する td.code を
-    // 返すよう elementFromPoint をモックする (実機 Chrome の挙動を再現)。
+    const start = getGutterCell('p1', 'tobe', 1)
+    const end = getGutterCell('p1', 'tobe', 3)
+    // happy-dom の elementFromPoint は座標 → 要素を解決しないので mock で end を返す
     const orig = document.elementFromPoint
-    document.elementFromPoint = ((_x: number, _y: number) => {
-      // userEvent.pointer のシーケンス上、最後にカーソルがあるのは end セル。
-      // pointermove と pointerup のどちらで呼ばれても end を返せば実機と等価。
-      return end
-    }) as typeof document.elementFromPoint
+    document.elementFromPoint = ((_x: number, _y: number) => end) as typeof document.elementFromPoint
     try {
       await user.pointer([
         { target: start, keys: '[MouseLeft>]' },
@@ -165,20 +133,18 @@ describe('DiffTable drag select', () => {
     } finally {
       document.elementFromPoint = orig
     }
-    // range の場合は { side, number, endNumber } の形になる。
     expect(handlers.openedCalls).toHaveLength(1)
     expect(handlers.openedCalls[0]).toEqual({
-      file: file.path,
-      target: { side: 'right', number: 1, endNumber: 3 },
+      panelId: 'p1',
+      target: { side: 'toBe', number: 1, endNumber: 3 },
     })
   })
 
-  test('drag move highlights all rows in range (pointermove resolves line via elementFromPoint)', async () => {
-    renderTable()
+  test('drag move highlights all rows in range', async () => {
+    renderPanel()
     const user = userEvent.setup()
-    const start = getCodeCell('right', 1)
-    const mid = getCodeCell('right', 2)
-    // elementFromPoint を mid に固定 → move 中に currentNumber=2 まで広がる。
+    const start = getGutterCell('p1', 'tobe', 1)
+    const mid = getGutterCell('p1', 'tobe', 2)
     const orig = document.elementFromPoint
     document.elementFromPoint = (() => mid) as typeof document.elementFromPoint
     try {
@@ -189,18 +155,16 @@ describe('DiffTable drag select', () => {
     } finally {
       document.elementFromPoint = orig
     }
-    // start (line 1) と mid (line 2) の両方に line-selected が付与されているはず。
     expect(start.closest('tr.code-row')).toHaveClass('line-selected')
     expect(mid.closest('tr.code-row')).toHaveClass('line-selected')
-    // line 3 は範囲外。
-    const out = getCodeCell('right', 3)
+    const out = getGutterCell('p1', 'tobe', 3)
     expect(out.closest('tr.code-row')).not.toHaveClass('line-selected')
   })
 
-  test('drag clears highlight after pointerup (state reset)', async () => {
-    renderTable()
+  test('drag clears highlight after pointerup', async () => {
+    renderPanel()
     const user = userEvent.setup()
-    const cell = getCodeCell('right', 2)
+    const cell = getGutterCell('p1', 'tobe', 2)
     await user.pointer([
       { target: cell, keys: '[MouseLeft>]' },
       { target: cell, keys: '[/MouseLeft]' },
@@ -208,26 +172,67 @@ describe('DiffTable drag select', () => {
     expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
   })
 
-  test('Escape during drag cancels the selection without opening form', async () => {
-    const { handlers } = renderTable()
+  test('Escape during drag cancels selection without opening form', async () => {
+    const { handlers } = renderPanel()
     const user = userEvent.setup()
-    const cell = getCodeCell('right', 1)
+    const cell = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: cell, keys: '[MouseLeft>]' })
-    // ドラッグ中の Escape はキャンセル。フォームは開かない。
     await user.keyboard('{Escape}')
     expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
-    // pointerup を別途送って、漏れて onOpenLineForm が呼ばれないことも確認。
     await user.pointer({ target: cell, keys: '[/MouseLeft]' })
     expect(handlers.openedCalls).toHaveLength(0)
   })
 
   test('right-click (button !== 0) is ignored: no highlight, no form', async () => {
-    const { handlers } = renderTable()
+    const { handlers } = renderPanel()
     const user = userEvent.setup()
-    const cell = getCodeCell('right', 1)
-    // '[MouseRight]' で右クリック down→up。handlePointerDown は button !== 0 を弾く。
+    const cell = getGutterCell('p1', 'tobe', 1)
     await user.pointer({ target: cell, keys: '[MouseRight]' })
     expect(cell.closest('tr.code-row')).not.toHaveClass('line-selected')
     expect(handlers.openedCalls).toHaveLength(0)
+  })
+
+  test('td.code carries data-side and data-line-number even though pointer handlers are on td.ln', () => {
+    // td.code は selection / copy のために pointer handler を持たないが、ドラッグ中の
+    // resolveLineAtPoint が elementFromPoint で拾うため、data 属性は必須。
+    renderPanel()
+    const c = getCodeCell('p1', 'tobe', 2)
+    expect(c.dataset.side).toBe('tobe')
+    expect(c.dataset.lineNumber).toBe('2')
+  })
+
+  test('AC-6: cross-panel drag does NOT register endNumber on the other panel', async () => {
+    // p1 と p2 を別々に render し、p1 の cell で down → mock elementFromPoint で p2 の cell を返す。
+    // Panel の resolveLineAtPoint は panelTableRef.contains() で別 panel の cell を弾くので、
+    // up 時の endNumber は p1 の最終 currentNumber (= startNumber) と等しくなる (= 単一行扱い)。
+    const handlersA: SpyHandlers = makeHandlers()
+    const handlersB: SpyHandlers = makeHandlers()
+    render(
+      <>
+        <Panel panel={makePanel('p1')} {...handlersA} />
+        <Panel panel={makePanel('p2')} {...handlersB} />
+      </>,
+    )
+    const user = userEvent.setup()
+    const startInP1 = getGutterCell('p1', 'tobe', 1)
+    const cellInP2 = getGutterCell('p2', 'tobe', 3)
+    const orig = document.elementFromPoint
+    // elementFromPoint は cross-panel の cellInP2 を返す → Panel 側で contains 検査に落とされる
+    document.elementFromPoint = (() => cellInP2) as typeof document.elementFromPoint
+    try {
+      await user.pointer([
+        { target: startInP1, keys: '[MouseLeft>]' },
+        { target: cellInP2 },
+        { target: cellInP2, keys: '[/MouseLeft]' },
+      ])
+    } finally {
+      document.elementFromPoint = orig
+    }
+    // p1 の handler は呼ばれるが、target は p1 の単一行 (endNumber 無し) のはず
+    expect(handlersA.openedCalls).toHaveLength(1)
+    expect(handlersA.openedCalls[0].panelId).toBe('p1')
+    expect(handlersA.openedCalls[0].target.endNumber).toBeUndefined()
+    // p2 側のハンドラは呼ばれない
+    expect(handlersB.openedCalls).toHaveLength(0)
   })
 })

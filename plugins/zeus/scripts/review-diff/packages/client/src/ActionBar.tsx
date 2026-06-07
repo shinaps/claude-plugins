@@ -1,19 +1,20 @@
-// 右下の floating action bar。Mark all / Approve / Reject + 進捗カウンタ。
+// 右下の floating action bar (v4.7.0 panel model)。
+// Mark all / Approve / Reject + 進捗カウンタ (panel 単位)。
 // 二重送信防止と confirm ダイアログは App 側に集中させ、ここはコールバックを叩くだけにする。
 
 type Props = {
   reviewedCount: number
-  totalFiles: number
+  totalPanels: number
   onMarkAll: () => void
   onApprove: () => void
   onReject: () => void
 }
 
-export function ActionBar({ reviewedCount, totalFiles, onMarkAll, onApprove, onReject }: Props) {
+export function ActionBar({ reviewedCount, totalPanels, onMarkAll, onApprove, onReject }: Props) {
   return (
     <div className="action-bar" role="toolbar" aria-label="Review actions">
       <span className="progress">
-        {reviewedCount} / {totalFiles} reviewed
+        {reviewedCount} / {totalPanels} reviewed
       </span>
       <button type="button" className="btn" onClick={onMarkAll}>
         Mark all reviewed

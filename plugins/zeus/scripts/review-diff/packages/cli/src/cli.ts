@@ -1,30 +1,51 @@
-// CLI エントリ。Bash ツールから node "$CLI" --summary ... --diff ... [--pr-meta ...] で呼ばれる。
-// 結果は stdout に 1 行の JSON、それ以外のログ (URL、進捗) は stderr へ。
-// なぜ stdout / stderr を厳密に分離するか:
+// CLI エントリ (v4.7.0 panel model)。
+//
+// 呼ばれ方:  node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--channels-enabled]
+//
+// stdout / stderr 分離方針 (継続):
 //   呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
 //   情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
+//
+// v4.7.0 pipeline:
+//   1. validateSummarySchema (zod + legacy 検出): legacy v4.6 は migration メッセージ付きで exit 1
+//   2. parseDiff → FileChange[] (asIs/toBe 別軸の changed lines)
+//   3. collectAllPanelPaths: panel が言及する全 file (asIs.file + toBe.file) + rename oldPath を union
+//   4. collectStagedSources / collectPrSources: 上記 paths の before/after 原文を取得
+//   5. validateCoverage: panel が diff の changed lines を網羅しているか厳格検証 (miss → exit 1)
+//   6. renderPanel: 各 panel を side-by-side RenderedPanel に展開
+//   7. buildHtml: ClientPayload を inline した HTML 生成
+//   8. startServer: Hub サーバ起動。channelsEnabled=true なら active/<sessionId>.json も書き出し
+//   9. waitResult (タイムアウト 9 分) → 結果を stdout に 1 行 JSON で吐く
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import { countLines, getRefKind, type SummaryJson, type ResultJson, type PrMeta, type DisplayRange } from '@zeus/review-diff-shared'
-import { parseDiff, composeHunks, startServer, type SourcesMap } from '@zeus/review-diff-server'
+import type { ResultJson, PrMeta, SummaryJson, Panel } from '@zeus/review-diff-shared'
+import {
+  parseDiff,
+  validateSummarySchema,
+  validateCoverage,
+  formatMissesForStderr,
+  renderPanel,
+  SchemaError,
+  type SourcesMap,
+} from '@zeus/review-diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
 
 const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るため、1 分早めに自爆して整合性を取る
 
-// 隣接 hunk 間の gap がこの行数以下なら、CLI 側で 1 つの表示単位に統合する。
-// 「変更ハンクの間に 5-10 行 unchanged が挟まる」程度なら最初から繋げて見せた方が
-// レビューしやすい (zeus:review-diff の設計哲学: ユーザーに読ませる量を増やさず差分表示の工夫で語る)。
-// 10 行は GitHub PR / Linear の expand behavior に近く、保守的に効く目安。
-const AUTO_BRIDGE_THRESHOLD = 10
-
 // gh api への並列度上限。GitHub の rate limit (authenticated 5000 req/hour) に余裕を残しつつ、
 // N ファイル × 2 (base/head) の blob 取得を現実的な時間で終わらせるための値。
 // 大きすぎると rate limit で 403 が増え、小さすぎると待ち時間が伸びる。経験則で 8。
 const PR_FETCH_CONCURRENCY = 8
+
+// ~/.claude/zeus/review-diffs/active/<sessionId>.json の格納場所。
+// Process A (channel-server.js) はここを 5 秒間隔で走査して生存 session を把握する。
+const ACTIVE_DIR = join(homedir(), '.claude/zeus/review-diffs/active')
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -32,15 +53,41 @@ async function main(): Promise<void> {
       summary: { type: 'string' },
       diff: { type: 'string' },
       'pr-meta': { type: 'string' },
+      // Claude Code Channels 経路を有効化する opt-in フラグ。
+      // research preview なので未指定 (= false) がデフォルト。SKILL.md Phase 5 が
+      // Claude Code v2.1.80+ かつ --dangerously-load-development-channels が利用可能な
+      // 環境でだけ true を渡すように案内する。
+      'channels-enabled': { type: 'boolean', default: false },
     },
   })
 
   if (!values.summary || !values.diff) {
-    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>]\n')
+    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>] [--channels-enabled]\n')
     process.exit(1)
   }
 
-  const summary: SummaryJson = JSON.parse(readFileSync(values.summary, 'utf8'))
+  // 1. summary.json: parse → zod 検証 → legacy detection。
+  //    legacy v4.6 schema は SchemaError + migration メッセージで exit 1。
+  let rawSummary: unknown
+  try {
+    rawSummary = JSON.parse(readFileSync(values.summary, 'utf8'))
+  } catch (e) {
+    process.stderr.write(`failed to parse summary.json: ${e instanceof Error ? e.message : String(e)}\n`)
+    process.exit(1)
+  }
+
+  let summary: SummaryJson
+  try {
+    summary = validateSummarySchema(rawSummary).summary
+  } catch (e) {
+    if (e instanceof SchemaError) {
+      process.stderr.write(e.message + '\n')
+    } else {
+      process.stderr.write(`summary.json validation failed: ${e instanceof Error ? e.message : String(e)}\n`)
+    }
+    process.exit(1)
+  }
+
   const diffText = readFileSync(values.diff, 'utf8')
   const prMeta: PrMeta | null = values['pr-meta']
     ? (JSON.parse(readFileSync(values['pr-meta'], 'utf8')) as PrMeta)
@@ -49,91 +96,92 @@ async function main(): Promise<void> {
   const lineCount = diffText.split('\n').length
   process.stderr.write(`[review-diff] parsing ${lineCount} diff lines (highlight runs in browser)...\n`)
 
-  // なぜ Shiki を CLI 側で呼ばないか:
-  //   GitHub/GitLab と同様にハイライトはクライアントの責務に倒した。
-  //   サーバ/CLI は raw text と language hint だけを ParsedFile に詰める。
-  const files = parseDiff(diffText)
-  const allFiles = files.map((f) => f.path)
+  // 2. diff parse → FileChange[]
+  const changes = parseDiff(diffText)
 
-  // unchanged 行 lazy 展開の有効化判定:
-  //   staged: git show :path / HEAD:path で worktree から原文を取れる
-  //   pr:     gh api 経由で base/head SHA の blob を取得 (pr-meta が必要な情報を持っている場合のみ)
-  // どちらの経路でも sources Map が空 (= /source が 404) になればクライアント側がバナーを
-  // "Expand unavailable" 表示にフォールバックする。
+  // 3. 全 panel が言及する path を union (asIs.file ∪ toBe.file ∪ rename oldPath)。
+  //    rename + 内容変更の panel が asIs.file = oldPath で書かれている時、その oldPath も
+  //    sources 取得対象に入れる必要があるため、changes.oldPath も合流する。
+  const allPanelPaths = collectAllPanelPaths(summary, changes.map(c => c.oldPath).filter(Boolean) as string[])
+
+  // 4. sources 取得
   let expandable = false
   let sources: SourcesMap = new Map()
   if (summary.mode === 'staged' && !prMeta) {
-    sources = collectStagedSources(allFiles)
+    sources = collectStagedSources(allPanelPaths)
     expandable = true
   } else if (summary.mode === 'pr' && prMeta && canFetchPrSources(prMeta)) {
-    const fetched = await collectPrSources(allFiles, prMeta)
+    const fetched = await collectPrSources(allPanelPaths, prMeta)
     if (fetched.size > 0) {
       sources = fetched
       expandable = true
     } else {
-      // gh api が全滅した場合 (gh 未インストール / 認証切れ / rate limit など) はフォールバック。
-      // バナーは出るがクリックしても展開できない、という従来 PR モードの挙動に戻る。
       process.stderr.write('[review-diff] PR source fetch failed entirely; expand will be disabled\n')
     }
   }
 
-  // sources Map (before/after の原文) を握っている場合、after の総行数を ParsedFile.afterTotal に
-  // 注入してクライアント側で「最後の hunk 〜 ファイル末尾」までの unchanged バナーを描画できるようにする。
-  // sources に無い (= 取得失敗 / 削除ファイル) ファイルは afterTotal undefined のままにし、末尾バナーを省く。
-  for (const f of files) {
-    const src = sources.get(f.path)
-    if (!src || !src.after) continue
-    f.afterTotal = countLines(src.after)
+  // 5. coverage 厳格検証。miss があれば stderr に詳細出して exit 1 (AC-3)。
+  const allPanels: Panel[] = summary.groups.flatMap(g => g.panels)
+  const cov = validateCoverage({ changes, panels: allPanels })
+  if (cov.warnings.length > 0) {
+    process.stderr.write(formatMissesForStderr({ ok: true, misses: [], warnings: cov.warnings }) + '\n')
+  }
+  if (!cov.ok) {
+    process.stderr.write(formatMissesForStderr(cov) + '\n')
+    process.exit(1)
   }
 
-  // summary.groups から path → DisplayRange[] のマップを構築。
-  // 同一 path が複数 group / 複数 entry に分散していたら union を取る。
-  // string 形式 (= ファイル全体) や hunks 指定 (= 既存 low-level 指定) は除外、
-  // displayRanges 形式だけを集める。
-  const rangesByPath = collectDisplayRanges(summary)
+  // 6. 各 panel を side-by-side に展開
+  const renderedGroups = summary.groups.map(g => ({
+    title: g.title,
+    description: g.description,
+    panels: g.panels.map(p => renderPanel(p, sources)),
+  }))
 
-  // composeHunks で「表示単位の Hunk 列」に再編する:
-  //   - sources がある file: displayRanges を反映 + 小 gap を auto-bridge
-  //   - sources が無い file: no-op (元の hunks のまま、graceful degrade)
-  const composedFiles = files.map((f) =>
-    composeHunks({
-      file: f,
-      source: sources.get(f.path),
-      displayRanges: rangesByPath.get(f.path),
-      autoBridgeThreshold: AUTO_BRIDGE_THRESHOLD,
-    }),
-  )
+  // 7. channels 設定 + sessionId + token 確定
+  // browserToken は ClientPayload に埋め込むため、startServer に渡す前にここで生成し、
+  // startServer に opts.browserToken として明示的に渡す (同じ token を payload と server で共有)。
+  const channelsEnabled = !!values['channels-enabled']
+  const sessionId = randomBytes(8).toString('hex')
+  const browserToken = randomBytes(32).toString('hex')
+  const channelToken = randomBytes(32).toString('hex')
 
-  // composeHunks 後の hunk 数を集計してログる (デバッグ性)。
-  const counts = composedFiles.reduce(
-    (acc, f) => {
-      for (const h of f.hunks) {
-        const k = h.origin ?? 'changed'
-        acc[k] = (acc[k] ?? 0) + 1
-      }
-      return acc
-    },
-    { changed: 0, 'ai-context': 0, 'auto-bridge': 0 } as Record<string, number>,
-  )
-  process.stderr.write(
-    `[review-diff] composed hunks: changed=${counts.changed} ai-context=${counts['ai-context']} auto-bridge=${counts['auto-bridge']}\n`,
-  )
+  // 8. HTML 生成 + サーバ起動
+  const html = buildHtml({
+    schemaVersion: 1,
+    summary,
+    prMeta,
+    groups: renderedGroups,
+    allPanels: allPanels.map(p => p.panelId),
+    expandable,
+    channelsEnabled,
+    sessionId,
+    browserToken,
+  })
 
-  const html = buildHtml({ summary, prMeta, files: composedFiles, allFiles, expandable })
+  const started = await startServerAndMaybeRegister({
+    html,
+    sources,
+    expandable,
+    channelsEnabled,
+    sessionId,
+    browserToken,
+    channelToken,
+  })
 
-  const { url, waitResult } = await startServer({ html, sources, expandable })
-  process.stderr.write(`[review-diff] URL: ${url}\n`)
+  process.stderr.write(`[review-diff] URL: ${started.url}\n`)
+  if (channelsEnabled) {
+    process.stderr.write(`[review-diff] channels enabled; session=${sessionId}\n`)
+  }
   process.stderr.write(`[review-diff] waiting up to ${TIMEOUT_MS / 1000}s for decision...\n`)
-  openUrl(url)
+  openUrl(started.url)
 
-  const timeoutResult: ResultJson = { decision: 'timeout', reviewedFiles: [], comments: [] }
+  const timeoutResult: ResultJson = { decision: 'timeout', reviewedPanels: [], comments: [] }
   const result: ResultJson = await Promise.race([
-    waitResult(),
+    started.waitResult(),
     new Promise<ResultJson>((r) => setTimeout(() => r(timeoutResult), TIMEOUT_MS)),
   ])
 
-  // result.json は呼び出し側からも参照できるようにディスクにも残しておく (デバッグ性向上)。
-  // 失敗してもパイプ経由の結果伝達自体は途切れないので例外は握り潰す。
   try {
     const resultPath = `${dirname(values.summary)}/result.json`
     writeFileSync(resultPath, JSON.stringify(result, null, 2))
@@ -142,31 +190,90 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(JSON.stringify(result) + '\n')
-  // openUrl で detach した子プロセスや未解放ハンドルでイベントループが残るケースに備え、明示終了。
   setTimeout(() => process.exit(0), 100)
 }
 
-// summary.groups を走査し、各 file への DisplayRange[] を集約する。
-// 同じ path が複数 group / 複数 entry に分かれている場合は素朴に concat (composeHunks 側で
-// sort + merge してくれるので、ここで重複排除する必要は無い)。
-// 判別は shared/getRefKind を通すことで client (App.tsx:buildBuckets) と挙動を統一する (W1)。
-// hunks と displayRanges が併用された不正 ref を検出したら stderr 警告 (I2)。
-function collectDisplayRanges(summary: SummaryJson): Map<string, DisplayRange[]> {
-  const out = new Map<string, DisplayRange[]>()
-  for (const group of summary.groups ?? []) {
-    for (const ref of group.files ?? []) {
-      if (typeof ref !== 'string' && 'hunks' in ref && 'displayRanges' in ref) {
-        process.stderr.write(
-          `[review-diff:compose] WARN: ${ref.path} で hunks と displayRanges が併用されています。displayRanges を優先します。\n`,
-        )
-      }
-      const kind = getRefKind(ref)
-      if (kind.kind !== 'ranges') continue
-      const prev = out.get(kind.path) ?? []
-      out.set(kind.path, [...prev, ...kind.displayRanges])
+// startServer + active/<sessionId>.json の atomic write + cleanup hook をまとめたヘルパ。
+// channelsEnabled=false なら active/ への書き出しは skip し、startServer の戻り値だけ返す。
+async function startServerAndMaybeRegister(params: {
+  html: string
+  sources: SourcesMap
+  expandable: boolean
+  channelsEnabled: boolean
+  sessionId: string
+  browserToken: string
+  channelToken: string
+}): Promise<{ url: string; waitResult: () => Promise<ResultJson> }> {
+  // server を遅延 import するのは esbuild bundle で循環参照を避けるため (cli は server に
+  // 依存するが、server の test 経路で cli を import される副作用回避)。
+  const { startServer } = await import('@zeus/review-diff-server')
+  const started = await startServer({
+    html: params.html,
+    sources: params.sources,
+    expandable: params.expandable,
+    channelsEnabled: params.channelsEnabled,
+    browserToken: params.browserToken,
+    channelToken: params.channelToken,
+  })
+
+  if (params.channelsEnabled) {
+    writeActiveSessionFile(params.sessionId, {
+      sessionId: params.sessionId,
+      pid: process.pid,
+      hubUrl: `http://127.0.0.1:${started.port}`,
+      browserToken: started.browserToken,
+      channelToken: started.channelToken,
+      createdAt: Date.now(),
+    })
+
+    // cleanup hook: 通常終了 / SIGINT / SIGTERM で active/<sessionId>.json を unlink する。
+    // SIGKILL (kill -9) では呼ばれないため、Process A 側で process.kill(pid, 0) による
+    // 生存確認 + 死亡 session の unlink で stale を回収する設計 (channel-server.ts 側)。
+    const cleanup = () => {
+      try { unlinkSync(join(ACTIVE_DIR, `${params.sessionId}.json`)) } catch { /* race OK */ }
+    }
+    process.on('exit', cleanup)
+    process.on('SIGINT', () => { cleanup(); process.exit(130) })
+    process.on('SIGTERM', () => { cleanup(); process.exit(143) })
+  }
+
+  return { url: started.url, waitResult: started.waitResult }
+}
+
+// atomic write: 同ディレクトリの hidden tmp ファイルに書き出してから rename する。
+// rename は同一ファイルシステム内で atomic に振る舞うため、Process A が走査中に
+// 途中 write の half-written JSON を読む事故が起きない。
+function writeActiveSessionFile(sessionId: string, env: {
+  sessionId: string
+  pid: number
+  hubUrl: string
+  browserToken: string
+  channelToken: string
+  createdAt: number
+}): void {
+  mkdirSync(ACTIVE_DIR, { recursive: true })
+  const finalPath = join(ACTIVE_DIR, `${sessionId}.json`)
+  const tmpPath = join(ACTIVE_DIR, `.${sessionId}.json.tmp`)
+  writeFileSync(tmpPath, JSON.stringify(env, null, 2))
+  renameSync(tmpPath, finalPath)
+}
+
+// 全 panel が言及する file path を集約。asIs.file + toBe.file + rename oldPath を union。
+//   - asIs.file: deletion 軸のレンダリングに必要 (rename の場合は oldPath とほぼ同義)
+//   - toBe.file: addition 軸のレンダリングに必要
+//   - changeOldPaths: rename 時の oldPath。AI が asIs.file = newPath と書いてしまった場合でも
+//                     before 原文を取得しておく必要があるため (coverage-validator が rename サジェスト
+//                     を出すケースで sources を表示できるように)
+function collectAllPanelPaths(summary: SummaryJson, changeOldPaths: string[]): string[] {
+  const set = new Set<string>()
+  for (const g of summary.groups) {
+    for (const p of g.panels) {
+      if (p.asIs) set.add(p.asIs.file)
+      if (p.toBe) set.add(p.toBe.file)
     }
   }
-  return out
+  for (const op of changeOldPaths) set.add(op)
+  return [...set]
 }
 
 // staged モード: 各ファイルの「現在 index にある内容 (after)」と「HEAD の内容 (before)」を
@@ -190,10 +297,7 @@ function gitShow(ref: string): string {
 }
 
 // PR モード: gh api 経由で base/head SHA の blob を取得して sources Map を作る。
-// ファイル数 × 2 (before/after) 回の API call が走るので、rate limit と所要時間のバランスを
-// 取るため PR_FETCH_CONCURRENCY で並列化する。失敗 (新規ファイルで base に無い、削除ファイルで
-// head に無い、API エラー) はその側を空文字列にして fallback、上位 expandable 判定で全滅時のみ
-// バナーをクリック不可にする。
+// 経路自体は v4.6 から変更なし (収集対象 path だけが allPanelPaths に変わる)。
 function canFetchPrSources(prMeta: PrMeta): boolean {
   return Boolean(prMeta.baseRefOid && prMeta.headRefOid && prMeta.headRepository?.nameWithOwner)
 }
@@ -208,8 +312,6 @@ async function collectPrSources(paths: string[], prMeta: PrMeta): Promise<Source
   )
 
   const out: SourcesMap = new Map()
-  // 並列度 PR_FETCH_CONCURRENCY で chunk 実行。Promise.all で一斉投入し続けるより、
-  // chunk 区切りの方が gh CLI の同時 spawn 数を抑えやすい (子プロセスが重いので)。
   for (let i = 0; i < paths.length; i += PR_FETCH_CONCURRENCY) {
     const chunk = paths.slice(i, i + PR_FETCH_CONCURRENCY)
     const results = await Promise.all(
@@ -222,9 +324,6 @@ async function collectPrSources(paths: string[], prMeta: PrMeta): Promise<Source
       }),
     )
     for (const r of results) {
-      // before / after 両方空 = この path は API 全滅。それでも Map に入れておくと
-      // /source エンドポイントは 400 (range out of bounds) を返すだけになるが、
-      // それより 404 を返した方が UI が "Expand unavailable" を出せて挙動が一貫する。
       if (r.before === '' && r.after === '') continue
       out.set(r.path, { before: r.before, after: r.after })
     }
@@ -236,10 +335,6 @@ async function collectPrSources(paths: string[], prMeta: PrMeta): Promise<Source
 }
 
 function fetchPrBlob(repoNameWithOwner: string, sha: string, path: string): Promise<string> {
-  // gh api -H "Accept: application/vnd.github.raw" /repos/{owner}/{repo}/contents/{path}?ref={sha}
-  // raw media type を要求することで GitHub Contents API が JSON ラッパー無しの生バイトを返す。
-  // path はクエリではなく URL path 要素なので encodeURIComponent 不可 ('/' を保持したい)。
-  // 代わりに各セグメントだけエンコードする。
   const encodedPath = path.split('/').map(encodeURIComponent).join('/')
   const args = [
     'api',
@@ -251,11 +346,9 @@ function fetchPrBlob(repoNameWithOwner: string, sha: string, path: string): Prom
     const child = spawn('gh', args, { stdio: ['ignore', 'pipe', 'ignore'] })
     const chunks: Buffer[] = []
     child.stdout.on('data', (d: Buffer) => chunks.push(d))
-    child.on('error', () => resolve('')) // gh 未インストール等
+    child.on('error', () => resolve(''))
     child.on('close', (code) => {
       if (code !== 0) {
-        // 新規ファイル → base 側で 404、削除ファイル → head 側で 404 が頻発するため、
-        // エラーログは出さず空文字列で素直に fallback する (上位で sources の空判定)。
         resolve('')
         return
       }

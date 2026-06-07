@@ -1,6 +1,6 @@
 ---
 name: review-diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 UI でブラウザに開き、ファイル単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。Approve なら commit に進み、Reject ならコメント反映 → 修正後に Skill ツールで自動再起動。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
+description: 直前の staged diff または既存 PR の diff を Linear 風 UI でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。v4.7.0 から panel ベース schema + Claude Code Channels による group 単位の in-place 再生成 (research preview) に対応。Approve なら commit に進み、Reject ならコメント反映 → 修正後に Skill ツールで自動再起動。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
 argument-hint: <なし | PR番号>
 ---
 
@@ -8,7 +8,14 @@ argument-hint: <なし | PR番号>
 
 `/zeus:review` が **観点別の機械レビュー** (security/logic/performance 等を AI に分析させる) なのに対し、
 このスキルは **人間が目で見て最終承認する** ためのゲートです。
-diff を Linear 風のローカル UI で開き、ファイル単位 Reviewed チェック + 自由コメント + Approve/Reject を返してもらいます。
+diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェック + 自由コメント + Approve/Reject を返してもらいます。
+
+**v4.7.0 で `panel` ベースに作り変えました**。1 つの「変更の意味的単位 = panel」が:
+- `intent` (どんな意図の変更か、1 行)
+- `asIs` (変更前: ファイル + 行範囲集合)
+- `toBe` (変更後: ファイル + 行範囲集合)
+
+を持つ最小ユニットになっています。git の hunk より粗くも細かくもなれ、cross-file 移動も 1 panel で表現できます。
 
 ## 引数仕様と動作モード
 
@@ -34,8 +41,6 @@ diff を Linear 風のローカル UI で開き、ファイル単位 Reviewed �
 ```
 
 **Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
-1 セッション内で人間ゲートを担うだけなので disk persistence は不要であり、
-work-dir を Phase 6 でまるごと削除できるよう設計を単純化した。
 
 `slug` の決め方:
 - staged モード: 変更ファイル名から代表的な 1〜2 個を kebab-case で繋ぐ
@@ -49,9 +54,9 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 
 ## 動作原則
 
-- **summary.json は必ず Write ツールで作成する** (Bash heredoc 禁止: `$` 展開や引用符のエスケープ事故を避けるため)
+- **summary.json は必ず Write ツールで作成する** (Bash heredoc 禁止: `$` 展開や引用符のエスケープ事故を避ける)
 - **git add / git commit / git push は必ず別実行で 1 コマンドずつ** (CLAUDE.md ルール)
-- **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」(rejectCount はメインエージェントの会話メモリで管理。ファイル永続化はしない)
+- **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
 - **CLI タイムアウトは 9 分** (Bash ツール 10 分制約のため)
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
@@ -83,6 +88,27 @@ if git diff --cached --quiet; then
 fi
 ```
 
+#### Claude Code Channels (v4.7.0 新機能、research preview) 利用判定
+
+v4.7.0 から **Claude Code Channels** を使った "group 単位の in-place 再生成" がオプションとして利用可能です。
+ブラウザの context+/- ボタンで「この group の context をもっと広げて / 狭めて」とリクエストを送ると、
+Claude Code 親エージェントに通知が届いて panels を再生成し、ブラウザの同じ位置に上書き反映されます。
+
+利用条件 (どれか欠ければ degrade fallback):
+1. **Claude Code v2.1.80+** (`claude --version` で確認)
+2. 起動時に **`--dangerously-load-development-channels server:review-diff`** フラグを指定
+3. Team / Enterprise 環境では組織管理者によるオプトインが必要 (research preview の制約)
+
+利用条件チェック (node のワンライナで semver 比較する。bash の string compare はバグりやすい):
+
+```bash
+CC_VERSION=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+CHANNELS_OK=$(node -e "const v='$CC_VERSION'.split('.').map(Number); process.stdout.write(v.length===3 && (v[0]>2 || v[0]===2 && (v[1]>1 || v[1]===1 && v[2]>=80)) ? '1' : '')")
+```
+
+`CHANNELS_OK=1` なら Phase 5 で `--channels-enabled` を立てて CLI を起動する。
+そうでなければ Channels なしで CLI を起動し、UI 上の context+/- ボタンは **disabled + tooltip 表示** で degrade される (機能は無効化されるが UI は問題なく動作する)。
+
 ### Phase 2: 作業ディレクトリ + CLI パス解決
 
 ```bash
@@ -98,16 +124,20 @@ mkdir -p "$WORK_DIR"
 # 通常のユーザーは marketplace キャッシュ配下の dist/cli.js を使う。
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 REPO_CLI="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/cli.js"
+REPO_CHANNEL="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/channel-server.js"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
   CLI="$REPO_CLI"
+  CHANNEL_SERVER="$REPO_CHANNEL"
 else
   # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で zeus プラグインを ls で探す。
   # owner 名 (cache/<owner>/) は glob で抽象化: marketplace fork や別 owner の配布にも対応するため
   # ハードコードしない。同名 zeus が複数 owner にある場合は最終更新を ls -td で採用。
   ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/*/zeus/*/ 2>/dev/null | head -1)
   CLI="${ZEUS_DIR}scripts/review-diff/dist/cli.js"
+  CHANNEL_SERVER="${ZEUS_DIR}scripts/review-diff/dist/channel-server.js"
 fi
 [ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
+# CHANNEL_SERVER は Channels 利用時にのみ必要。無くても Phase 5 は --channels-enabled なしで起動できる。
 ```
 
 ### Phase 3: diff 取得
@@ -132,10 +162,9 @@ CLI は `gh api` 経由で base/head SHA の blob を取得して `/source` エ�
 これらフィールドが無い場合は従来通り「Expand unavailable」表示にフォールバックする。
 
 **注意 (GitHub rate limit)**: 1 ファイルあたり 2 回 (`base` + `head`) の `gh api` 呼び出しが走る。
-authenticated rate limit は 5000 req/hour なので通常のレビューで枯渇する心配は無いが、
-巨大 PR (数百ファイル) を短時間に何本もレビューする場合は気にする。
+authenticated rate limit は 5000 req/hour なので通常のレビューで枯渇する心配は無い。
 
-### Phase 4: サマリ JSON 生成 (Write ツール強制)
+### Phase 4: サマリ JSON 生成 (Write ツール強制) — v4.7.0 panel スキーマ
 
 1. `diff.patch` を Read で読み込み内容を把握する
 2. pr モードなら `pr-meta.json` も Read
@@ -144,72 +173,102 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 #### 設計哲学 (最重要)
 
 このツールは **AI (= 君) が人間レビュアーに「自分が何をしたか」を引き渡すためのチャネル** である。
-レビュアーの読む量を増やすのではなく、**diff の表示そのものを工夫して意味が立ち上がる** ようにする。
+レビュアーの読む量を増やすのではなく、**panel の境界と並び順で意味が立ち上がる** ようにする。
 
 具体的には:
 - `overallSummary` は **長文で説明しない**。1〜3 文の総括だけ。
 - 各 group の `description` も **1〜2 文の短い枠組み説明** に留める。「何を読めば良いか」を解説しない。
-- **AI が伝えるべき情報は、ファイル / 範囲 / 順序 で表現する**:
-  - どの group にどのファイルが入るか → 論理的な塊
-  - 各 group / file 内の順序 → ストーリー順 (因果 / 抽象→具象)
-  - `displayRanges` で見せる範囲 → 「変更だけでなく文脈ごと見せたい論理単位」
+- **AI が伝えるべき情報は、panel の切り方 / 順序 / intent 文 で表現する**:
+  - 1 group = 1 つの「章」、その中の panels = 「節」の感覚
+  - `intent` は 1 行で、その panel が「何を意図した変更か」を素直に書く (実装の説明ではなく **意図** を書く)
+  - `asIs` / `toBe` の `ranges` で「変更だけでなく文脈ごと見せたい論理単位」を切り取る
 - 「ここをレビューしてほしい」「ここはリスク高」のような **人間に向けた注釈テキストは書かない**。
-  そういう情報はコード自体で語れていなければならない。AI 自身が「読ませないと伝わらない」と
-  感じたら、コードのコメント / コミットメッセージ / 構造で伝わるよう実装し直す。
+  そういう情報はコード自体で語れていなければならない。
 
 #### スキーマ
 
 ```json
 {
+  "schemaVersion": 1,
   "mode": "staged",
   "pr": null,
   "overallSummary": "1〜3 文の総括 (Markdown 可、長文禁止)",
   "groups": [
     {
-      "title": "グループタイトル (例: UI 改修)",
-      "description": "1〜2 文の枠組み説明",
-      "files": [
-        "src/foo.ts",
-        { "path": "src/bar.ts", "hunks": [0, 2] },
-        { "path": "src/baz.ts", "displayRanges": [{ "start": 40, "end": 95 }] }
+      "title": "型刷新",
+      "description": "panel スキーマ導入",
+      "panels": [
+        {
+          "panelId": "types-asis-tobe",
+          "intent": "DisplayRange を panel ベースに置換",
+          "asIs": {
+            "file": "packages/shared/src/types.ts",
+            "ranges": [{ "start": 70, "end": 110 }]
+          },
+          "toBe": {
+            "file": "packages/shared/src/types.ts",
+            "ranges": [{ "start": 70, "end": 130 }]
+          }
+        }
       ]
     }
   ]
 }
 ```
 
-`files[]` の 3 形式:
-- **string** — ファイル全体を含める
-- **`{ path, hunks: number[] }`** — parse-git-diff の chunk index で範囲指定 (low-level, 後方互換)
-- **`{ path, displayRanges: DisplayRange[] }`** — **推奨**。after 行範囲で「ここを見せて」と意味的に指示
-  - `DisplayRange = { start, end }` で 1-based, inclusive
-  - 変更行を含まなくてもよい (= 関数全体を context として見せられる)
-  - 既存 hunk と被ったら CLI 側で自動 union
-  - 隣接 hunk / displayRange の gap が ≤10 行なら **CLI が自動で繋ぐ** (auto-bridge)。
-    小さい gap のために `displayRanges` を書く必要は無い。
-- displayRanges と hunks は **排他**: 同じファイルに両方書かない。
+- `schemaVersion` は **必ず `1`** (CLI が legacy v4.6 schema を detect すると stderr に migration メッセージを出して exit 1 する)
+- `panels[]` は **最低 1 つ**
+- 各 `panel` は `asIs` か `toBe` の **少なくとも一方** が必須 (両方欠落不可)
 
-#### displayRanges を使う判断軸
+#### panel の切り方
 
-「変更行だけ見せて意味が通るか?」を 1 ファイルごとに自問する。
+- **関数 / 論理ブロック境界まで広げる**: 関数の途中で切らない。長すぎる関数 (>200 行) のみ例外的に途中分割
+- **同一 file でも intent が違えば別 panel**: 「型定義の更新」と「型を使う側の修正」が同じ file にあっても別 panel
+- **cross-file 移動**: `foo()` を `a.ts` → `b.ts` に移動なら `asIs.file=a.ts`, `toBe.file=b.ts` で 1 panel
+- **cross-file 異言語** (`.js` → `.ts` 移行など) も OK: CLI が両側別言語で syntax highlight する
+- **asIs だけ / toBe だけ を恐れない**: 純粋追加・純粋削除も明示的に 1 panel
+- **context-only panel も OK**: 不変だが説明に必要な領域 (= ranges が変更行を含まなくてもよい)
 
-- 通るなら → string か hunks のまま
-- 通らないなら → **そのファイルだけ Read** して関数 / 論理単位の境界を取り、displayRanges を作る
+#### 1 変更 = 1 intent (discourage rule)
 
-判断軸:
-- changed lines が ≤ 5 で diff の context (-U3) 内に関数シグネチャが見えない → Read 推奨
-- hunk が関数の真ん中で唐突に始まっている → Read 推奨
-- 1 ファイルに散在する小さい hunk が同じ class / 同じ概念 → まとめて 1 つの displayRange に
-- リネームのみ / フォーマットのみ → Read 不要、現状通り
-- **全ファイル Read は禁止**: 大規模 PR でトークンが爆発する
+同じ `asIs` 範囲を複数 panel で参照することは **許容するが推奨しない**。1 つの変更に対し 1 つの intent を割り当てる。
+複数 panel で参照したい場合は CLI 側で panelId 重複を検出して自動で `-1`, `-2` の suffix を付ける (失敗にはしない)。
 
-#### 順序の使い方 (AI のもう 1 つの語り口)
+#### panelId の規約
 
-UI は summary.json の `groups` 順 / `files` 順 / hunk 順 を **そのまま** 表示する。
+- **省略可**: 書かないと CLI がコンテンツ hash (`asIs` + `toBe` のみを対象、`intent` は除外) で `p-<hex10>` を自動生成
+- intent を hash 対象から外しているため、context+/- 再生成で intent を書き直しても **panelId は不変**。draft コメントや Reviewed state が維持される
+- **安定性を取りたいなら明示**: `"refactor-foo-helper"` のような短い意味のある ID を書く
+- 使える文字: `^[A-Za-z0-9 _-]+$` (英数字 + 空白 + アンダースコア + ハイフン)。空白は CLI が `-` に自動正規化
+- 同じ ID を 2 つの panel に付けると CLI が自動で `-1`, `-2` の suffix を付ける (warn は出ない)
+
+#### 網羅性厳格 (AC-3)
+
+全 panel の `asIs.ranges` (before 軸) / `toBe.ranges` (after 軸) を union したものが、
+`git diff` の **変更行集合** を完全に包含していないと **CLI が non-zero で exit する**。
+stderr に漏れたファイル + 行範囲 + (rename 時には) 修正提案が表示される。
+
+```
+Coverage validation failed. The following changes are not carried by any panel:
+  packages/foo/bar.ts [toBe]: 12-15, 22
+  packages/foo/old.ts [asIs]: 10-25
+    ↳ This file was renamed from "packages/foo/old.ts" to "packages/foo/new.ts".
+      Did you mean to set asIs.file = "packages/foo/old.ts" and toBe.file = "packages/foo/new.ts"?
+
+Fix: extend asIs.ranges / toBe.ranges (or add a panel covering the file) in summary.json.
+```
+
+注意点:
+- **rename + 内容変更** の panel は `asIs.file = oldPath`, `toBe.file = newPath` で書く (asIs/toBe を逆に書くと rename サジェストが出る)
+- **binary / rename-only / mode-only** 変更は「ファイル言及だけ」検証される (行 ranges は不要)
+- **EOL-only 変更** (末尾改行のみ) は warn が出るが fail しない (実用上意味がない粒度)
+
+#### 順序の使い方
+
+UI は summary.json の `groups[]` 順 / 各 group 内の `panels[]` 順 を **そのまま** 表示する。
 順序自体が AI からのナラティブ:
 - group は「読むべき順番」で並べる (抽象 → 具象、原因 → 結果、コア → 周辺)
-- 同じ group 内では「最初に読むべきファイル」を先頭に
-- 同じファイル内では現状 hunk は git diff 順 (変更しない)
+- 同じ group 内では「最初に読むべき panel」を先頭に
 
 pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのまま入れる。
 
@@ -218,26 +277,80 @@ pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのま�
 Bash 同期実行 (timeout 600000ms = 10 分):
 
 ```bash
+# CHANNELS_OK は Phase 1 で判定済みのフラグ ('1' or 空)
+EXTRA_FLAGS=""
+if [ -n "$CHANNELS_OK" ]; then
+  EXTRA_FLAGS="--channels-enabled"
+fi
+
 if [ -n "$PR_META" ]; then
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json"
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json" $EXTRA_FLAGS
 else
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch"
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" $EXTRA_FLAGS
 fi
 ```
 
+CLI の挙動:
 - macOS では `open` が自動で立ち上がりブラウザに UI が出る
-- CLI stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、
-  ブラウザが開かない環境ではこの URL を案内する
+- stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
 - CLI 内部タイムアウトは 9 分 (Bash の 10 分より 1 分早く自爆して整合性を取る)
 - 終了時に stdout に **1 行の JSON** が出る:
-  `{"decision":"approve"|"reject"|"timeout","reviewedFiles":[...],"comments":[...]}`
-- `comments[]` の各要素は以下のいずれか:
-  - `{ "file": null, "body": "..." }`                              — 全体コメント
-  - `{ "file": "path/to/foo.ts", "body": "..." }`                  — ファイル単位コメント
-  - `{ "file": "path/to/foo.ts", "body": "...", "line": { "side": "left"|"right", "number": 42 } }` — 単一行コメント
-  - `{ "file": "path/to/foo.ts", "body": "...", "line": { "side": "left"|"right", "number": 42, "endNumber": 58 } }` — 行範囲コメント (number〜endNumber、両端含む)
-  - `endNumber` は range の場合のみ含まれる。単一行は `endNumber` フィールドそのものが省略される (number === endNumber を含めない)
-  - `side` は side-by-side diff の左/右に対応。`left` = before、`right` = after / context
+  `{"decision":"approve"|"reject"|"timeout","reviewedPanels":[...],"comments":[...]}`
+
+#### Channels (--channels-enabled 時) の追加動作
+
+`--channels-enabled` で起動した時のみ、CLI は:
+1. 32 byte の `browserToken` / `channelToken` を生成して in-memory に保持
+2. `~/.claude/zeus/review-diffs/active/<sessionId>.json` に session 情報を atomic write (`{ sessionId, pid, hubUrl, browserToken, channelToken, createdAt }`)
+3. プロセス終了時 (exit / SIGINT / SIGTERM) に上記ファイルを unlink (SIGKILL では消えないが、Process A 側の `process.kill(pid, 0)` 生存確認で stale が回収される)
+
+ブラウザ側 (UI):
+- context+/- ボタンが活性化される (上記条件が揃わなければ disabled + tooltip)
+- ボタン押下で `/feedback` POST → SSE 経由で Claude Code 親エージェントに通知
+- Claude 側で再生成された panels が `/channel/inbox` 経由で SSE プッシュされ、当該 group の panels が in-place 差し替わる
+
+#### Channels MCP server (Process A) の起動
+
+ユーザーは Claude Code 起動時に **以下のフラグを 1 度だけ指定** すれば、以降全 session で Process A が走り続けます:
+
+```bash
+claude --dangerously-load-development-channels server:review-diff:"$CHANNEL_SERVER"
+```
+
+`$CHANNEL_SERVER` は Phase 2 で解決した `dist/channel-server.js` の絶対パス。
+このフラグなしで `--channels-enabled` 付きで CLI を起動した場合、ブラウザは Channels 経路が無いことを open 状態で error として検知し、ボタンを disabled + "Channel disconnected" tooltip にフォールバックします (機能停止のみ、UI は動作)。
+
+#### research preview の制約
+
+Claude Code Channels は **research preview** の機能であり、以下の制約があります:
+
+1. Claude Code **v2.1.80 以降** が必須
+2. 起動時に `--dangerously-load-development-channels` フラグが必要 (恒久 enable には別途設定が必要になる予定)
+3. Team / Enterprise plan では **組織管理者の opt-in** が必要 (個人 plan では制約なし)
+4. プロトコル仕様は予告なく変わる可能性があり、本スキルが将来追従できない可能性がある
+
+これらを許容できない場合は `--channels-enabled` なしで起動して旧来の動作 (Reject → 修正 → 再起動) で運用してください。
+
+#### Comment / Result shape (v4.7.0)
+
+`comments[]` の各要素は scope union 構造:
+- `{ "body": "...", "scope": { "type": "overall" } }` — 全体コメント
+- `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42 } }` — 単一行コメント
+- `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42, "endLine": 58 } }` — 行範囲コメント
+
+ResultJson 全体:
+```json
+{
+  "decision": "approve" | "reject" | "timeout",
+  "reviewedPanels": ["panel-id-1", "panel-id-2"],
+  "comments": [ /* 上記 shape */ ]
+}
+```
+
+注意:
+- `reviewedFiles` (旧) ではなく **`reviewedPanels`** (新)。記録単位が file → panelId に変わった
+- 行コメントの side は **`asIs` / `toBe`** (camelCase)。旧 `left` / `right` ではない
+- 行コメントの `file` は panel の対応する側 (`asIs.file` または `toBe.file`) を自動で入れる
 
 ### Phase 6: 結果分岐
 
@@ -252,11 +365,10 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
   ```bash
   rm -rf "$WORK_DIR"
   ```
-  result.json / summary.json / diff.patch / pr-meta.json 全て不要になっているため。
 
 #### reject
 
-1. **rejectCount をメインの会話メモリで +1** (state.json は使わない)。初回 reject なら 1、2 回目なら 2…
+1. **rejectCount をメインの会話メモリで +1** (state.json は使わない)
 2. UI で集めた `comments` 配列をユーザーに提示し、どの指摘を反映するか合意を取る
 3. `rejectCount >= 3` の場合は **必ず `AskUserQuestion`** で「このまま続行 / 中止 / 方針見直し」を聞く
 4. 修正実装を行う (大きい変更なら `/zeus:dev` への橋渡しを提案)
@@ -264,7 +376,6 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
    ```bash
    rm -rf "$WORK_DIR"
    ```
-   再起動された Skill は新しい WORK_DIR を Phase 2 で作るので、古い work-dir を残す必要はない。
 6. `Skill('zeus:review-diff', args)` で自動再起動
    - staged モードなら args は空
    - pr モードなら同じ PR 番号を渡す
@@ -273,8 +384,8 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
 #### timeout
 
 `AskUserQuestion` で次のアクションを確認:
-- 再 review (もう一度 CLI を起動) → **work-dir はそのまま残す** (次の review で同じ diff を使う可能性があるため)
-- 修正したい点を聞いてから再開 → 修正後の判断に従う (再 review なら残す / 終了なら削除)
+- 再 review (もう一度 CLI を起動) → **work-dir はそのまま残す**
+- 修正したい点を聞いてから再開 → 修正後の判断に従う
 - 終了 → **work-dir をクリーンアップ**:
   ```bash
   rm -rf "$WORK_DIR"
@@ -282,5 +393,5 @@ stdout の JSON をパースして分岐する。CLI 側で `${WORK_DIR}/result.
 
 ## 不明点があれば AskUserQuestion で聞く
 
-`description` / `groups` の切り方、commit メッセージの prefix、reject 時の修正範囲など、
+`description` / `groups` の切り方、`panel` の境界、`intent` 文言、commit メッセージの prefix、reject 時の修正範囲など、
 判断に迷ったら遠慮なく `AskUserQuestion` で選択肢提示形式で確認すること。

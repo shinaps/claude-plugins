@@ -1,33 +1,14 @@
-// shared 型定義。client/server/cli 全てが import する。
+// shared 型定義 (v4.7.0 panel model 完全版)。client/server/cli/channel 全てが import する。
 // server-only の SourcesMap / FileSource は packages/server/src/server.ts 内で別途定義。
 
-export type SummaryJson = {
-  mode: 'staged' | 'pr'
-  pr: PrMeta | null
-  overallSummary: string
-  groups: Group[]
-}
+// =====================================================================
+// 基本型
+// =====================================================================
 
-// 意味的レビュー範囲指定。after ファイル (= 変更後) の行番号で範囲を指定する。
-// changed 行を含むかどうかは問わない: range が hunk と被ったら自動で包含、被らなければ
-// 「AI が文脈として見せたい unchanged 範囲」として展開される。範囲は inclusive, 1-based。
+export type Side = 'asIs' | 'toBe'
+
+// 1-based / inclusive。SummaryJson.groups[].panels[].asIs/toBe.ranges の要素型。
 export type DisplayRange = { start: number; end: number }
-
-// 1 ファイルが複数の目的にまたがる場合、Group ごとに該当範囲だけを表示できるよう union 型にしてある。
-//   - string: ファイル全体を含める
-//   - { path, hunks: [...] }: parse-git-diff の chunk index で範囲指定 (low-level, 後方互換)
-//   - { path, displayRanges: [...] }: after 行範囲で「ここを見せて」と AI が意味的に指示 (推奨)
-// displayRanges と hunks の併用は不可。両方ある場合は displayRanges を優先する。
-export type GroupFileRef =
-  | string
-  | { path: string; hunks: number[] }
-  | { path: string; displayRanges: DisplayRange[] }
-
-export type Group = {
-  title: string
-  description: string
-  files: GroupFileRef[]
-}
 
 export type PrMeta = {
   number: number
@@ -46,74 +27,138 @@ export type PrMeta = {
   changedFiles?: number
 }
 
-// レビュー UI が収集するコメント。
-// 後方互換:
-//   - file === null && line 無し                       → overall コメント
-//   - file !== null && line 無し                       → ファイル全体に対するコメント
-//   - file !== null && line.number のみ                → 単一行コメント
-//   - file !== null && line.number + line.endNumber    → 行範囲コメント (number <= endNumber)
+// =====================================================================
+// Panel schema
+// =====================================================================
+
+export type PanelSide = {
+  file: string
+  ranges: DisplayRange[]
+}
+
+// Panel = as-is/to-be ペアを 1 つ表現する最小単位。
+// asIs か toBe の少なくとも一方は必須 (validateSummarySchema 側で refine 検証)。
+// panelId は AI 指定 or CLI が sha1({asIs, toBe}).slice(0,10) で自動生成する。
+//   - intent を hash 対象に含めないのは、context+/- 再生成で intent 文を書き直しても
+//     asIs/toBe が同じなら panelId が不変であることを保証するため (コメント / draft 維持)。
+export type Panel = {
+  panelId: string
+  intent: string
+  asIs?: PanelSide
+  toBe?: PanelSide
+}
+
+export type Group = {
+  title: string
+  description: string
+  panels: Panel[]
+}
+
+export type SummaryJson = {
+  schemaVersion: 1
+  mode: 'staged' | 'pr'
+  pr: PrMeta | null
+  overallSummary: string
+  groups: Group[]
+}
+
+// =====================================================================
+// Comment / Result
+// =====================================================================
+
+// v4.7.0 Comment shape (scope union 化、null マジック値撤廃)。
+//   - scope: { type: 'overall' }  → オーバーオールコメント
+//   - scope: { type: 'line', ... } → panel 内の行 (または範囲) コメント
+//     file を併記する理由は、grep で `jq '.comments[] | select(.scope.file=="x.ts")'` を
+//     1 段引きできるようにするため + cross-file panel で side だけだとどの file の行か
+//     逆引きが必要になるため。
 export type Comment = {
-  file: string | null
   body: string
-  line?: { side: 'left' | 'right'; number: number; endNumber?: number }
+  scope:
+    | { type: 'overall' }
+    | {
+        type: 'line'
+        panelId: string
+        side: Side
+        file: string
+        line: number
+        endLine?: number
+      }
 }
 
 export type ResultJson = {
   decision: 'approve' | 'reject' | 'timeout'
-  reviewedFiles: string[]
+  reviewedPanels: string[]
   comments: Comment[]
 }
 
-// 重要な変更: server から Shiki を撤去したため、
-// row.{left,right}.html (シンタックスハイライト済み HTML) ではなく raw (生コード文字列) を保持。
-// client 側で Shiki により codeToHtml を呼んでレンダリング時にハイライトする。
+// =====================================================================
+// レンダリング中間表現 (CLI → ブラウザ payload)
+// =====================================================================
+
 export type SideBySideRow = {
-  left: { type: 'context' | 'deletion' | 'empty'; line?: number; raw: string }
-  right: { type: 'context' | 'addition' | 'empty'; line?: number; raw: string }
+  asIs: { type: 'context' | 'deletion' | 'empty'; line?: number; raw: string }
+  toBe: { type: 'context' | 'addition' | 'empty'; line?: number; raw: string }
 }
 
-// 「この Hunk がどう生まれたか」の出自。UI は origin に応じて視覚処理を変える:
-//   - 'changed': 通常の差分 hunk (一番強調)
-//   - 'ai-context': AI が displayRanges で「文脈として見せる」と指定した範囲
-//   - 'auto-bridge': hunk 間の小さい gap (≤ threshold) を埋めるための自動展開
-// origin 省略時は 'changed' とみなす (後方互換)。
-export type HunkOrigin = 'changed' | 'ai-context' | 'auto-bridge'
-
-// parse-git-diff の chunk 単位。oldStart/newStart は 1-based の元ファイル行番号。
-// unchanged-lines バナーから「次の hunk まで何行 unchanged を fetch すべきか」を
-// 計算するため、新旧両方の開始行と長さをそのまま持っておく。
-export type Hunk = {
-  index: number               // 表示単位順の番号 (composeHunks 後で再採番)。0-based
-  oldStart: number
-  oldLines: number
-  newStart: number
-  newLines: number
+export type RenderedSegment = {
+  asIsRange?: DisplayRange
+  toBeRange?: DisplayRange
   rows: SideBySideRow[]
-  origin?: HunkOrigin
 }
 
-export type ParsedFile = {
-  path: string
-  oldPath?: string
-  status: 'added' | 'deleted' | 'modified' | 'renamed' | 'binary'
-  language: string
-  additions: number
-  deletions: number
-  totalLines: number          // 全 hunks の rows 数合計
-  hunks: Hunk[]
-  // after 側 (= 新ファイル) の総行数。最後の hunk の末尾 〜 ファイル末尾までの unchanged 行範囲を
-  // バナー化するために必要。取得失敗 / 削除ファイル / sources 取得失敗時は undefined のままにし、
-  // クライアント側は末尾バナーを省略する。
-  afterTotal?: number
+export type RenderedPanel = Panel & {
+  // cross-file の異言語ペア (例: .js → .ts) をハイライトするため asIs/toBe 別持ち。
+  // unified モードでは toBeLanguage を優先 (新コードを正しく見せたい意図)、split モードは左右で別言語。
+  asIsLanguage?: string
+  toBeLanguage?: string
+  segments: RenderedSegment[]
+  asIsTotal?: number
+  toBeTotal?: number
 }
 
-// React アプリ側が <script id="payload"> から JSON.parse で受け取るペイロード。
 export type ClientPayload = {
+  schemaVersion: 1
   summary: SummaryJson
   prMeta: PrMeta | null
-  files: ParsedFile[]
-  allFiles: string[]
-  // staged モードなら true (CLI が git show でファイル原文を保持しているので /source 経由で
-  // unchanged 行を遅延展開できる)。PR モードでは fallback (バナーは表示するがクリック不可)。
+  groups: Array<{ title: string; description: string; panels: RenderedPanel[] }>
+  // 全 panel の panelId を flatten (App.tsx の Reviewed 集計 / nav 用)
+  allPanels: string[]
+  // staged モードなら true。PR モードで gh CLI 経由で base/head blob が取れたら true。
   expandable: boolean
+  // Claude Code Channels 経由の context+/- が利用可能か。CLI が --channels-enabled で受けて
+  // template に流す。false なら client は context+/- ボタンを disabled で描画する。
+  channelsEnabled: boolean
+  // この CLI process を識別する短い hex ID。~/.claude/zeus/review-diffs/active/<sessionId>.json
+  // のファイル名と一致する。channel-server.js が SSE 購読を session ごとに分離するために使う。
+  sessionId: string
+  // browser → Hub (POST /feedback、GET /events/browser) で使う token。
+  // 既存の /, /source, /result 用 token とは別 token (channels endpoint だけ独立 token)。
+  // channelsEnabled=false でも文字列が入る (空文字)。
+  browserToken: string
+}
+
+// =====================================================================
+// Channels feedback / panels-updated events
+// =====================================================================
+
+// useChannelSSE → /feedback POST → eventBus.publish('feedback-sent') で流すペイロード。
+// currentRanges は Claude Code が context+/- の意味 (今どこを見せている → どこを足したい/削りたい)
+// を判断できるよう、現 group の panels の asIs.ranges/toBe.ranges を集約したもの。
+export type FeedbackEvent = {
+  sessionId: string
+  groupId: string
+  direction: 'more' | 'less'
+  currentRanges: Array<{
+    panelId: string
+    asIs?: { file: string; ranges: DisplayRange[] }
+    toBe?: { file: string; ranges: DisplayRange[] }
+  }>
+}
+
+// channel-server.js → /channel/inbox POST → eventBus.publish('panels-updated')
+// で流すペイロード。groupId 単位で panels[] を差し替える (cross-group ではない)。
+export type PanelsUpdatedEvent = {
+  groupId: string
+  panels: Panel[]
 }

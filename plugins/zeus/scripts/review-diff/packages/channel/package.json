@@ -1,24 +1,27 @@
 {
-  "name": "@zeus/review-diff-cli",
+  "name": "@zeus/review-diff-channel",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "@zeus/source": "./src/mcp-server.ts",
+      "types": "./src/mcp-server.ts",
+      "default": "./src/mcp-server.ts"
+    }
+  },
   "scripts": {
     "build": "node build.mjs",
-    "test": "vitest run --project server",
+    "test": "vitest run --project channel",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@zeus/review-diff-client": "workspace:*",
-    "@zeus/review-diff-server": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@zeus/review-diff-shared": "workspace:*",
-    "diff": "^7.0.0",
-    "dompurify": "^3.2.0",
-    "marked": "^15.0.0",
+    "eventsource": "^3.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/diff": "^7.0.0",
     "@types/node": "^20.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"

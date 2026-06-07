@@ -1,3 +1,7 @@
+// parseDiff (FileChange[]) API のテスト。
+// 検証軸: asIsChangedLines/toBeChangedLines/additions/deletions/
+// hasContentChange/hasStructuralChange/eolOnlyChange/status/path/oldPath/language。
+
 import { test, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -7,46 +11,70 @@ import { parseDiff } from '@zeus/review-diff-server'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixturePath = (name: string) => resolve(__dirname, 'fixtures', name)
 
-test('simple modified file', () => {
-  const diff = readFileSync(fixturePath('simple.diff'), 'utf8')
-  const files = parseDiff(diff)
+test('parseDiff: simple modified file → FileChange', () => {
+  const files = parseDiff(readFileSync(fixturePath('simple.diff'), 'utf8'))
   expect(files.length).toBe(1)
-  expect(files[0].status).toBe('modified')
-  expect(files[0].additions > 0).toBe(true)
-  expect(files[0].deletions > 0).toBe(true)
-  expect(files[0].hunks.length > 0).toBe(true)
-  expect(files[0].hunks[0].rows.length > 0).toBe(true)
-  // hunks の oldStart/newStart が parse-git-diff から正しく取れているか
-  expect(files[0].hunks[0].oldStart >= 1).toBe(true)
-  expect(files[0].hunks[0].newStart >= 1).toBe(true)
+  const f = files[0]
+  expect(f.path).toBe('src/foo.ts')
+  expect(f.oldPath).toBeUndefined()
+  expect(f.status).toBe('modified')
+  expect(f.additions).toBeGreaterThan(0)
+  expect(f.deletions).toBeGreaterThan(0)
+  expect(f.asIsChangedLines.size).toBeGreaterThan(0)
+  expect(f.toBeChangedLines.size).toBeGreaterThan(0)
+  expect(f.hasContentChange).toBe(true)
+  expect(f.hasStructuralChange).toBe(false)
+  expect(f.eolOnlyChange).toBe(false)
+  expect(f.language).toBe('typescript')
 })
 
-test('renamed file', () => {
+test('parseDiff: renamed file with content change exposes oldPath + status=renamed', () => {
   const files = parseDiff(readFileSync(fixturePath('rename.diff'), 'utf8'))
   expect(files.length).toBe(1)
-  expect(files[0].status).toBe('renamed')
-  expect(files[0].path).toBe('src/new-name.ts')
-  expect(files[0].oldPath).toBe('src/old-name.ts')
+  const f = files[0]
+  expect(f.status).toBe('renamed')
+  expect(f.path).toBe('src/new-name.ts')
+  expect(f.oldPath).toBe('src/old-name.ts')
+  // fixture は rename + 内容変更を含むので content + structural の両方が立つ
+  expect(f.hasContentChange).toBe(true)
+  expect(f.hasStructuralChange).toBe(true)
 })
 
-test('binary file', () => {
+test('parseDiff: binary file → hasStructuralChange=true, hasContentChange=false, empty changed sets', () => {
   const files = parseDiff(readFileSync(fixturePath('binary.diff'), 'utf8'))
   expect(files.length).toBe(1)
-  expect(files[0].status).toBe('binary')
-  // バイナリは hunks 無しで status だけ立てる仕様
-  expect(files[0].hunks.length).toBe(0)
+  const f = files[0]
+  expect(f.status).toBe('binary')
+  expect(f.additions).toBe(0)
+  expect(f.deletions).toBe(0)
+  expect(f.asIsChangedLines.size).toBe(0)
+  expect(f.toBeChangedLines.size).toBe(0)
+  expect(f.hasContentChange).toBe(false)
+  expect(f.hasStructuralChange).toBe(true)
+  expect(f.eolOnlyChange).toBe(false)
 })
 
-test('new file', () => {
+test('parseDiff: new file → status=added, asIsChangedLines empty, toBeChangedLines populated', () => {
   const files = parseDiff(readFileSync(fixturePath('new-file.diff'), 'utf8'))
   expect(files.length).toBe(1)
-  expect(files[0].status).toBe('added')
-  expect(files[0].additions > 0).toBe(true)
+  const f = files[0]
+  expect(f.status).toBe('added')
+  expect(f.additions).toBeGreaterThan(0)
+  expect(f.asIsChangedLines.size).toBe(0)
+  expect(f.toBeChangedLines.size).toBeGreaterThan(0)
 })
 
-test('deleted file', () => {
+test('parseDiff: deleted file → status=deleted, toBeChangedLines empty, asIsChangedLines populated', () => {
   const files = parseDiff(readFileSync(fixturePath('deleted.diff'), 'utf8'))
   expect(files.length).toBe(1)
-  expect(files[0].status).toBe('deleted')
-  expect(files[0].deletions > 0).toBe(true)
+  const f = files[0]
+  expect(f.status).toBe('deleted')
+  expect(f.deletions).toBeGreaterThan(0)
+  expect(f.toBeChangedLines.size).toBe(0)
+  expect(f.asIsChangedLines.size).toBeGreaterThan(0)
+})
+
+test('parseDiff: language inference (typescript)', () => {
+  const files = parseDiff(readFileSync(fixturePath('simple.diff'), 'utf8'))
+  expect(files[0].language).toBe('typescript')
 })

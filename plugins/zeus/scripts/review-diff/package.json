@@ -7,7 +7,7 @@
     "build": "vp run -F @zeus/review-diff-cli... build",
     "dev": "pnpm -F @zeus/review-diff-client dev",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/server --noEmit && tsc -p packages/client --noEmit && tsc -p packages/cli --noEmit",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/server --noEmit && tsc -p packages/client --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/channel --noEmit",
     "clean": "pnpm -r --parallel exec rm -rf dist node_modules/.vite"
   },
   "devDependencies": {

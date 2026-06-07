@@ -338,7 +338,7 @@ body { min-height: 100vh; }
 
 /* ---------- File Block (right column) ---------- */
 .group-files-column { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.file-block {
+.panel-block {
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
@@ -349,8 +349,8 @@ body { min-height: 100vh; }
   overflow-y: visible;
   scroll-margin-top: 72px;
 }
-.file-block > .file-body { min-width: 0; }
-.file-block-header {
+.panel-block > .file-body { min-width: 0; }
+.panel-block-header {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -359,8 +359,8 @@ body { min-height: 100vh; }
   border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
 }
-.file-block-header .file-icon { color: var(--text-dim); width: 14px; height: 14px; flex-shrink: 0; }
-.file-block-header .file-path {
+.panel-block-header .file-icon { color: var(--text-dim); width: 14px; height: 14px; flex-shrink: 0; }
+.panel-block-header .file-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
   flex: 1;
@@ -368,9 +368,9 @@ body { min-height: 100vh; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-block-header .file-path .dir { color: var(--text-dim); }
-.file-block-header .file-path .rename { color: var(--text-dim); }
-.file-block-header .badge {
+.panel-block-header .file-path .dir { color: var(--text-dim); }
+.panel-block-header .file-path .rename { color: var(--text-dim); }
+.panel-block-header .badge {
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -380,14 +380,14 @@ body { min-height: 100vh; }
   letter-spacing: 0.06em;
   font-weight: 500;
 }
-.file-block-header .badge-added { color: var(--add-fg); background: var(--add-bg); }
-.file-block-header .badge-deleted { color: var(--del-fg); background: var(--del-bg); }
-.file-block-header .badge-renamed { color: var(--accent); background: var(--accent-soft); }
-.file-block-header .badge-binary { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
-.file-block-header .stats { font-family: ui-monospace, monospace; font-size: 11px; }
-.file-block-header .stats .add { color: var(--add-fg); }
-.file-block-header .stats .del { color: var(--del-fg); margin-left: 6px; }
-.file-block-header .reviewed-toggle {
+.panel-block-header .badge-added { color: var(--add-fg); background: var(--add-bg); }
+.panel-block-header .badge-deleted { color: var(--del-fg); background: var(--del-bg); }
+.panel-block-header .badge-renamed { color: var(--accent); background: var(--accent-soft); }
+.panel-block-header .badge-binary { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
+.panel-block-header .stats { font-family: ui-monospace, monospace; font-size: 11px; }
+.panel-block-header .stats .add { color: var(--add-fg); }
+.panel-block-header .stats .del { color: var(--del-fg); margin-left: 6px; }
+.panel-block-header .reviewed-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -402,17 +402,17 @@ body { min-height: 100vh; }
   background: transparent;
   transition: color 120ms, background 120ms;
 }
-.file-block-header .reviewed-toggle:hover { color: var(--text); background: var(--surface-3); }
-.file-block-header .reviewed-toggle input { appearance: none; width: 12px; height: 12px; border: 1.5px solid var(--text-dim); border-radius: 3px; margin: 0; position: relative; cursor: pointer; }
-.file-block-header .reviewed-toggle input:checked { background: var(--success); border-color: var(--success); }
-.file-block-header .reviewed-toggle input:checked::after {
+.panel-block-header .reviewed-toggle:hover { color: var(--text); background: var(--surface-3); }
+.panel-block-header .reviewed-toggle input { appearance: none; width: 12px; height: 12px; border: 1.5px solid var(--text-dim); border-radius: 3px; margin: 0; position: relative; cursor: pointer; }
+.panel-block-header .reviewed-toggle input:checked { background: var(--success); border-color: var(--success); }
+.panel-block-header .reviewed-toggle input:checked::after {
   content: '';
   position: absolute;
   inset: 0;
   background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path fill='none' stroke='%230a0a0d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3 6.5L5 8.5L9 4'/></svg>") center / 10px no-repeat;
 }
-.file-block-header .reviewed-toggle.is-reviewed { color: var(--success); }
-.file-block-header .menu-btn {
+.panel-block-header .reviewed-toggle.is-reviewed { color: var(--success); }
+.panel-block-header .menu-btn {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
@@ -423,16 +423,16 @@ body { min-height: 100vh; }
   line-height: 1;
   font-size: 14px;
 }
-.file-block-header .menu-btn:hover { background: var(--surface-3); color: var(--text); }
+.panel-block-header .menu-btn:hover { background: var(--surface-3); color: var(--text); }
 
-.file-block .warning {
+.panel-block .warning {
   padding: 8px 14px;
   background: rgba(251, 191, 36, 0.08);
   color: var(--warn);
   font-size: 11px;
   border-bottom: 1px solid var(--border-soft);
 }
-.file-block .binary-notice {
+.panel-block .binary-notice {
   padding: 28px;
   text-align: center;
   color: var(--text-dim);
@@ -441,7 +441,7 @@ body { min-height: 100vh; }
 }
 
 /* ---------- Diff table ---------- */
-.diff-table {
+.panel-table {
   width: 100%;
   border-collapse: collapse;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -452,8 +452,8 @@ body { min-height: 100vh; }
   table-layout: auto;
   background: var(--surface);
 }
-.diff-table td { padding: 0 10px; vertical-align: top; line-height: 1.55; }
-.diff-table td.ln {
+.panel-table td { padding: 0 10px; vertical-align: top; line-height: 1.55; }
+.panel-table td.ln {
   width: 52px;
   text-align: right;
   color: var(--text-dim);
@@ -467,26 +467,26 @@ body { min-height: 100vh; }
 }
 /* 両 code カラムを均等幅 (calc((100% - 104px) / 2)) に固定。シンプルさ重視。
    table-layout: fixed + width: 100% で container 幅に対して均等に半分ずつ占有する。
-   長い行がある場合は親 .file-block の overflow-x: auto と table の min-width 拡張で
+   長い行がある場合は親 .panel-block の overflow-x: auto と table の min-width 拡張で
    パネル全体が横スクロールする (行単位 / セル単位ではなく、左右の対応関係を保ったまま動く)。 */
-.diff-table {
+.panel-table {
   table-layout: fixed;
   width: 100%;
   /* 内容に応じて min-width で広がる: max-content より大きければそれを採用して
      パネル全体スクロールを発火させる。 */
   min-width: max(100%, max-content);
 }
-.diff-table td.code {
+.panel-table td.code {
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
   color: var(--text);
   /* table-layout: fixed の影響で長い行はセルからはみ出すが、min-width: max-content で
-     table 全体が広がっているので、.file-block の横スクロールで表示できる。
+     table 全体が広がっているので、.panel-block の横スクロールで表示できる。
      セルからのはみ出しは overflow: visible で隣接セルに重ねず table の右側に流す。 */
   overflow: visible;
 }
-.diff-table td.code pre {
+.panel-table td.code pre {
   margin: 0;
   background: transparent !important;
   padding: 0;
@@ -496,17 +496,17 @@ body { min-height: 100vh; }
   word-break: normal;
   overflow: visible;
 }
-.diff-table td.code-addition { background: var(--add-bg); }
-.diff-table td.code-deletion { background: var(--del-bg); }
-.diff-table td.code-empty { background: rgba(255,255,255,0.015); }
-.diff-table td.ln.ln-addition { background: var(--add-bg); color: var(--add-fg); }
-.diff-table td.ln.ln-deletion { background: var(--del-bg); color: var(--del-fg); }
+.panel-table td.code-addition { background: var(--add-bg); }
+.panel-table td.code-deletion { background: var(--del-bg); }
+.panel-table td.code-empty { background: rgba(255,255,255,0.015); }
+.panel-table td.ln.ln-addition { background: var(--add-bg); color: var(--add-fg); }
+.panel-table td.ln.ln-deletion { background: var(--del-bg); color: var(--del-fg); }
 
 /* ---------- Line comment trigger (Linear / GitHub PR 風) ---------- */
 /* gutter セル内に絶対配置で「+」ボタンを置き、行 hover 時のみ薄く可視化する。
    ボタン自身の hover で完全不透明 + accent 背景 にして、明確にクリック可能と分かるようにする。
    pointer-events: none ではダメ (クリックさせたい) なので opacity でフェード制御する。 */
-.diff-table td.ln { position: relative; }
+.panel-table td.ln { position: relative; }
 .line-comment-trigger {
   position: absolute;
   /* gutter の **左端** に配置する。
@@ -548,15 +548,15 @@ body { min-height: 100vh; }
    diff の主役 ("changed" hunk) と区別したい — ただし「テキスト で説明」してユーザーを読ませるのは
    設計哲学に反する。視線の流れだけで違いが分かるよう、tbody の左端に細い垂直アクセントを立てる。
    背景は触らず、code の色も変えない (= 読みやすさを最優先)。 */
-.diff-table tbody.hunk-ai-context td.ln-l {
+.panel-table tbody.hunk-ai-context td.ln-asis {
   box-shadow: inset 2px 0 0 var(--accent-soft);
 }
-.diff-table tbody.hunk-auto-bridge td.ln-l {
+.panel-table tbody.hunk-auto-bridge td.ln-asis {
   box-shadow: inset 2px 0 0 var(--border);
 }
 
-.diff-table tr.code-row:has(td.ln-l:hover, td.code-l:hover) td.ln-l .line-comment-trigger { opacity: 0.85; }
-.diff-table tr.code-row:has(td.ln-r:hover, td.code-r:hover) td.ln-r .line-comment-trigger { opacity: 0.85; }
+.panel-table tr.code-row:has(td.ln-asis:hover, td.code-asis:hover) td.ln-asis .line-comment-trigger { opacity: 0.85; }
+.panel-table tr.code-row:has(td.ln-tobe:hover, td.code-tobe:hover) td.ln-tobe .line-comment-trigger { opacity: 0.85; }
 
 /* ドラッグ中 (snapIndicatorToLine が body.is-dragging-line-range を立てた間) は
    通常の + ボタンを完全に隠す。ドラッグインジケータ (.drag-cursor-indicator) が同じ見た目で
@@ -564,12 +564,12 @@ body { min-height: 100vh; }
 body.is-dragging-line-range .line-comment-trigger { display: none; }
 
 /* 追加 only ファイルでは左カラム (旧コード) は常に空になるので、 列を畳んで右に空間を譲る。
-   colgroup の col に css で width:0 を当てても td 自体は残るため、td.ln-l と td.code-l も
+   colgroup の col に css で width:0 を当てても td 自体は残るため、td.ln-asis と td.code-asis も
    display: none する。これで sole-added file の diff が code 列いっぱいに広がって読みやすい。 */
-.diff-table[data-no-left="true"] colgroup col:nth-child(1),
-.diff-table[data-no-left="true"] colgroup col:nth-child(2) { display: none; }
-.diff-table[data-no-left="true"] td.ln-l,
-.diff-table[data-no-left="true"] td.code-l { display: none; }
+.panel-table[data-no-left="true"] colgroup col:nth-child(1),
+.panel-table[data-no-left="true"] colgroup col:nth-child(2) { display: none; }
+.panel-table[data-no-left="true"] td.ln-asis,
+.panel-table[data-no-left="true"] td.code-asis { display: none; }
 
 /* ドラッグ範囲選択中、カーソル左横に表示される追従インジケータ。
    GitHub PR の挙動を模倣: + アイコンがマウスを追いかけ、「今ドラッグ中で範囲行コメントを
@@ -606,28 +606,28 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
    コード列の onPointerDown で preventDefault している (DiffTable 側)。
    transition は付けない: 1 frame 追従の即時切り替えにすることで「ぐいーっと」スムーズな
    ドラッグ感を出す (フェードすると遅延を感じる)。 */
-.diff-table tr.code-row.line-selected td.code,
-.diff-table tr.code-row.line-selected td.ln {
+.panel-table tr.code-row.line-selected td.code,
+.panel-table tr.code-row.line-selected td.ln {
   background: rgba(113, 112, 255, 0.28);
   transition: none;
 }
-.diff-table tr.code-row.line-selected td.code { color: var(--text); }
+.panel-table tr.code-row.line-selected td.code { color: var(--text); }
 /* Shiki が <pre style="background-color:#24292e"> をインラインで吐くため、td.code の
    line-selected 背景が pre の不透明背景に隠れて見えなかった。pre の背景だけを
    透過化して line-selected ハイライトを表面に出す。 */
-.diff-table tr.code-row.line-selected td.code pre { background: transparent !important; }
+.panel-table tr.code-row.line-selected td.code pre { background: transparent !important; }
 /* ドラッグで複数行コメント範囲を切れるよう、コード列のテキスト選択は無効化する。
    pointerdown 起点のドラッグ = 範囲コメントの開始という UX 上の役割を優先したため、
    テキスト copy は OS のアクセシビリティ機能 or 行ごとの右クリックで賄う前提。
    cursor は text にして「ドラッグでテキスト的に範囲選択できる」ことを示唆 (crosshair より
    既存のテキスト選択メンタルモデルに馴染む)。 */
-.diff-table td.code {
+.panel-table td.code {
   user-select: none;
   cursor: text;
 }
 
 /* ---------- Inline comment row (吹き出し + フォーム) ---------- */
-.diff-table tr.comment-row > td {
+.panel-table tr.comment-row > td {
   /* code 部分の padding を打ち消して、内側のスレッド領域が全幅で並ぶようにする */
   padding: 0;
   background: var(--surface-2);
@@ -1010,3 +1010,135 @@ body.is-dragging-line-range .line-comment-trigger { display: none; }
 }
 
 [hidden] { display: none !important; }
+
+/* ============================================================
+   v4.7.0 panel model 追加スタイル
+   ============================================================ */
+
+/* report-index: グループが多いと縦に長くなり画面下端に消えるため、固定高 + スクロール (I-2) */
+.report-index { max-height: 40vh; overflow-y: auto; }
+
+/* panel-header (intent + ファイル名 + split/unified トグル) */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-dim);
+}
+.panel-header-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.panel-intent { font-size: 13px; font-weight: 600; color: var(--text); }
+.panel-files {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+}
+.panel-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-file-asis { color: var(--del-fg); }
+.panel-file-tobe { color: var(--add-fg); }
+.panel-file-arrow { color: var(--text-dim); }
+.panel-header-actions { display: flex; gap: 6px; }
+.panel-mode-toggle {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.panel-mode-toggle:hover { background: var(--surface-4, var(--surface-3)); }
+
+/* panel-block: PanelHeader + Panel.body + panel-footer の縦コンテナ */
+.panel-block {
+  background: var(--surface-1);
+  border: 1px solid var(--border-dim);
+  border-radius: 6px;
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.panel-block.is-reviewed { opacity: 0.62; }
+.panel-body { overflow-x: auto; }
+.panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-dim);
+}
+.panel-reviewed-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.panel-reviewed-label:hover { color: var(--text); }
+.panel-reviewed-label input { cursor: pointer; }
+
+/* panel-segment は単なる tbody。segment 間に細い divider を入れる (将来 segment 跨ぎ表現に拡張余地) */
+.panel-segment + .panel-segment { border-top: 1px dashed var(--border-dim); }
+
+/* GroupNav の panel リスト (旧 group-file-list 系の代替) */
+.group-panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.group-panel-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+.group-panel-item:hover { background: var(--surface-3); border-color: var(--border-dim); }
+.group-panel-item.reviewed { opacity: 0.5; }
+.panel-intent-line { font-weight: 500; }
+.panel-files-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  display: flex;
+  gap: 4px;
+}
+.file-arrow { color: var(--text-dim); }
+
+/* context+/- ボタン (group footer) */
+.group-context-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 4px;
+}
+.btn-context {
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+}
+.btn-context:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
+.btn-context:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-context.is-pending { color: var(--accent); }
+
+/* group-panels-column (旧 group-files-column 互換) */
+.group-panels-column { min-width: 0; display: flex; flex-direction: column; }

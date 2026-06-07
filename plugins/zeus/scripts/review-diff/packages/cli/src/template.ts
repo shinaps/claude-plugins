@@ -9,6 +9,8 @@
 import type { ClientPayload } from '@zeus/review-diff-shared'
 import { CLIENT_JS, MARKED_JS, DOMPURIFY_JS, CSS_STRING } from './inline-assets'
 
+// v4.7.0: ClientPayload (panel model + channels) を受ける。
+// 旧 ClientPayload (files: ParsedFile[]) は Phase G-14 で型ごと削除される。
 export type BuildHtmlInput = ClientPayload
 
 export function buildHtml(payload: BuildHtmlInput): string {

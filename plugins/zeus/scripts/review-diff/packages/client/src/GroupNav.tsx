@@ -1,26 +1,27 @@
-// 1 グループの左 sticky ペイン。番号 + タイトル + 説明 (markdown) + ファイル一覧。
-// クリックで右ペインのファイル diff に anchor scroll。スクロール位置の補正は
-// CSS の scroll-margin-top で固定 TabBar の高さ分オフセットする。
+// 1 グループの左 sticky ペイン (v4.7.0 panel model)。
+// 番号 + タイトル + 説明 (markdown) + panel 一覧。クリックで右ペインの panel に anchor scroll。
 //
-// 設計判断:
-//   - description は Markdown を許容 (Group.description はサーバー側で生成され信頼源)
-//   - ファイル名表示は basename を強調 + dirname をディム色で続ける。Linear と同じ
-//     「ファイル本体に視線が落ちる」見せ方を狙う。
+// panel-list の各エントリ:
+//   - intent を主表示 (太字、短文)
+//   - 下行に asIs.file / toBe.file (cross-file は矢印で並べる)
+//   - Reviewed の panel は薄く表示
 
-import type { ParsedFile } from '@zeus/review-diff-shared'
-import { renderMarkdown } from './markdown.ts'
+import type { RenderedPanel } from '@zeus/review-diff-shared'
+import { renderMarkdown } from './markdown'
 
 type Props = {
   index: number
   total: number
   title: string
   description: string
-  files: ParsedFile[]
-  reviewed: Set<string>
-  onJump: (path: string) => void
+  panels: RenderedPanel[]
+  reviewedPanels: Set<string>
+  onJumpToPanel: (panelId: string) => void
 }
 
-export function GroupNav({ index, total, title, description, files, reviewed, onJump }: Props) {
+export function GroupNav({
+  index, total, title, description, panels, reviewedPanels, onJumpToPanel,
+}: Props) {
   const num = String(index + 1).padStart(2, '0')
   const tot = String(total).padStart(2, '0')
   const descHtml = renderMarkdown(description || '')
@@ -34,10 +35,15 @@ export function GroupNav({ index, total, title, description, files, reviewed, on
       {descHtml ? (
         <div className="group-desc" dangerouslySetInnerHTML={{ __html: descHtml }} />
       ) : null}
-      {files.length ? (
-        <div className="group-file-list">
-          {files.map((f) => (
-            <FileItem key={f.path} file={f} reviewed={reviewed.has(f.path)} onJump={onJump} />
+      {panels.length ? (
+        <div className="group-panel-list">
+          {panels.map((p) => (
+            <PanelItem
+              key={p.panelId}
+              panel={p}
+              reviewed={reviewedPanels.has(p.panelId)}
+              onJump={onJumpToPanel}
+            />
           ))}
         </div>
       ) : null}
@@ -45,43 +51,39 @@ export function GroupNav({ index, total, title, description, files, reviewed, on
   )
 }
 
-function FileItem({
-  file,
-  reviewed,
-  onJump,
+function PanelItem({
+  panel, reviewed, onJump,
 }: {
-  file: ParsedFile
+  panel: RenderedPanel
   reviewed: boolean
-  onJump: (p: string) => void
+  onJump: (panelId: string) => void
 }) {
-  const { name, dir } = splitPath(file.path)
+  const asIs = panel.asIs?.file
+  const toBe = panel.toBe?.file
   return (
     <button
       type="button"
-      className={`group-file-item ${reviewed ? 'reviewed' : ''}`}
-      onClick={() => onJump(file.path)}
-      title={file.path}
+      className={`group-panel-item ${reviewed ? 'reviewed' : ''}`}
+      onClick={() => onJump(panel.panelId)}
+      title={panel.intent}
     >
-      <FileIcon />
-      <span className="file-name">{name}</span>
-      <span className="file-dir">{dir}</span>
-      {file.additions ? <span className="stat-add">+{file.additions}</span> : null}
-      {file.deletions ? <span className="stat-del">-{file.deletions}</span> : null}
+      <span className="panel-intent-line">{panel.intent}</span>
+      <span className="panel-files-line">
+        {asIs && toBe && asIs !== toBe ? (
+          <>
+            <span className="file-name">{basename(asIs)}</span>
+            <span className="file-arrow" aria-hidden>→</span>
+            <span className="file-name">{basename(toBe)}</span>
+          </>
+        ) : (
+          <span className="file-name">{basename(toBe ?? asIs ?? '(no file)')}</span>
+        )}
+      </span>
     </button>
   )
 }
 
-function splitPath(p: string): { name: string; dir: string } {
+function basename(p: string): string {
   const idx = p.lastIndexOf('/')
-  if (idx < 0) return { name: p, dir: '' }
-  return { name: p.slice(idx + 1), dir: p.slice(0, idx + 1) }
-}
-
-function FileIcon() {
-  return (
-    <svg className="file-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3 2.5h6.5L13 6v7.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5Z" />
-      <path d="M9.5 2.5v3a.5.5 0 0 0 .5.5h3" />
-    </svg>
-  )
+  return idx < 0 ? p : p.slice(idx + 1)
 }
