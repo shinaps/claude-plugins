@@ -1,6 +1,6 @@
 ---
 name: debug
-description: バグ報告・不具合の根本原因を多角的に調査し、対症療法ではなく根本解決を導くスキル。コードトレース + WebSearch + GitHub Issue 検索で仮説を立て、実コード検証で確定させ、/zeus:dev に橋渡しする
+description: バグ報告・不具合の根本原因を多角的に調査し、対症療法ではなく根本解決を導くスキル。コードトレース + WebSearch + GitHub Issue 検索で仮説を立て、実コード検証で確定させ、必要に応じて zeus-tech-surveyor + zeus-survey-validator で外部情報 (ライブラリ既知バグ / changelog / 修正パターン / 代替案) を深掘りし、/zeus:dev に橋渡しする
 argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイルパス>
 ---
 
@@ -23,6 +23,8 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
 |---|---|---|
 | Zeus Debugger | `zeus-debugger` | コードトレース + WebSearch + GitHub Issue 検索で仮説を立案 |
 | Zeus Debug Validator | `zeus-debug-validator` | 仮説を実コードと照合し root-cause / red-herring 等に分類 |
+| Zeus Tech Surveyor | `zeus-tech-surveyor` | （Phase 4.5 で任意起動）ライブラリの既知バグ / changelog / 修正パターン / 代替案を WebSearch / WebFetch で深掘り |
+| Zeus Survey Validator | `zeus-survey-validator` | （Phase 4.5 で任意起動）surveyor の主張を出典 URL で再確認し、鮮度・正確性を検証 |
 
 ## ディレクトリ規約
 
@@ -31,6 +33,9 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
 ├── input.md                ← 症状・再現手順のサマリ
 ├── debug-report.md         ← zeus-debugger の生レポート（仮説一覧）
 ├── debug-validated.md      ← zeus-debug-validator の検証済みレポート
+├── raw/                    ← Phase 4.5 で外部情報深掘りを実施した場合のみ
+│   ├── survey.md           ← zeus-tech-surveyor の生レポート
+│   └── survey-validated.md ← zeus-survey-validator の検証済みレポート
 └── plan-handoff.md         ← /zeus:dev への引き継ぎ（橋渡し時のみ）
 ```
 
@@ -102,6 +107,26 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
 
 応答を省略せず全文 `.claude/zeus/debug/{ts}-{slug}/debug-validated.md` に保存。
 
+### Phase 4.5: 外部情報深掘り調査（任意）
+
+`debug-validated.md` の内容を踏まえ、以下のいずれかに該当する場合は `AskUserQuestion` で「外部情報深掘り調査をするか」を確認する (Recommended: Yes)。該当しない場合は **Phase 5 へスキップ**。
+
+- 根本原因が **外部ライブラリ / フレームワーク / SaaS の挙動** に起因する疑いが強い
+- 修正方針として **ライブラリのバージョン上げ / 代替ライブラリへの移行 / 公式推奨パターンの採用** が選択肢に上がる
+- debugger / validator が「公式情報や changelog の確認が必要」と示唆している
+- 類似事例 (他プロジェクトの実装パターン) を集めると修正方針の確信度が上がる
+
+実施する場合:
+
+1. `zeus-tech-surveyor` を起動。プロンプトには以下を含める:
+   - `input.md` の全文
+   - `debug-validated.md` の確定根本原因セクション
+   - プロジェクト `CLAUDE.md` の関連抜粋（依存ライブラリの制約があれば）
+   - 「この根本原因に関連する **既知バグ / changelog / 公式推奨の修正パターン / 代替ライブラリ / 類似事例** を WebSearch / WebFetch で調査せよ。**実装可能な修正方針を具体化することが目的**」
+2. 応答を全文 `.claude/zeus/debug/{ts}-{slug}/raw/survey.md` に保存
+3. `zeus-survey-validator` を起動して出典・鮮度を検証、`raw/survey-validated.md` に全文保存
+4. 検証結果を Phase 6 の `plan-handoff.md` 生成時に「関連する外部情報」セクションへ反映
+
 ### Phase 5: 次アクション選択
 
 root-cause または contributing-factor が **1 件以上ある場合**、`AskUserQuestion` で次の選択を確認:
@@ -152,7 +177,7 @@ root-cause が 0 件で needs-reproduction のみの場合:
 
 ## 関連する外部情報
 
-{WebSearch / GitHub Issue で見つけた関連情報への参照}
+{WebSearch / GitHub Issue で見つけた関連情報への参照。Phase 4.5 を実施した場合は `raw/survey-validated.md` の要点 (採用すべき修正パターン・避けるべき落とし穴・代替案など) もここに反映}
 ```
 
 2. `Skill` ツールで `zeus:dev` を起動:

@@ -13,13 +13,13 @@
 | スキル | 役割 |
 |---|---|
 | `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + zeus-survey-validator で外部情報を検証、複数候補があれば AskUserQuestion で採用決定) + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める。技術選定 (旧 `/zeus:tech-survey` 相当) も統合済み。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
-| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → `zeus-implementer` で実装 + 動作確認まで委譲 → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正 |
+| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → **メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 + implementation.md 執筆** → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正。実装をメインで担うことで計画フェーズの文脈をそのまま実装と修正ループに引き継ぐ |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:review-diff [PR番号]` | **最終承認ゲート**。staged diff または PR の diff を Linear 風 UI でブラウザに開き、ファイル単位 Reviewed チェック + コメント + Approve/Reject で人間が承認する。Approve なら commit、Reject なら集めたコメントを反映 → Skill ツール経由で自動再起動。`/zeus:review` の機械レビューに対し、こちらは「人間が目で見て承認する」動線 |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
 | `/zeus:refactor-loop [max=N] [include=<glob>] [exclude=<glob>]` | コードベース全体を無人ループで継続リファクタ。**可読性向上が主軸**: 省略変数の改名・WHY コメント整備・早期リターン化のような細かい改善も、state 統合・hook 抽出・責務再編のような構造改善と同格に扱う。`zeus-refactor-scout` が次の 1 件を返し → `zeus-refactor-implementer` が contract boundary 宣言 → characterization test 整備 (意味構造に触れない軽量リファクタは簡易パスで省略可) → 内部実装の大胆変更 → contract 維持のテスト検証 → 通れば `refactor:` プレフィックスで自動コミットして次ラウンド。失敗ラウンドは `git restore` で破棄。安全性は implementer セルフ + 次ラウンド scout の regression-suspect 再点検で二段防御 |
 
-## 同梱エージェント (13 体)
+## 同梱エージェント (12 体)
 
 | エージェント | 役割 |
 |---|---|
@@ -29,7 +29,6 @@
 | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | `zeus-architect` | 複数観点を内包した実装ブループリント策定 (single best plan + self-critique) |
 | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー (承認 / 条件付き承認 / 差し戻し) |
-| `zeus-implementer` | 確定 plan を忠実に実装、事前整合性チェック + Edit/Write + 動作確認 (型/lint/test) + implementation.md 執筆まで単独完走。メイン context 圧迫回避 + 責務の明確化が目的 |
 | `zeus-refactor-scout` | `/zeus:refactor-loop` で次にリファクタすべき 1 件を返却。done.md で既処理除外、直近 3 ラウンドの regression-suspect 軽量再点検も担う |
 | `zeus-refactor-implementer` | `/zeus:refactor-loop` で 1 件のリファクタを実行。**contract boundary を自分で宣言** → characterization test 整備 → contract を守る限り内部 (state 統合・hook 抽出・責務再編・命名刷新) は大胆に変更 → テストで contract 維持検証 → 違反時は `git restore` で破棄 |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー (confidence ≥ 80 でフィルタ) |

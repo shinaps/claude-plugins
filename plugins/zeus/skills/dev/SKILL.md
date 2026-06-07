@@ -1,6 +1,6 @@
 ---
 name: dev
-description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 → zeus-architect で実装ブループリント策定 → 第三者レビュー → zeus-implementer で実装 + 動作確認 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
+description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 → zeus-architect で実装ブループリント策定 → 第三者レビュー → メインスレッドが plan.md を直接実装 + 動作確認 (型/lint/test) + implementation.md 執筆 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。実装フェーズをメインスレッドが担うことで、explorer / architect / plan-review で築いた文脈をそのまま実装判断に活用し、レビュー指摘や修正ループでもブレない実装精度を保つ。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
 argument-hint: <実装したい機能・解決したい課題>
 ---
 
@@ -39,8 +39,9 @@ argument-hint: <実装したい機能・解決したい課題>
 | Zeus Explorer | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
 | Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定（初回 + self-critique） |
 | Zeus Plan Reviewer | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー |
-| Zeus Implementer | `zeus-implementer` | 確定 plan を忠実に実装 + 動作確認 (型/lint/test) + implementation.md 執筆まで完走 |
 | Zeus Reviewer | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー |
+
+実装フェーズ (Phase 7) は **メインスレッドが直接 Edit/Write で行う**。explorer / architect / plan-review で築いた文脈・設計判断の意図をそのまま実装に持ち込むことで、レビュー指摘の文脈共有と修正ループの精度を最大化する狙い。
 
 ## 実行フロー
 
@@ -116,48 +117,42 @@ argument-hint: <実装したい機能・解決したい課題>
 
 統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に保存。
 
-### Phase 7: 実装フェーズ（zeus-implementer 委譲）
+### Phase 7: 実装フェーズ（メインスレッド直接実装）
 
-`zeus-implementer` を 1 体起動して、Phase 6 で確定した `plan.md` の実装を委ねる。
+メインスレッドが Phase 6 で確定した `plan.md` の実装を **直接 Edit/Write で行う**。
+explorer / architect / plan-review で築いた文脈・設計判断の意図をそのまま実装に持ち込むことで、レビュー指摘の理解度と修正ループの精度を最大化する。
 
-**狙い**: 実装中の Edit/Write 生差分・型/lint/test の生出力・raw レポートの全文 Read をメイン context から切り離し、メインは「plan 確定 → 実装結果サマリ → レビューループ判断」だけを保持する。
+実装は以下のサブフェーズに分けて進める:
 
-#### implementer に渡すプロンプト
+#### A. 事前整合性チェック
 
-- **タスク要約** (Phase 1 で確定した文字列)
-- **作業ディレクトリ**: `.claude/zeus/{ts}-{slug}/`
-- **plan.md パス**: `${WORK_DIR}/plan.md`
-- **raw レポートパス一覧**: `${WORK_DIR}/raw/explorer*.md`, `architect-initial.md`, `architect-critique.md`, `plan-review.md`, `architect-revised-{n}.md` (あれば)
-- **指示**: 「`zeus-implementer` の責務に従い、Phase A (事前整合性チェック) → Phase B (実装) → Phase C (`implementation.md` 執筆) → Phase D (動作確認) まで完走せよ。不明点・逸脱・既存衝突は必ず `AskUserQuestion` で確認すること」
+1. `plan.md` を再読し、ビルド順序を `TaskCreate` で展開
+2. raw レポートのうち実装判断に必要なもの (例: `raw/explorer*.md` の必読ファイル抜粋、`raw/plan-review.md` の Critical/Warning 指摘) を再確認
+3. 変更対象ファイル群を Read で確認 (既に Phase 2 で読んだものは差分のみ)
+4. 既存実装との衝突や前提の不一致を発見した場合は `AskUserQuestion` で「plan を上書く / 既存に合わせる / Phase 6 に戻って再策定」を確認
 
-#### implementer の作業内容（参考）
+#### B. 実装
 
-| サブフェーズ | 内容 |
-|---|---|
-| A. 事前整合性チェック | plan + raw を全文 Read、変更ファイル群を Read、ビルド順序を `TaskCreate` 展開、既存衝突は `AskUserQuestion` |
-| B. 実装 | ビルド順序に従って Edit/Write、不明点は `AskUserQuestion`、逸脱は `AskUserQuestion` + 記録 |
-| C. `implementation.md` 執筆 | 変更ファイル / 逸脱 / 実装中の判断 / 課題 / 規約衝突を全文記録 |
-| D. 動作確認 | 型 / lint / build / test を順に実行、結果を `implementation.md` の「動作確認結果」に記録、自分のミスは 3 回まで自己修正 |
+- ビルド順序に従って Edit / Write で実装
+- 不明点 (命名 / 依存方向 / 例外処理の落とし所など plan で曖昧な点) は **必ず `AskUserQuestion`** で確認 (回数制限なし)
+- plan からの逸脱は `AskUserQuestion` で確認した上で `implementation.md` に経緯を記録
+- 1 サブタスク完了ごとに `TaskUpdate` で `completed` に進める
 
-詳細は `agents/zeus-implementer.md` 参照。
+#### C. `implementation.md` 執筆
 
-#### implementer からの返却内容
+実装と並行して `implementation.md` を更新し、以下を全文記録する:
 
-implementer の最終応答には以下が含まれる:
+- 変更ファイル一覧 (パス + 1 行サマリ)
+- 各ファイルでの **設計上の WHY** (なぜこの設計を選んだか / plan からの逸脱があれば理由)
+- 実装中に判断した重要事項
+- 残課題・規約衝突・未解決の論点
 
-1. 実装完了サマリ (3〜5 行)
-2. 変更ファイル一覧（パスのみ。詳細は `implementation.md` 参照）
-3. 動作確認結果サマリ（型 / lint / build / test の OK / NG / skip）
-4. 未解決の論点（あれば、メインがレビューループで判断すべき項目）
-5. `AskUserQuestion` で確認した事項の一覧
+#### D. 動作確認
 
-メインはこれを受け取って Phase 8 (セルフレビュー) へ進む。`implementation.md` の全文を再読する必要は無い（必要な箇所だけ参照する）。
-
-#### implementer が失敗 / 中断した場合
-
-- 動作確認の失敗が implementer 内で解消できなかった (3 回試行で直らない / 環境問題 / plan 前提との食い違い) → メインで状況を確認し、Phase 8 のレビュー対象として diff を渡す（reviewer が原因を特定 → 修正ループへ）
-- `AskUserQuestion` でユーザーが「タスク見直し」を選んだ → Phase 6 の plan 統合に戻る (再策定が必要なら `zeus-architect` を再起動)
-- ツールエラー等で implementer 自体が落ちた → メインが状況を `implementation.md` (なければ新規作成) に記録し、ユーザーに `AskUserQuestion` で「メインで続行 / セッション中断」を確認
+- 型 / lint / build / test を順に実行
+- 結果を `implementation.md` の「動作確認結果」セクションに記録
+- 自分の実装ミスによる失敗は **3 回まで自己修正**。それを超える場合は `AskUserQuestion` で「さらに修正試行 / Phase 8 のレビュー対象として diff を渡す / Phase 6 に戻って再策定」を確認
+- 環境問題 / 既存リグレッション / plan 前提との食い違いと判断したら Phase 8 のレビュー対象として diff を引き渡す (reviewer が原因を特定 → 修正ループへ)
 
 ### Phase 8: セルフレビュー
 
@@ -172,13 +167,13 @@ implementer の最終応答には以下が含まれる:
 ### Phase 9: 修正ループ
 
 - **Critical は必ず自動修正**（自動進行、承認不要 — 動作を壊している指摘なので）
-- **Phase 7 (implementer の動作確認 Phase D) で検出された動作確認の失敗** も Critical として修正
+- **Phase 7 サブフェーズ D で検出された動作確認の失敗** も Critical として修正
 - **Warning は `AskUserQuestion` で確認**: 「全部修正 / 個別に確認 / 後回し (Issue 化) / スコープ外として記録」
 - **Info は記録のみで修正しない**
 
 修正を行った場合、`fix-log.md` に「指摘 → 修正内容 → 該当ファイル」を記録。
 
-修正実装は **メインが直接 Edit/Write で行う** (implementer を再起動しない)。理由: 修正対象は通常 1〜数ファイルの局所的な変更で、reviewer の指摘文脈をメインが既に持っているため、implementer 委譲のオーバーヘッドが釣り合わない。大規模な再実装が必要な場合は `AskUserQuestion` で「メインで修正 / `zeus-implementer` 再起動 / Phase 6 に戻って plan 再策定」を確認する。
+修正実装はメインが直接 Edit/Write で行う (Phase 7 と同じ主体)。reviewer の指摘文脈をメインがそのまま保持しているため、修正判断のブレが起きにくい。大規模な再実装が必要な場合は `AskUserQuestion` で「メインで修正継続 / Phase 6 に戻って plan 再策定」を確認する。
 
 ### Phase 10: 修正後の再レビュー（Critical / Warning 修正時のみ）
 
@@ -195,6 +190,7 @@ Phase 9 で **Critical または Warning を修正した場合のみ**、もう�
 ## 動作原則
 
 - **EnterPlanMode は使わない**: bypassPermissions モード (リモート実行など) と両立させるため
+- **実装はメインスレッドが担う**: explorer / architect / plan-review で築いた文脈・設計判断の WHY をそのまま実装と修正ループに引き継ぐため。サブエージェント委譲は計画フェーズとレビューフェーズに限定
 - **不明な論点は必ず AskUserQuestion で確認**: 回数に制限なし。「わからないまま自動進行」より「ユーザーに聞く」を優先
 - **生レポート保存厳守**: explorer / architect / plan-reviewer / reviewer の応答は全文保存
 - **Critical は自動修正、Warning は確認**: Critical は動作を壊しているため必ず修正、Warning は重要度を踏まえてユーザー判断
