@@ -1,7 +1,7 @@
 ---
 name: zeus-explorer
 description: zeus-dev の計画フェーズで起動されるコードベース探索エージェント。類似機能のトレース、アーキテクチャマップ、関連抽象化レイヤーの調査を担当。後続の設計担当が読むべき重要ファイルを 5-10 件返す
-model: claude-opus-4-7
+model: sonnet
 permissionMode: bypassPermissions
 effort: medium
 color: cyan
