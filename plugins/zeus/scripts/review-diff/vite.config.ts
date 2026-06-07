@@ -13,8 +13,12 @@ import { resolve } from 'node:path'
 export default defineConfig({
   plugins: [react()],
   root: resolve(__dirname),
+  // なぜランダムポート (0):
+  //   Vite のデフォルト 5173 は他の React / Next.js / Vue 開発サーバーと衝突する
+  //   常連ポート。zeus プラグインを使うユーザーは別プロジェクトを並走している前提が
+  //   多いため、起動時に OS に空きポートを選ばせて衝突を回避する。
   server: {
-    port: 5173,
+    port: 0,
     open: '/dev/index.html',
     strictPort: false,
   },
