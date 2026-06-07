@@ -109,6 +109,25 @@ fi
 - `src/` を触ったら必ず rebuild + commit（SKILL.md 変更だけなら不要）
 - バージョン上げは「src/ または SKILL.md に意味のある変更があったとき」
 
+## コミット時の規約（dogfooding）
+
+このリポジトリ内で **Claude が `git commit` を作成する前** に、必ず `/zeus:review-diff` を起動して人間の承認を得ること。
+
+### 手順
+1. 変更ファイルを `git add` で staging
+2. `/zeus:review-diff` を起動 → ブラウザでレビュー
+3. **Approve** を受け取ってから `git commit` 実行
+4. **Reject** ならコメントを反映 → 再度 staging → `/zeus:review-diff` で再 review
+
+### 理由
+- このリポジトリ自体が `/zeus:review-diff` の開発元なので、自分たちで使って UX のフィードバックを得る
+- AI が勝手に commit を量産する事態を防ぎ、人間ゲートが入る
+- レビュー UI で気付いた改善要望が即フィードバックとなり、自己強化ループになる
+
+### 例外
+- README / CLAUDE.md / docs のみの軽微な修正は省略してよい (Claude 自身の判断)
+- 緊急の fix で一刻を争う場合はユーザー明示の許可で省略可
+
 ## 既存プラグイン
 
 - `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / review-diff / debug / refactor-loop の 7 スキル構成。`review-diff` は Node CLI（React + Hono + Shiki）を `scripts/review-diff/` に同梱
