@@ -203,7 +203,7 @@ Phase 9 で **Critical または Warning を修正した場合のみ**、もう�
 
 ## 他スキルからの呼び出し
 
-`/zeus:spec` `/zeus:tech-survey` `/zeus:review` `/zeus:debug` などから handoff される際は、それらが生成した `plan-handoff.md` のパスを引数に渡せばよい:
+`/zeus:spec` `/zeus:review` `/zeus:debug` などから handoff される際は、それらが生成した `plan-handoff.md` のパスを引数に渡せばよい:
 
 ```
 Skill(skill="zeus:dev", args="<元タスク要約>。詳細は .claude/zeus/.../plan-handoff.md を参照")
