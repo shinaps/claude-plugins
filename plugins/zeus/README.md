@@ -13,7 +13,7 @@
 | スキル | 役割 |
 |---|---|
 | `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + zeus-survey-validator で外部情報を検証、複数候補があれば AskUserQuestion で採用決定) + 技術選定 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
-| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → **メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 + implementation.md 執筆** → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正。実装をメインで担うことで計画フェーズの文脈をそのまま実装と修正ループに引き継ぐ |
+| `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` (spec.md からの handoff なら spec が取った explorer 結果を再利用) → `zeus-architect` (初回案) → `zeus-plan-reviewer` が批判 + 修正版最終 plan までを返す (self-critique と統合) → **メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 + implementation.md 執筆** → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正。実装をメインで担うことで計画フェーズの文脈をそのまま実装と修正ループに引き継ぐ |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:review-diff [PR番号]` | **最終承認ゲート**。staged diff または PR の diff を Linear 風 UI でブラウザに開き、ファイル単位 Reviewed チェック + コメント + Approve/Reject で人間が承認する。Approve なら commit、Reject なら集めたコメントを反映 → Skill ツール経由で自動再起動。`/zeus:review` の機械レビューに対し、こちらは「人間が目で見て承認する」動線 |
 | `/zeus:debug <症状>` | バグ報告から根本原因を多角的に調査。`zeus-debugger` でコードトレース + WebSearch + GitHub Issue 検索 → `zeus-debug-validator` で実コード照合 → 確定した根本原因を `/zeus:dev` に橋渡し |
@@ -27,8 +27,8 @@
 | `zeus-tech-surveyor` | フィジビリティ調査 (関連ライブラリ・公式推奨パターン・知られた落とし穴) を WebSearch / WebFetch で調査 |
 | `zeus-survey-validator` | tech-surveyor の主張を出典 URL で再確認し、鮮度・正確性を検証 |
 | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
-| `zeus-architect` | 複数観点を内包した実装ブループリント策定 (single best plan + self-critique) |
-| `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー (承認 / 条件付き承認 / 差し戻し) |
+| `zeus-architect` | 複数観点を内包した実装ブループリント策定 (初回案、self-critique は plan-reviewer に統合) |
+| `zeus-plan-reviewer` | architect 初回案を批判 + Critical/Warning を反映した修正版最終 plan を返す (承認 / 条件付き承認 / 差し戻し) |
 | `zeus-refactor-scout` | `/zeus:refactor-loop` で次にリファクタすべき 1 件を返却。done.md で既処理除外、直近 3 ラウンドの regression-suspect 軽量再点検も担う |
 | `zeus-refactor-implementer` | `/zeus:refactor-loop` で 1 件のリファクタを実行。**contract boundary を自分で宣言** → characterization test 整備 → contract を守る限り内部 (state 統合・hook 抽出・責務再編・命名刷新) は大胆に変更 → テストで contract 維持検証 → 違反時は `git restore` で破棄 |
 | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー (confidence ≥ 80 でフィルタ) |
@@ -63,12 +63,11 @@ PM 機能も使いたい場合は別途 `pm` プラグインをインストー�
 
 ```
 .claude/zeus/{ts}-{slug}/
-├── plan.md                    ← 統合プラン
+├── plan.md                    ← plan-reviewer Part 2 の修正版最終 plan
 ├── raw/                       ← 計画フェーズの生レポート
-│   ├── explorer.md
-│   ├── architect-initial.md
-│   ├── architect-critique.md
-│   ├── plan-review.md
+│   ├── explorer.md            ← spec からの handoff 時はこれを spec ディレクトリから再利用 (自前で取らない)
+│   ├── architect.md           ← architect 初回案
+│   ├── plan-review.md         ← plan-reviewer の Part 1 (レビュー) + Part 2 (最終 plan)
 │   └── architect-revised-{n}.md  ← 差し戻し再策定時のみ
 ├── implementation.md          ← 実装ログ・変更ファイル一覧・動作確認結果
 ├── review.md                  ← zeus-reviewer の生レポート
@@ -76,29 +75,27 @@ PM 機能も使いたい場合は別途 `pm` プラグインをインストー�
 └── fix-log.md                 ← 修正ループの履歴
 ```
 
-`/zeus:spec` の生成物:
+`/zeus:spec` の生成物 (dev には `spec.md` パスを直接渡す):
 
 ```
 .claude/zeus/specs/{ts}-{slug}/
-├── spec.md                 ← 構造化された仕様書
+├── spec.md                 ← 構造化された仕様書 (関連調査リソースセクションで raw/explorer.md 等のパスを明示)
 ├── interview-log.md        ← ヒアリングのやりとり記録
-├── raw/                    ← 調査エージェントの生レポート
-│   ├── explorer.md         ← 既存実装調査（実施時）
+├── raw/                    ← 調査エージェントの生レポート (dev が再利用)
+│   ├── explorer.md         ← 既存実装調査（実施時、dev の Phase 2 で再利用）
 │   ├── survey.md           ← フィジビリティ調査一次レポート（実施時）
 │   └── survey-validated.md ← 検証済み調査（実施時）
-├── prototype/              ← プロトタイプ実装（実施時、隔離スペース）
-│   └── prototype-report.md
-└── plan-handoff.md         ← /zeus:dev 橋渡し時の引き継ぎ
+└── prototype/              ← プロトタイプ実装（実施時、隔離スペース）
+    └── prototype-report.md
 ```
 
-`/zeus:review` の生成物:
+`/zeus:review` の生成物 (dev には `review-validated.md` パスを直接渡す):
 
 ```
 .claude/zeus/reviews/{ts}-{mode}/
 ├── input.md
 ├── review.md
-├── review-validated.md
-└── plan-handoff.md         ← /zeus:dev 橋渡し時のみ
+└── review-validated.md
 ```
 
 `/zeus:review-diff` の生成物:
@@ -112,14 +109,16 @@ PM 機能も使いたい場合は別途 `pm` プラグインをインストー�
 └── state.json      ← Reject カウンタ等 ({ rejectCount, parentDir })
 ```
 
-`/zeus:debug` の生成物:
+`/zeus:debug` の生成物 (dev には `debug-validated.md` パスを直接渡す):
 
 ```
 .claude/zeus/debug/{ts}-{slug}/
 ├── input.md
 ├── debug-report.md
-├── debug-validated.md
-└── plan-handoff.md         ← /zeus:dev 橋渡し時のみ
+├── debug-validated.md           ← 確定根本原因 + 修正方針 + 関連外部情報まで含む
+└── raw/                         ← Phase 4.5 で外部情報深掘りを実施した場合のみ
+    ├── survey.md
+    └── survey-validated.md
 ```
 
 ## ライセンス

@@ -30,8 +30,7 @@ argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 .claude/zeus/reviews/{YYYYMMDD-HHMMSS}-{mode}/
 ├── input.md              ← レビュー対象のサマリ
 ├── review.md             ← zeus-reviewer の生レポート
-├── review-validated.md   ← zeus-review-validator の検証済み指摘リスト
-└── plan-handoff.md       ← /zeus:dev へ引き継ぐ修正タスク記述（橋渡し時のみ）
+└── review-validated.md   ← zeus-review-validator の検証済み指摘リスト (dev には直接このパスを渡す)
 ```
 
 `{mode}` は `branch` / `pr-{N}` / `path-{slug}` のいずれか。
@@ -115,32 +114,15 @@ argument-hint: <なし | PR番号 | ファイル/ディレクトリパス>
 
 ### Phase 6: /zeus:dev への橋渡し（修正実装選択時）
 
-1. `review-validated.md` の確定指摘を整理し、`plan-handoff.md` に保存:
+中間ファイル (旧 `plan-handoff.md`) は生成しない。`Skill` ツールで `zeus:dev` を起動し、引数に `review-validated.md` のパスを直接渡す。
 
-```markdown
-# レビュー指摘修正タスク
+dev 側の Phase 1 で `review-validated.md` を Read して確定指摘を修正タスクとして取り込み、Phase 2-3 (explorer / architect) で指摘箇所のコードを再調査・修正計画を立てる。
 
-- 元レビュー: .claude/zeus/reviews/{ts}-{mode}/review-validated.md
-- 対象: {branch / pr-{N} / path-{slug}}
+引数例:
 
-## 修正対象の指摘
-
-### Critical
-- [logic] `path/to/file.ts:42` — {問題と修正方針}
-
-### Warning
-- [design] `path/to/another.ts:10` — {問題と修正方針}
-
-### 追加発見
-- [security] `path/to/xxx.ts:88` — {問題と修正方針}
-
-## 修正方針サマリ
-
-{全体としてどう修正すべきか、優先順位など}
 ```
-
-2. `Skill` ツールで `zeus:dev` を起動:
-   - 引数例: 「以下のレビュー指摘を修正する。詳細は `.claude/zeus/reviews/{ts}-{mode}/plan-handoff.md` を参照: {修正タスクの 1 行サマリ}」
+Skill(skill="zeus:dev", args="以下のレビュー指摘を修正する。詳細は .claude/zeus/reviews/{ts}-{mode}/review-validated.md を参照: {修正タスクの 1 行サマリ}")
+```
 
 ### Phase 7: PR コメント投稿（PR モードかつ投稿選択時）
 

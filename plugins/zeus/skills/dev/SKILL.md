@@ -1,6 +1,6 @@
 ---
 name: dev
-description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 → zeus-architect で実装ブループリント策定 → 第三者レビュー → メインスレッドが plan.md を直接実装 + 動作確認 (型/lint/test) + implementation.md 執筆 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。実装フェーズをメインスレッドが担うことで、explorer / architect / plan-review で築いた文脈をそのまま実装判断に活用し、レビュー指摘や修正ループでもブレない実装精度を保つ。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
+description: feature-dev の上位互換となる「計画策定 + 実装 + セルフレビュー」一気通貫スキル。zeus-explorer でコードベース調査 (spec.md からの handoff なら spec が取った explorer 結果を再利用) → zeus-architect で実装ブループリント策定 → zeus-plan-reviewer が批判 + 修正版最終 plan を返す → メインスレッドが plan.md を直接実装 + 動作確認 (型/lint/test) + implementation.md 執筆 → zeus-reviewer でセルフレビュー → Critical 自動修正までを単一スキルで完走する。実装フェーズをメインスレッドが担うことで、explorer / architect / plan-review で築いた文脈をそのまま実装判断に活用し、レビュー指摘や修正ループでもブレない実装精度を保つ。EnterPlanMode は使わず bypassPermissions モード (リモート実行など) と両立する設計。不明な論点は AskUserQuestion で必ずユーザーに確認する
 argument-hint: <実装したい機能・解決したい課題>
 ---
 
@@ -17,12 +17,11 @@ argument-hint: <実装したい機能・解決したい課題>
 
 ```
 .claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/
-├── plan.md                    ← 統合プラン（Phase 6 で作成）
+├── plan.md                    ← plan-reviewer Part 2 の修正版最終 plan をそのまま保存
 ├── raw/                       ← 計画フェーズの生レポート（全文保存）
-│   ├── explorer.md            ← または explorer-1.md, explorer-2.md ... （並列起動時）
-│   ├── architect-initial.md
-│   ├── architect-critique.md
-│   ├── plan-review.md
+│   ├── explorer.md            ← または explorer-1.md, explorer-2.md ... （並列起動時、自前で取った場合のみ）
+│   ├── architect.md           ← architect の初回案
+│   ├── plan-review.md         ← plan-reviewer の Part 1 (レビュー) + Part 2 (最終 plan)
 │   └── architect-revised-{n}.md  ← 差し戻し再策定時のみ（n は 1 始まり）
 ├── implementation.md          ← 実装ログ・変更ファイル一覧・動作確認結果
 ├── review.md                  ← zeus-reviewer の生レポート
@@ -30,15 +29,17 @@ argument-hint: <実装したい機能・解決したい課題>
 └── fix-log.md                 ← 修正ループの履歴（修正があった場合のみ）
 ```
 
+`spec.md` からの handoff の場合、spec が取った `raw/explorer.md` を再利用するため自前で explorer を起動しない (Phase 2 参照)。
+
 `{slug}` はタスク内容の短い英語スラッグ（kebab-case, 30 文字以内）。
 
 ## 使用エージェント
 
 | エージェント | subagent_type | 役割 |
 |---|---|---|
-| Zeus Explorer | `zeus-explorer` | コードベース探索、必読ファイル抽出 |
-| Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定（初回 + self-critique） |
-| Zeus Plan Reviewer | `zeus-plan-reviewer` | architect の plan を第三者視点で批判レビュー |
+| Zeus Explorer | `zeus-explorer` | コードベース探索、必読ファイル抽出 (spec からの handoff 時は再起動しない) |
+| Zeus Architect | `zeus-architect` | 複数観点を内包した実装ブループリント策定 (初回案のみ、self-critique は plan-reviewer に統合) |
+| Zeus Plan Reviewer | `zeus-plan-reviewer` | architect 初回案を批判 + Critical/Warning を反映した修正版最終 plan までを返す |
 | Zeus Reviewer | `zeus-reviewer` | logic / design / security / performance / maintainability を統合観点でレビュー |
 
 実装フェーズ (Phase 7) は **メインスレッドが直接 Edit/Write で行う**。explorer / architect / plan-review で築いた文脈・設計判断の意図をそのまま実装に持ち込むことで、レビュー指摘の文脈共有と修正ループの精度を最大化する狙い。
@@ -49,12 +50,23 @@ argument-hint: <実装したい機能・解決したい課題>
 
 1. 引数なし → エラー終了「`/zeus:dev <task>` でタスクを指定してください」
 2. 引数の文字列をタスク内容として確定
-3. タスクから英語 slug を生成（kebab-case, 30 文字以内）
-4. 作業ディレクトリを確定: `.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/`
-5. `raw/` サブディレクトリも作成
-6. タスク文字列が曖昧 / 制約が不明確な場合は `AskUserQuestion` で要件を確認 (何回聞いても良い)
+3. **spec.md からの handoff 判定**: 引数に `.claude/zeus/specs/.../spec.md` のパスが含まれていれば spec モードと判定し、その spec.md を Read してタスク詳細・採用技術・既存実装との関係を取り込む。同 spec ディレクトリ配下の `raw/explorer.md` も存在するか確認 (Phase 2 で再利用)
+4. タスクから英語 slug を生成（kebab-case, 30 文字以内）
+5. 作業ディレクトリを確定: `.claude/zeus/{YYYYMMDD-HHMMSS}-{slug}/`
+6. `raw/` サブディレクトリも作成
+7. タスク文字列が曖昧 / 制約が不明確な場合は `AskUserQuestion` で要件を確認 (何回聞いても良い)
 
 ### Phase 2: コードベース探索
+
+#### spec.md からの handoff の場合 (推奨パス)
+
+`spec.md` のディレクトリ配下に `raw/explorer.md` があれば、それをそのまま Read で取り込み、**自前で `zeus-explorer` を起動しない**。spec フェーズで既に同じタスク領域を調査済みなので二重探索を避ける。
+
+- spec の `raw/explorer.md` から必読ファイル一覧を抽出 → メインが直接 Read
+- 必要なら dev 側の `raw/explorer.md` にコピーまたはシンボリックリンク代わりに「spec 側を再利用」の旨を 1 行追記する形でも可
+- 追加の探索が必要だと判断した場合 (spec から時間が経って差分がある / 追加領域が必要) のみ補完的に `zeus-explorer` を起動し、`raw/explorer-supplement.md` に保存
+
+#### handoff でない / explorer.md が存在しない場合
 
 `zeus-explorer` を起動してコードベースを読み解く。
 
@@ -66,7 +78,7 @@ argument-hint: <実装したい機能・解決したい課題>
 
 生レポートを `raw/explorer.md`（並列時は `explorer-1.md` `explorer-2.md` ...）に全文保存。
 
-### Phase 3: 実装ブループリント策定（初回）
+### Phase 3: 実装ブループリント策定
 
 `zeus-architect` を 1 体起動する。プロンプトには以下を含める:
 
@@ -74,28 +86,18 @@ argument-hint: <実装したい機能・解決したい課題>
 - Phase 2 で得た主要ファイル一覧と要点サマリ
 - **「作業前に必ず CLAUDE.md / プロジェクト規約を Read せよ」と再強調**
 
-生レポートを `raw/architect-initial.md` に全文保存。
+生レポートを `raw/architect.md` に全文保存。
 
-### Phase 4: Self-Critique（盲点炙り出し）
-
-`zeus-architect` をもう一度起動。プロンプトには以下を含める:
-
-- Phase 3 で出力された案の全文
-- 「上記案を批判的に再評価せよ。盲点・落とし穴・トレードオフを徹底的に列挙し、修正が必要なら修正版を出せ」
-
-生レポートを `raw/architect-critique.md` に全文保存。
-
-### Phase 5: 第三者プランレビュー
+### Phase 4: プランレビュー + 最終 plan 生成
 
 `zeus-plan-reviewer` を起動。プロンプトには以下を含める:
 
 - 元のタスク内容
 - Phase 2 の `zeus-explorer` 結果（必読ファイルと要点）
-- Phase 3 の初回案
-- Phase 4 の self-critique 結果
-- 「第三者視点で批判的にレビューせよ」
+- Phase 3 の architect 初回案
+- 「architect 案を批判的にレビューし、Critical / Warning を反映した修正版最終 plan を Part 2 として返せ。self-critique フェーズはここに統合されている」
 
-`zeus-plan-reviewer` は総合判定（承認 / 条件付き承認 / 差し戻し）と Critical / Warning / Info を返す。
+`zeus-plan-reviewer` は **Part 1 (レビュー結果) + Part 2 (修正版最終 plan)** の 2 部構成で返す。
 
 生レポートを `raw/plan-review.md` に全文保存。
 
@@ -103,23 +105,15 @@ argument-hint: <実装したい機能・解決したい課題>
 
 | 判定 | アクション |
 |---|---|
-| **承認** | そのまま Phase 6 へ |
-| **条件付き承認** | 指摘箇所を統合プランで反映して Phase 6 へ |
-| **差し戻し** | `AskUserQuestion` で「再策定する / 指摘を未解決リスクとして明記して進む / タスク見直し」を確認。再策定の場合は指摘を渡して `zeus-architect` を再起動、`raw/architect-revised-{n}.md` に保存（n は 1 始まり）。再策定後も差し戻されたら再度 `AskUserQuestion` |
+| **承認** | Part 2 の最終 plan をそのまま `plan.md` として Write → Phase 5 へ |
+| **条件付き承認** | Part 2 の修正版最終 plan をそのまま `plan.md` として Write (Critical/Warning は plan-reviewer が既に反映済み) → Phase 5 へ |
+| **差し戻し** | `AskUserQuestion` で「再策定する / 指摘を未解決リスクとして明記して進む / タスク見直し」を確認。再策定の場合は Part 1 の差し戻し理由を渡して `zeus-architect` を再起動、`raw/architect-revised-{n}.md` に保存 (n は 1 始まり) → 再度 plan-reviewer を起動。再策定後も差し戻されたら再度 `AskUserQuestion` |
 
-### Phase 6: 統合プラン作成
+メインがやることは「`plan-review.md` の Part 2 を `plan.md` として Write する」だけ。手動統合は不要。
 
-メインエージェントが `zeus-architect` の最終出力を中心に、`zeus-explorer` の発見・`zeus-plan-reviewer` の指摘も統合した最終的な実装プランを作成する。
+### Phase 5: 実装フェーズ（メインスレッド直接実装）
 
-- `zeus-architect` の最終案（self-critique 反映済み、差し戻し時は最後の再策定版）を基本構造として採用
-- `zeus-plan-reviewer` の Critical / Warning 指摘を必ず反映
-- 差し戻し後の未解決指摘は「未解決リスク」セクションに明記
-
-統合プランを `.claude/zeus/{ts}-{slug}/plan.md` に保存。
-
-### Phase 7: 実装フェーズ（メインスレッド直接実装）
-
-メインスレッドが Phase 6 で確定した `plan.md` の実装を **直接 Edit/Write で行う**。
+メインスレッドが Phase 4 で確定した `plan.md` の実装を **直接 Edit/Write で行う**。
 explorer / architect / plan-review で築いた文脈・設計判断の意図をそのまま実装に持ち込むことで、レビュー指摘の理解度と修正ループの精度を最大化する。
 
 実装は以下のサブフェーズに分けて進める:
@@ -127,9 +121,8 @@ explorer / architect / plan-review で築いた文脈・設計判断の意図を
 #### A. 事前整合性チェック
 
 1. `plan.md` を再読し、ビルド順序を `TaskCreate` で展開
-2. raw レポートのうち実装判断に必要なもの (例: `raw/explorer*.md` の必読ファイル抜粋、`raw/plan-review.md` の Critical/Warning 指摘) を再確認
-3. 変更対象ファイル群を Read で確認 (既に Phase 2 で読んだものは差分のみ)
-4. 既存実装との衝突や前提の不一致を発見した場合は `AskUserQuestion` で「plan を上書く / 既存に合わせる / Phase 6 に戻って再策定」を確認
+2. **raw レポートと必読ファイルは Phase 1〜4 までで既にメイン context に保有済み**。再 Read は不要 — Phase 2 で Read した必読ファイルや Phase 4 で plan-reviewer が指摘した Critical/Warning は、すでにメインスレッドの会話履歴に乗っている。新たに発生した疑問だけ Read で補う
+3. 既存実装との衝突や前提の不一致を発見した場合は `AskUserQuestion` で「plan を上書く / 既存に合わせる / Phase 4 に戻って plan-reviewer に再策定させる」を確認
 
 #### B. 実装
 
@@ -151,10 +144,10 @@ explorer / architect / plan-review で築いた文脈・設計判断の意図を
 
 - 型 / lint / build / test を順に実行
 - 結果を `implementation.md` の「動作確認結果」セクションに記録
-- 自分の実装ミスによる失敗は **3 回まで自己修正**。それを超える場合は `AskUserQuestion` で「さらに修正試行 / Phase 8 のレビュー対象として diff を渡す / Phase 6 に戻って再策定」を確認
-- 環境問題 / 既存リグレッション / plan 前提との食い違いと判断したら Phase 8 のレビュー対象として diff を引き渡す (reviewer が原因を特定 → 修正ループへ)
+- 自分の実装ミスによる失敗は **3 回まで自己修正**。それを超える場合は `AskUserQuestion` で「さらに修正試行 / Phase 6 のレビュー対象として diff を渡す / Phase 4 に戻って plan-reviewer に再策定させる」を確認
+- 環境問題 / 既存リグレッション / plan 前提との食い違いと判断したら Phase 6 のレビュー対象として diff を引き渡す (reviewer が原因を特定 → 修正ループへ)
 
-### Phase 8: セルフレビュー
+### Phase 6: セルフレビュー
 
 `zeus-reviewer` を 1 体起動。プロンプトには以下を含める:
 
@@ -164,20 +157,20 @@ explorer / architect / plan-review で築いた文脈・設計判断の意図を
 
 応答を省略せず全文 `.claude/zeus/{ts}-{slug}/review.md` に保存。
 
-### Phase 9: 修正ループ
+### Phase 7: 修正ループ
 
 - **Critical は必ず自動修正**（自動進行、承認不要 — 動作を壊している指摘なので）
-- **Phase 7 サブフェーズ D で検出された動作確認の失敗** も Critical として修正
+- **Phase 5 サブフェーズ D で検出された動作確認の失敗** も Critical として修正
 - **Warning は `AskUserQuestion` で確認**: 「全部修正 / 個別に確認 / 後回し (Issue 化) / スコープ外として記録」
 - **Info は記録のみで修正しない**
 
 修正を行った場合、`fix-log.md` に「指摘 → 修正内容 → 該当ファイル」を記録。
 
-修正実装はメインが直接 Edit/Write で行う (Phase 7 と同じ主体)。reviewer の指摘文脈をメインがそのまま保持しているため、修正判断のブレが起きにくい。大規模な再実装が必要な場合は `AskUserQuestion` で「メインで修正継続 / Phase 6 に戻って plan 再策定」を確認する。
+修正実装はメインが直接 Edit/Write で行う (Phase 5 と同じ主体)。reviewer の指摘文脈をメインがそのまま保持しているため、修正判断のブレが起きにくい。大規模な再実装が必要な場合は `AskUserQuestion` で「メインで修正継続 / Phase 4 に戻って plan-reviewer に再策定させる」を確認する。
 
-### Phase 10: 修正後の再レビュー（Critical / Warning 修正時のみ）
+### Phase 8: 修正後の再レビュー（Critical / Warning 修正時のみ）
 
-Phase 9 で **Critical または Warning を修正した場合のみ**、もう一度 `zeus-reviewer` を起動する。
+Phase 7 で **Critical または Warning を修正した場合のみ**、もう一度 `zeus-reviewer` を起動する。
 これは「修正で別バグを生むリスク」を検出するため。
 
 - プロンプトには「修正後の差分」「修正前の指摘」「修正内容」を渡す
@@ -199,8 +192,14 @@ Phase 9 で **Critical または Warning を修正した場合のみ**、もう�
 
 ## 他スキルからの呼び出し
 
-`/zeus:spec` `/zeus:review` `/zeus:debug` などから handoff される際は、それらが生成した `plan-handoff.md` のパスを引数に渡せばよい:
+`/zeus:spec` `/zeus:review` `/zeus:debug` などから handoff される際は、それらが生成した **生成物のパス** を引数に直接渡す (専用の handoff ファイルは生成しない):
+
+| 元スキル | 渡すパス | dev での扱い |
+|---|---|---|
+| `/zeus:spec` | `.claude/zeus/specs/{ts}-{slug}/spec.md` | Phase 1 で Read してタスク詳細・採用技術を取り込み、Phase 2 で同ディレクトリ配下の `raw/explorer.md` を再利用 |
+| `/zeus:review` | `.claude/zeus/reviews/{ts}-{mode}/review-validated.md` | Phase 1 で Read し、確定指摘を修正タスクとして扱う |
+| `/zeus:debug` | `.claude/zeus/debug/{ts}-{slug}/debug-validated.md` | Phase 1 で Read し、root-cause / contributing-factor を修正タスクとして扱う |
 
 ```
-Skill(skill="zeus:dev", args="<元タスク要約>。詳細は .claude/zeus/.../plan-handoff.md を参照")
+Skill(skill="zeus:dev", args="<元タスク要約>。詳細は <生成物パス> を参照")
 ```

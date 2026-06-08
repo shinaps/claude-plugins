@@ -32,12 +32,13 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
 .claude/zeus/debug/{YYYYMMDD-HHMMSS}-{slug}/
 ├── input.md                ← 症状・再現手順のサマリ
 ├── debug-report.md         ← zeus-debugger の生レポート（仮説一覧）
-├── debug-validated.md      ← zeus-debug-validator の検証済みレポート
-├── raw/                    ← Phase 4.5 で外部情報深掘りを実施した場合のみ
-│   ├── survey.md           ← zeus-tech-surveyor の生レポート
-│   └── survey-validated.md ← zeus-survey-validator の検証済みレポート
-└── plan-handoff.md         ← /zeus:dev への引き継ぎ（橋渡し時のみ）
+├── debug-validated.md      ← zeus-debug-validator の検証済みレポート (dev には直接このパスを渡す)
+└── raw/                    ← Phase 4.5 で外部情報深掘りを実施した場合のみ
+    ├── survey.md           ← zeus-tech-surveyor の生レポート
+    └── survey-validated.md ← zeus-survey-validator の検証済みレポート
 ```
+
+`debug-validated.md` は dev での修正計画に必要な root-cause / contributing-factor / 関連外部情報を含むため、Phase 4.5 を実施した場合は debug-validator に **debug-validated.md に「## 関連する外部情報」セクションを設け、`raw/survey-validated.md` の要点 (採用すべき修正パターン・避けるべき落とし穴・代替案など) を反映させる** 形にする。
 
 `{slug}` は症状の短い英語スラッグ（kebab-case, 30 文字以内）。
 
@@ -125,7 +126,7 @@ argument-hint: <なし | エラーメッセージ / 症状の説明 | ファイ�
    - 「この根本原因に関連する **既知バグ / changelog / 公式推奨の修正パターン / 代替ライブラリ / 類似事例** を WebSearch / WebFetch で調査せよ。**実装可能な修正方針を具体化することが目的**」
 2. 応答を全文 `.claude/zeus/debug/{ts}-{slug}/raw/survey.md` に保存
 3. `zeus-survey-validator` を起動して出典・鮮度を検証、`raw/survey-validated.md` に全文保存
-4. 検証結果を Phase 6 の `plan-handoff.md` 生成時に「関連する外部情報」セクションへ反映
+4. 検証結果は debug-validator が `debug-validated.md` 内の「## 関連する外部情報」セクションへ反映する (dev はこのセクションを直接読む)
 
 ### Phase 5: 次アクション選択
 
@@ -142,46 +143,22 @@ root-cause が 0 件で needs-reproduction のみの場合:
 
 ### Phase 6: /zeus:dev への橋渡し（修正実装選択時）
 
-1. `debug-validated.md` の root-cause / contributing-factor を整理し、`plan-handoff.md` に保存:
+中間ファイル (旧 `plan-handoff.md`) は生成しない。`Skill` ツールで `zeus:dev` を起動し、引数に `debug-validated.md` のパスを直接渡す。
 
-```markdown
-# /zeus:dev への引き継ぎ（デバッグ結果）
+dev 側の Phase 1 で `debug-validated.md` を Read して root-cause / contributing-factor / 関連外部情報を取り込み、Phase 2-3 で修正計画を立てる。
 
-- 元調査: .claude/zeus/debug/{ts}-{slug}/debug-validated.md
-- 症状: {1 行サマリ}
+`debug-validated.md` は debug-validator が以下の構造で書いている前提:
 
-## 確定した根本原因
+- 確定した根本原因 (Root Cause + Contributing Factors)
+- 推奨される修正方針 (対症療法ではない理由付き)
+- テスト方針 (再現テスト + リグレッションテスト)
+- 関連する外部情報 (Phase 4.5 を実施した場合の survey-validated 要点)
 
-### Root Cause
-{root-cause の説明。コード参照付き}
+引数例:
 
-### Contributing Factors
-{あれば}
-
-## 修正タスク
-
-### 1. {修正項目}（優先度: 高）
-- 対象: `path/to/file.ts:42`
-- 修正内容: {根本的な修正方針}
-- 注意点: {副作用・影響範囲}
-
-### 2. ...
-
-## 対症療法ではない理由
-
-{なぜこの修正方針が根本解決になるか。対症療法との違い}
-
-## テスト方針
-
-{修正後に確認すべき再現テストとリグレッションテスト}
-
-## 関連する外部情報
-
-{WebSearch / GitHub Issue で見つけた関連情報への参照。Phase 4.5 を実施した場合は `raw/survey-validated.md` の要点 (採用すべき修正パターン・避けるべき落とし穴・代替案など) もここに反映}
 ```
-
-2. `Skill` ツールで `zeus:dev` を起動:
-   - 引数例: 「以下のデバッグ結果に基づき根本原因を修正する。詳細は `.claude/zeus/debug/{ts}-{slug}/plan-handoff.md` を参照: {根本原因の 1 行サマリ}」
+Skill(skill="zeus:dev", args="以下のデバッグ結果に基づき根本原因を修正する。詳細は .claude/zeus/debug/{ts}-{slug}/debug-validated.md を参照: {根本原因の 1 行サマリ}")
+```
 
 ### Phase 7: 追加調査（追加調査選択時）
 

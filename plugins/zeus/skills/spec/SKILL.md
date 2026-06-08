@@ -26,16 +26,15 @@ argument-hint: <ざっくりした要望（省略可）>
 
 ```
 .claude/zeus/specs/{YYYYMMDD-HHMMSS}-{slug}/
-├── spec.md                ← zeus-spec-writer が作成
+├── spec.md                ← zeus-spec-writer が作成 (dev には spec.md パスを直接渡す)
 ├── interview-log.md       ← ヒアリングのやりとり記録
-├── raw/                   ← 調査エージェントの生レポート
-│   ├── explorer.md        ← 既存実装調査（実施時のみ）
+├── raw/                   ← 調査エージェントの生レポート (dev が再利用)
+│   ├── explorer.md        ← 既存実装調査（実施時のみ、dev が再利用）
 │   ├── survey.md          ← フィジビリティ調査一次レポート（実施時のみ）
 │   └── survey-validated.md ← 検証済み調査（実施時のみ）
-├── prototype/             ← プロトタイプ実装（実施時のみ、隔離スペース）
-│   ├── {試したコード一式}
-│   └── prototype-report.md ← 実験結果サマリ
-└── plan-handoff.md        ← /zeus:dev への引き継ぎ（橋渡し時のみ）
+└── prototype/             ← プロトタイプ実装（実施時のみ、隔離スペース）
+    ├── {試したコード一式}
+    └── prototype-report.md ← 実験結果サマリ
 ```
 
 `{slug}` は要望の短い英語スラッグ（kebab-case, 30 文字以内）。
@@ -199,7 +198,21 @@ argument-hint: <ざっくりした要望（省略可）>
 - プロジェクトコンテキスト（CLAUDE.md の関連部分）
 - 「ヒアリングと調査結果を統合した構造化された仕様書を作成せよ。既存実装の状況・技術的方向性・採用技術（あれば）も spec.md に反映すること」
 
-spec.md には「## 5. 制約」セクション末尾に以下のサブセクションを必ず含めること（技術選定を実施した場合）:
+spec.md には以下を必ず含めること:
+
+**(1) 関連調査リソース セクション** (冒頭付近)
+
+`/zeus:dev` 側が再利用するため、調査結果のファイルパスを明示する:
+
+```markdown
+## 関連調査リソース
+
+- 既存実装調査: raw/explorer.md（実施時のみ。dev の Phase 2 で再利用される）
+- ベストプラクティス調査: raw/survey-validated.md（実施時のみ）
+- プロトタイプ: prototype/prototype-report.md（実施時のみ）
+```
+
+**(2) 技術スタック サブセクション** (「## 5. 制約」末尾、技術選定を実施した場合のみ)
 
 ```markdown
 ### 技術スタック（Phase 4-A で確定）
@@ -229,38 +242,15 @@ spec.md には「## 5. 制約」セクション末尾に以下のサブセクシ
 
 ### Phase 9: /zeus:dev への橋渡し（選択時）
 
-1. `spec.md` から `plan-handoff.md` を生成:
+中間ファイル (旧 `plan-handoff.md`) は生成しない。`Skill` ツールで `zeus:dev` を起動し、引数に **`spec.md` のパスを直接渡す**。
 
-```markdown
-# /zeus:dev への引き継ぎ
+dev 側の Phase 1 で spec.md を Read してタスク詳細・採用技術・既存実装との関係を取り込み、Phase 2 で同ディレクトリ配下の `raw/explorer.md` をそのまま再利用する (= dev は explorer を改めて起動しない)。これにより spec ↔ dev の二重 explorer を削減する。
 
-- 元仕様書: .claude/zeus/specs/{ts}-{slug}/spec.md
-- 既存実装調査: .claude/zeus/specs/{ts}-{slug}/raw/explorer.md（実施時のみ）
-- ベストプラクティス調査: .claude/zeus/specs/{ts}-{slug}/raw/survey-validated.md（実施時のみ）
+引数例:
 
-## 実装タスク（spec.md ベース）
-
-{spec.md の機能要件・非機能要件・スコープを dev が消費しやすい形に変換}
-
-## 制約・優先度
-
-{spec.md の制約セクションから、dev が考慮すべき項目を抽出}
-
-## 既存実装との関係
-
-{Phase 3 の調査結果から、活用できる既存パターン・触ってはいけない場所を整理}
-
-## 採用方針
-
-{Phase 4 のベストプラクティス調査から、採用すべきパターン・避けるべき落とし穴を整理}
-
-## 未解決の論点（dev での計画策定で判断が必要）
-
-{spec.md の未解決論点をそのまま転記}
 ```
-
-2. `Skill` ツールで `zeus:dev` を起動、引数として `plan-handoff.md` のパスと 1 行サマリを渡す:
-   - 引数例: 「以下の仕様書を実装する。詳細は `.claude/zeus/specs/{ts}-{slug}/plan-handoff.md` を参照: {1 行サマリ}」
+Skill(skill="zeus:dev", args="以下の仕様書を実装する。詳細は .claude/zeus/specs/{ts}-{slug}/spec.md を参照: {1 行サマリ}")
+```
 
 ## 動作原則
 
