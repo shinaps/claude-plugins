@@ -12,7 +12,7 @@
 
 | スキル | 役割 |
 |---|---|
-| `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + zeus-survey-validator で外部情報を検証、複数候補があれば AskUserQuestion で採用決定) + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める。技術選定 (旧 `/zeus:tech-survey` 相当) も統合済み。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
+| `/zeus:spec [要望]` | 対話的ヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor + zeus-survey-validator で外部情報を検証、複数候補があれば AskUserQuestion で採用決定) + 技術選定 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める。`zeus-spec-writer` で構造化し `/zeus:dev` へ橋渡し可能 |
 | `/zeus:dev <task>` | **計画策定 → 実装 → セルフレビュー一気通貫スキル**。`zeus-explorer` → `zeus-architect` (initial + self-critique) → `zeus-plan-reviewer` (第三者レビュー、差し戻し時はユーザー確認しつつ自動再策定ループ) → **メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 + implementation.md 執筆** → `zeus-reviewer` でセルフレビュー → Critical 自動修正 + Warning は確認の上修正。実装をメインで担うことで計画フェーズの文脈をそのまま実装と修正ループに引き継ぐ |
 | `/zeus:review [PR/path]` | 単独レビュー。引数なしで現ブランチ diff、数字で GitHub PR、パスで既存コードを `zeus-reviewer` + `zeus-review-validator` でレビュー、確定指摘は `/zeus:dev` 橋渡しで修正実装まで進められる |
 | `/zeus:review-diff [PR番号]` | **最終承認ゲート**。staged diff または PR の diff を Linear 風 UI でブラウザに開き、ファイル単位 Reviewed チェック + コメント + Approve/Reject で人間が承認する。Approve なら commit、Reject なら集めたコメントを反映 → Skill ツール経由で自動再起動。`/zeus:review` の機械レビューに対し、こちらは「人間が目で見て承認する」動線 |

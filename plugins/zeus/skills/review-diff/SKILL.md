@@ -1,6 +1,6 @@
 ---
 name: review-diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 UI でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。v4.8.0 で Channels インフラ + unified mode を全廃し、split mode 一本化 + context+ ボタンは close-relaunch + state restore モデルに刷新 (Reviewed / line comments / 未保存 draft を再起動後に復元)。Approve なら commit に進み、Reject ならコメント反映 → 修正後に Skill ツールで自動再起動。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
+description: 直前の staged diff または既存 PR の diff を Linear 風 UI (split mode) でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。Approve なら commit に進み、Reject ならコメント反映 → Skill ツールで自動再起動。context+ ボタンは close-relaunch + state restore モデルで Reviewed / line comments / 未保存 draft を再起動後に復元。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
 argument-hint: <なし | PR番号>
 ---
 
@@ -10,18 +10,13 @@ argument-hint: <なし | PR番号>
 このスキルは **人間が目で見て最終承認する** ためのゲートです。
 diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェック + 自由コメント + Approve/Reject を返してもらいます。
 
-**v4.7.0 で `panel` ベースに作り変えました**。1 つの「変更の意味的単位 = panel」が:
+レビュー単位は **panel** です。1 つの「変更の意味的単位 = panel」が:
 - `intent` (どんな意図の変更か、1 行)
 - `asIs` (変更前: ファイル + 行範囲集合)
 - `toBe` (変更後: ファイル + 行範囲集合)
 
-を持つ最小ユニットになっています。git の hunk より粗くも細かくもなれ、cross-file 移動も 1 panel で表現できます。
-
-**v4.8.0 の変更点**:
-- Claude Code Channels の SSE 経路 (`channel-server.js` / `--channels-enabled` / MCP server) を全廃
-- unified mode (単一カラム表示) を全廃、split mode (左右並列) 一本化
-- context+ ボタンは「現状 state を回収して CLI を一度終了 → SKILL が summary.json を再生成 → Skill 自動再起動」の close-relaunch ループに変更
-- 再起動時に前回の Reviewed / line comments / 未保存 draft を `restore.json` 経由で復元
+を持つ最小ユニットになっており、git の hunk より粗くも細かくもなれ、cross-file 移動も 1 panel で表現できます。
+表示は split mode (左右並列) 固定、context+ ボタンは close-relaunch + state restore モデルで動作します。
 
 ## 引数仕様と動作モード
 
@@ -44,7 +39,7 @@ diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェ�
 ├── diff.patch       ← staged または gh pr diff の出力
 ├── pr-meta.json     ← PR モードのみ
 ├── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
-└── restore.json     ← v4.8.0 regen-group 後の再起動で前回 state を復元するための中間 JSON
+└── restore.json     ← regen-group 後の再起動で前回 state を復元するための中間 JSON
 ```
 
 **Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
@@ -148,7 +143,7 @@ CLI は `gh api` 経由で base/head SHA の blob を取得して `/source` エ�
 **注意 (GitHub rate limit)**: 1 ファイルあたり 2 回 (`base` + `head`) の `gh api` 呼び出しが走る。
 authenticated rate limit は 5000 req/hour なので通常のレビューで枯渇する心配は無い。
 
-### Phase 4: サマリ JSON 生成 (Write ツール強制) — v4.7.0 panel スキーマ
+### Phase 4: サマリ JSON 生成 (Write ツール強制)
 
 1. `diff.patch` を Read で読み込み内容を把握する
 2. pr モードなら `pr-meta.json` も Read
@@ -200,7 +195,7 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 }
 ```
 
-- `schemaVersion` は **必ず `1`** (CLI が legacy v4.6 schema を detect すると stderr に migration メッセージを出して exit 1 する)
+- `schemaVersion` は **必ず `1`**
 - `panels[]` は **最低 1 つ**
 - 各 `panel` は `asIs` か `toBe` の **少なくとも一方** が必須 (両方欠落不可)
 
@@ -212,6 +207,17 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 - **cross-file 異言語** (`.js` → `.ts` 移行など) も OK: CLI が両側別言語で syntax highlight する
 - **asIs だけ / toBe だけ を恐れない**: 純粋追加・純粋削除も明示的に 1 panel
 - **context-only panel も OK**: 不変だが説明に必要な領域 (= ranges が変更行を含まなくてもよい)
+
+#### ranges は実測必須 (概算禁止)
+
+`asIs.ranges` / `toBe.ranges` を書く前に、**対象ファイルを Read で開いて論理ブロックの開始行と終端行を実測** してから数値を入れる。
+
+- ❌ NG パターン: 「diff の変更行 (±N 行) を概算で広めに切る」「頭の中で行ずれを推測する」
+- ✅ OK パターン: Read で「テーブルが何行目から何行目まで」「関数 header が何行目で、closing brace が何行目」を確認した上で range を決める
+
+理由: `intent` がレビュアーに伝わるかどうかは **その range の中で意味が完結しているか** で決まる。テーブルから 1 行削除する panel で、テーブル header しか含まれなかったら、レビュアーは「そのファイルが結局どんなテーブルになったか」を読み取れず reject される。**変更後 (toBe) の range は特に実測必須**: 行ずれで終端が切れやすい。
+
+行数が増減する変更では、asIs と toBe で同じ行番号にはならない。両側それぞれを Read で測ること。
 
 #### 1 変更 = 1 intent (discourage rule)
 
@@ -280,7 +286,7 @@ CLI の挙動:
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"approve"|"reject"|"timeout"|"regen-group", ...}`
 
-#### Comment / Result shape (v4.8.0)
+#### Comment / Result shape
 
 `comments[]` の各要素は scope union 構造:
 - `{ "body": "...", "scope": { "type": "overall" } }` — 全体コメント
@@ -304,8 +310,8 @@ ResultJson 全体:
 ```
 
 注意:
-- `reviewedFiles` (旧) ではなく **`reviewedPanels`** (新)。記録単位が file → panelId に変わった
-- 行コメントの side は **`asIs` / `toBe`** (camelCase)。旧 `left` / `right` ではない
+- 記録単位は **`reviewedPanels`** (panelId ベース)
+- 行コメントの side は **`asIs` / `toBe`** (camelCase)
 - 行コメントの `file` は panel の対応する側 (`asIs.file` または `toBe.file`) を自動で入れる
 
 ### Phase 6: 結果分岐
@@ -337,7 +343,7 @@ stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WO
    - pr モードなら同じ PR 番号を渡す
    - Skill ツールが使えない環境では `AskUserQuestion` で「もう一度 /zeus:review-diff を手動実行してください」と告げる
 
-#### regen-group (v4.8.0 新規)
+#### regen-group
 
 ブラウザの context+ ボタン押下で `decision: 'regen-group'` が返る。これは「現在の group の context が
 狭すぎる、もっと広げて見たい」という人間からのリクエスト。close-relaunch + state restore で対応する。
@@ -372,8 +378,6 @@ stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WO
 実装メモ:
 - regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
   Phase 2 の `WORK_DIR` 決定ロジックで「直近の review-diff の work-dir に restore.json があれば再利用」する分岐を入れる。
-- CLI は `--restore-state` を知らないバージョン (v4.7.x cache) でも `parseArgs({strict:false})` で unknown flag を skip するので、
-  fail せず通常起動に degrade する (前回 state は失われるが UI は動く)。
 
 #### timeout
 
@@ -384,20 +388,6 @@ stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WO
   ```bash
   rm -rf "$WORK_DIR"
   ```
-
-## context+ 再生成の範囲 (v4.8.0 AC)
-
-v4.8.0 の context+ 再生成は **同一 group の panels[] 拡張のみ** をサポートします。
-以下の操作は **v4.8.0 では out-of-scope** で、将来別 release で対応する可能性があります:
-
-- 新規 group の追加 / 既存 group の削除 / group の並び替え
-- group の `title` / `description` の変更
-- cross-group での panel 移動
-- panel 範囲の **縮小** (より狭い context へ。Plan で UX 検証が必要と判断)
-
-`regenGroup.groupId` で特定された既存 group の panels を、より広い asIs.ranges / toBe.ranges を
-持つ panels に差し替える形でしか反映されません。panelId は intent 除外 hash で安定なので、
-asIs/toBe の file を変えない限り Reviewed / line comments / draft は維持されます。
 
 ## 不明点があれば AskUserQuestion で聞く
 

@@ -1,6 +1,6 @@
 ---
 name: spec
-description: ざっくりした要望を入力に、対話的なヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor で外部情報 + zeus-survey-validator で出典検証 + 採用候補決定 + 必要ならプロトタイプ実装) を行い、「ほぼ実現できる」と確信できるレベルまで仕様を詰めて仕様書（spec.md）を作成するスキル。技術選定 (旧 /zeus:tech-survey 相当) も Phase 4-A に統合済み。spec 段階で実現可能性をしっかり検証することで /zeus:dev での差し戻しをほぼゼロにする。zeus-spec-writer で構造化し、そのまま /zeus:dev へ橋渡しできる
+description: ざっくりした要望を入力に、対話的なヒアリング + 既存実装調査 (zeus-explorer) + フィジビリティ調査 (zeus-tech-surveyor で外部情報 + zeus-survey-validator で出典検証 + 採用候補決定 + 必要ならプロトタイプ実装) + 技術選定 (Phase 4-A) を行い、「ほぼ実現できる」と確信できるレベルまで仕様を詰めて仕様書（spec.md）を作成するスキル。spec 段階で実現可能性をしっかり検証することで /zeus:dev での差し戻しをほぼゼロにする。zeus-spec-writer で構造化し、そのまま /zeus:dev へ橋渡しできる
 argument-hint: <ざっくりした要望（省略可）>
 ---
 
@@ -97,7 +97,7 @@ argument-hint: <ざっくりした要望（省略可）>
 `AskUserQuestion` で「外部情報を調査するか」を確認 (Recommended: Yes)。
 スキップする選択肢: 「既存スタック内で完結 / 自明な実装」な場合。
 
-このフェーズは旧 `/zeus:tech-survey` を統合したもので、フィジビリティ調査と技術選定の両方を担う。
+このフェーズはフィジビリティ調査と技術選定の両方を担う。
 
 実施する場合:
 
