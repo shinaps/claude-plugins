@@ -289,7 +289,7 @@ panel を持たせる)
 - **省略可**: 書かないと CLI がコンテンツ hash (`asIs` + `toBe` のみを対象、`intent` は除外) で `p-<hex10>` を自動生成
 - intent を hash 対象から外しているため、context+ 再生成で intent を書き直しても **panelId は不変**。draft コメントや Reviewed state が維持される
 - **安定性を取りたいなら明示**: `"refactor-foo-helper"` のような短い意味のある ID を書く
-- 使える文字: `^[A-Za-z0-9 _-]+$` (英数字 + 空白 + アンダースコア + ハイフン)。空白は CLI が `-` に自動正規化
+- 使える文字: `^[A-Za-z0-9 _-]*$` (英数字 + 空白 + アンダースコア + ハイフン、または空文字)。空白は CLI が `-` に自動正規化。空文字は前述の自動 hash 生成にフォールバックする
 - 同じ ID を 2 つの panel に付けると CLI が自動で `-1`, `-2` の suffix を付ける (warn は出ない)
 
 #### 網羅性厳格 (AC-3)
@@ -320,7 +320,7 @@ UI は summary.json の `groups[]` 順 / 各 group 内の `panels[]` 順 を **�
 - group は「読むべき順番」で並べる (抽象 → 具象、原因 → 結果、コア → 周辺)
 - 同じ group 内では「最初に読むべき panel」を先頭に
 
-pr モードでは `pr` フィールドに `pr-meta.json` の内容をそのまま入れる。
+pr モードの `pr` フィールドは現状 CLI からは参照されない (CLI は `--pr-meta` フラグから直接読む archival 用途)。`null` でも `pr-meta.json` の内容をそのまま入れても挙動は変わらないが、後で `summary.json` だけ見て文脈を復元できるよう、PR モードでは入れておくことを推奨。
 
 ### Phase 5: CLI 起動
 
@@ -345,6 +345,10 @@ CLI の挙動:
 - CLI 内部タイムアウトは 9 分 (Bash の 10 分より 1 分早く自爆して整合性を取る)
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"submit"|"timeout"|"regen-group", ...}` (合否は groupDecisions の分布から判定)
+
+UI には 2 つの主要タブがある (評価軸は **Guide タブの group decision** のみ):
+- **Guide タブ**: AI が summary.json で指定した group / panel をそのままナラティブ順で表示。Approve / Request Changes と group コメント / 行コメントを付ける本番の評価面
+- **Diff タブ**: GitHub 風に「1 ファイル = 1 panel (file 全体表示)」で全変更ファイルを順に俯瞰するための補助面。grouping を介さない素の差分確認用で、行コメントは付けられるが decision には影響しない (CLI 内部で `rawPanels` として別系統で構築される)
 
 #### Comment / Result shape (v4.12.0)
 
