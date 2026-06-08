@@ -1,29 +1,36 @@
-// アプリのトップレベル (v4.8.0 panel model + close-relaunch context+)。
+// アプリのトップレベル (v4.12.0 stacked PR 風 group ベース承認モデル)。
 //
 // 設計判断:
 //   - groups[].panels[] を素直に並べる単一スクロール (Linear Guide タブ風)
-//   - Reviewed の単位は file ではなく **panelId** (= reviewedPanels[])
-//   - Comment の構造は scope union ({type:'overall'} / {type:'line', panelId, side, file, line, endLine?})
-//   - v4.8.0: Channels SSE 経路を全廃。context+ ボタンは「現在 state を回収して POST /result に
-//     `decision: 'regen-group'` を送る → window.close() → SKILL.md 側で summary.json の該当 group
-//     の panels を ±N 行広げて再生成 → restore JSON を渡しつつ Skill 再起動」のループに変更。
-//     initialReviewedPanels / initialComments / initialLineCommentDrafts を payload から受け取って
-//     useState 初期化 + sessionStorage 書き戻しで前回状態をシームレスに復元する。
-//   - AI Review Report カード (page-header) は plan-reviewer C-2 で保持
+//   - 評価単位は **group** (= groupDecisions: Record<groupId, 'approved' | 'request-changes' | null>)。
+//     panel 単位 Reviewed は廃止し、AI が決めた group の切り方に沿って人間が判断する
+//   - group コメントは GroupNav 内に colocate (decision section)。textarea 入力は App ルート state を
+//     useCallback + spread 更新で安定化させ、再 render 嵐を防ぐ
+//   - Submit Review は全 group decision 確定時のみ active 化 (panels=0 group は自動 approved 扱い)
+//   - panels=0 group は decision 不要 (UI 上 disable)、自動 approved 扱いで Submit ゲートを通す
+//   - context+ ボタンは「現状 state を回収して POST /result に decision='regen-group' を送る
+//     → window.close() → SKILL.md 側で summary.json を再生成 → restore JSON を渡しつつ Skill 再起動」
+//     のループ。group decision / group comment / line comment / 未保存 draft 全てを restore する
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type {
   ClientPayload,
   Comment,
   DisplayRange,
+  GroupDecision,
   PrMeta,
   RenderedPanel,
   ResultJson,
 } from '@zeus/review-diff-shared'
 import { TabBar } from './TabBar'
 import { GroupSection } from './GroupSection'
-import { ActionBar } from './ActionBar'
-import { SubmitModal } from './SubmitModal'
+import { PanelBlock } from './PanelBlock'
+import { SubmitBar } from './SubmitBar'
+import { shouldAutoCollapseFile } from './auto-collapse'
+
+// Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
+// 「ちょっとした変更でもファイル全部表示」になりがち。閾値を低めに振って俯瞰時の応答性を確保。
+const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
 import { renderMarkdown, escapeHtml } from './markdown'
 import { getToken, lineCommentKey, parseLineCommentKey } from './state'
 import { useLineComments } from './useLineComments'
@@ -34,10 +41,7 @@ const NAV_WIDTH_MAX = 480
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
 
-// App ローカルの group state。v4.8.0 で SSE による in-place 差し替えが無くなったので
-// payload.groups から 1 回だけ初期化すれば足りる (regen は close-relaunch で別プロセスへ)。
-// それでも useState 持ちにしておくのは、将来 in-process な local edit (panel 並べ替え等) を
-// 入れる時にスムーズに拡張できるようにするため。
+// App ローカルの group state。
 type AppGroup = {
   groupId: string
   title: string
@@ -48,8 +52,6 @@ type AppGroup = {
 export function App({ payload }: Props) {
   const [groupsState] = useState<AppGroup[]>(() =>
     payload.groups.map((g, i) => ({
-      // W-1: CLI が `g${i}` で生成する RenderedGroup.groupId を優先採用。
-      // 古い payload (groupId 未設定) や test fixture 互換のため title / index fallback も残す。
       groupId: g.groupId || g.title || `group-${i}`,
       title: g.title,
       description: g.description,
@@ -59,8 +61,6 @@ export function App({ payload }: Props) {
 
   // initial state seed: payload.initialLineCommentDrafts を sessionStorage に書き戻し、
   // CommentForm が mount 時にそれを読んで draft フィールドを復元する。
-  // useEffect ではなく useState の lazy initializer で 1 回だけ実行することで、
-  // mount 後の re-render で重複書き込みされる事故を防ぐ (副作用だが mount-time guard 相当)。
   useState(() => {
     if (typeof sessionStorage === 'undefined') return null
     const drafts = payload.initialLineCommentDrafts
@@ -74,9 +74,7 @@ export function App({ payload }: Props) {
   })
 
   // 前回の line comments (saved) を useLineComments の seed にする。
-  // payload.initialComments のうち scope.type === 'line' のものだけが対象。overall は
-  // submit modal の input に流したいが、modal の入力欄まで貫通する fan は重いので
-  // 一旦 overall は捨てる (regen-group のループでは AI が再 review する前提)。
+  // payload.initialComments は CLI 側で pre-filter 済み (scope.type === 'line' のみ)。
   const initialLineCommentsMap = useMemo(() => {
     const m = new Map<string, string[]>()
     const list = payload.initialComments
@@ -91,23 +89,119 @@ export function App({ payload }: Props) {
     return m
   }, [payload.initialComments])
 
+  // v4.12.0 group decision state。
+  // panels.length === 0 の group は自動 approved 扱い (W-6): UI で decision 不要、
+  // Submit active 条件もこれで満たす。restore が来てもこれより自動 approved を優先する。
+  const [groupDecisions, setGroupDecisions] = useState<Record<string, GroupDecision | null>>(() => {
+    const init: Record<string, GroupDecision | null> = {}
+    for (const g of groupsState) {
+      if (g.panels.length === 0) {
+        init[g.groupId] = 'approved'
+        continue
+      }
+      const restored = payload.initialGroupDecisions?.[g.groupId]
+      init[g.groupId] = restored ?? null
+    }
+    return init
+  })
+  const [groupComments, setGroupComments] = useState<Record<string, string>>(
+    () => payload.initialGroupComments ?? {},
+  )
+
+  // 読了マーカ (panel 単位): group decision とは別軸の視覚アシスト。
+  // 左 nav の dot を click したら toggle。ResultJson には載せない (= 読了状態は session-local)。
+  // 将来 regen-group の restore に乗せたい場合は payload.initialReviewedPanels を seed する。
   const [reviewedPanels, setReviewedPanels] = useState<Set<string>>(
     () => new Set(payload.initialReviewedPanels ?? []),
   )
+
   const lineCommentHandlers = useLineComments({ lineComments: initialLineCommentsMap })
-  const [tab, setTab] = useState<Tab>('guide')
+  // 初期タブは Activity (AI Review Report をまず俯瞰してから Guide で詳細を進める動線)
+  const [tab, setTab] = useState<Tab>('activity')
+  // 訪問済みタブを追跡: 一度 mount したタブは content-visibility: hidden で隠して保持し、
+  // 次回切替を即時化する。Guide / Diff は 28 panel × 数千行 = 数万 DOM のレンダリングコストがあるため、
+  // 毎回 mount/unmount すると切替に数秒かかる (LoAF 実測 6 秒級)。
+  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set(['activity']))
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(tab)) return prev
+      const out = new Set(prev)
+      out.add(tab)
+      return out
+    })
+  }, [tab])
+
+  // タブ毎のスクロール位置を保存・復元 (Guide と Diff で独立スクロール)。
+  // 同じ document scroll を共有しているので、タブ切替前後で window.scrollY を save → restore する。
+  // ref で保持して setState を伴わない (再 render を引き起こさない)。
+  const scrollPositionsRef = useRef<Map<Tab, number>>(new Map())
+  const prevTabRef = useRef<Tab>('activity')
+  useEffect(() => {
+    // 旧タブの位置を保存し、新タブの保存位置 (or 0) に復元する。
+    // ブラウザの scroll restoration が tab change で介入しないよう instant で書き戻す。
+    scrollPositionsRef.current.set(prevTabRef.current, window.scrollY)
+    const target = scrollPositionsRef.current.get(tab) ?? 0
+    // 即座の scrollTo は新タブの DOM 準備が間に合わないと無視されるので rAF を待つ
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: target, behavior: 'instant' as ScrollBehavior })
+    })
+    prevTabRef.current = tab
+  }, [tab])
+
+  // Guide タブの prewarm: Activity 初回表示の安定後に background mount。
+  // 初回 click 時の 600〜1000ms 遅延を「ユーザーが Activity を読んでいる時間」に隠す。
+  // setTimeout 1500ms は Activity 初期 paint + reflow の安定を待つ目安。
+  // ブラウザが requestIdleCallback 対応ならそれを優先 (より「重くない」タイミングで実行)。
+  useEffect(() => {
+    let cancelled = false
+    const prewarmGuide = () => {
+      if (cancelled) return
+      setVisitedTabs(prev => {
+        if (prev.has('guide')) return prev
+        const next = new Set(prev)
+        next.add('guide')
+        return next
+      })
+    }
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (h: number) => void
+    }
+    let cancel: () => void
+    if (typeof w.requestIdleCallback === 'function') {
+      const handle = w.requestIdleCallback(prewarmGuide, { timeout: 3000 })
+      cancel = () => w.cancelIdleCallback?.(handle)
+    } else {
+      const handle = window.setTimeout(prewarmGuide, 1500)
+      cancel = () => window.clearTimeout(handle)
+    }
+    return () => {
+      cancelled = true
+      cancel()
+    }
+  }, [])
+
+  // タブ切替は重い render を伴うため React 18 の concurrent transition で非緊急化する。
+  // click → setTab() を urgent state update のまま実行すると click event handler 内で
+  // 同期 render が走り、その間 input が無反応になる (INP poor)。startTransition でラップすると:
+  //   - click → 旧 UI が一瞬残る (isPending=true)
+  //   - 新 UI render は background で進む (interrupt 可)
+  // 結果として INP が劇的に改善 (実測 6500ms → 16ms)。
+  // 注意: TabBar 内 input への state update には使ってはいけない (textarea のキー入力が遅延する)。
+  const [isPending, startTransition] = useTransition()
+  const onTabChange = useCallback((next: Tab) => {
+    startTransition(() => setTab(next))
+  }, [])
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
-  const [submitted, setSubmitted] = useState<null | 'approve' | 'reject' | 'regen'>(null)
+  const [submitted, setSubmitted] = useState<null | 'submit' | 'regen'>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [modalDecision, setModalDecision] = useState<null | 'approve' | 'reject'>(null)
-  // 連打防止 + ボタン disable 用フラグ。close-relaunch は 1 回しか走らないが、ユーザーが
-  // 連打した時に setTimeout(window.close) が複数回走って未確定の close が混乱するのを防ぐ。
+  // 連打防止 + ボタン disable 用フラグ
   const [regenPending, setRegenPending] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const tokenRef = useRef<string>(getToken())
 
-  // panelId → 所属 file (overall comment の file 併記用)
+  // panelId → 所属 file (line comment の file 併記用)
   const panelFileMap = useMemo(() => {
     const m = new Map<string, { asIsFile?: string; toBeFile?: string }>()
     for (const g of groupsState) for (const p of g.panels) {
@@ -124,30 +218,69 @@ export function App({ payload }: Props) {
     setScrollTarget(null)
   }, [scrollTarget])
 
-  const toggleReviewed = useCallback((panelId: string, next: boolean) => {
-    setReviewedPanels(prev => {
-      const out = new Set(prev)
-      if (next) out.add(panelId)
-      else out.delete(panelId)
-      return out
+  const onDecisionChange = useCallback((id: string, next: GroupDecision | null) => {
+    setGroupDecisions(prev => ({ ...prev, [id]: next }))
+    // v4.12.0 (refinement): Approve した瞬間に次の group へ自動スクロール。
+    // Request Changes / 解除 (null) では auto-scroll しない (修正する人は同じ位置に留まりたい)。
+    // 最後の group での Approve は scroll しない (= 次が無い)。
+    // setState 直後に DOM 更新待ちが必要なので rAF で 1 フレーム待つ。
+    if (next === 'approved') {
+      const idx = groupsState.findIndex(g => g.groupId === id)
+      if (idx >= 0 && idx < groupsState.length - 1) {
+        const target = groupsState[idx + 1]
+        requestAnimationFrame(() => {
+          const sel = `.group-section[data-group-id="${cssEscape(target.groupId)}"]`
+          const el = containerRef.current?.querySelector(sel) as HTMLElement | null
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
+      }
+    }
+  }, [groupsState])
+
+  const onCommentChange = useCallback((id: string, body: string) => {
+    setGroupComments(prev => {
+      // 空文字列なら entry を削除して payload を綺麗に保つ
+      if (body === '') {
+        const out = { ...prev }
+        delete out[id]
+        return out
+      }
+      return { ...prev, [id]: body }
     })
   }, [])
 
-  function markAll() {
-    setReviewedPanels(new Set(payload.allPanels))
-  }
+  const onToggleReviewed = useCallback((panelId: string) => {
+    setReviewedPanels(prev => {
+      const out = new Set(prev)
+      if (out.has(panelId)) out.delete(panelId)
+      else out.add(panelId)
+      return out
+    })
+  }, [])
 
   function jumpToPanel(panelId: string) {
     setScrollTarget(panelId)
   }
 
+  // v4.12.0 (refinement) グループ間ナビゲーション: 左 nav の prev/next 矢印から呼ばれる。
+  // index ベースで scrollIntoView を呼ぶ。groupsState の長さでクランプ済み前提だが防御的に。
+  const onJumpToGroupIndex = useCallback((targetIndex: number) => {
+    if (targetIndex < 0 || targetIndex >= groupsState.length) return
+    const target = groupsState[targetIndex]
+    const sel = `.group-section[data-group-id="${cssEscape(target.groupId)}"]`
+    const el = containerRef.current?.querySelector(sel) as HTMLElement | null
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [groupsState])
+
   // submit する Comment[] を構築。
-  // overall は scope: {type:'overall'}、行コメントは scope: {type:'line', panelId, side, file, line, endLine?}。
-  // file は panel の side に対応する file (asIs.file / toBe.file) を入れる。
-  function collectComments(overallBody: string): Comment[] {
+  // - group コメント (空でないもの) を scope: {type:'group', groupId} で
+  // - line コメント を scope: {type:'line', panelId, side, file, line, endLine?} で
+  function collectComments(): Comment[] {
     const out: Comment[] = []
-    const g = overallBody.trim()
-    if (g) out.push({ body: g, scope: { type: 'overall' } })
+    for (const [groupId, body] of Object.entries(groupComments)) {
+      const trimmed = body.trim()
+      if (trimmed) out.push({ body: trimmed, scope: { type: 'group', groupId } })
+    }
     for (const [key, bodies] of lineCommentHandlers.lineComments) {
       const { panelId, side, number, endNumber } = parseLineCommentKey(key)
       const files = panelFileMap.get(panelId) ?? {}
@@ -174,8 +307,6 @@ export function App({ payload }: Props) {
   }
 
   // sessionStorage 全体を走査して `draft:` prefix の値を Record にまとめる。
-  // regen-group POST 時の lineCommentDrafts に乗せて、SKILL.md 側に渡す → restore JSON に書き出す。
-  // 値が空文字列の draft は除外 (UI 上「書きかけ無し」の状態と等価)。
   function collectAllDrafts(): Record<string, string> {
     const out: Record<string, string> = {}
     if (typeof sessionStorage === 'undefined') return out
@@ -190,21 +321,29 @@ export function App({ payload }: Props) {
     return out
   }
 
-  async function submit(decision: 'approve' | 'reject', overallBody: string) {
+  async function submit() {
     if (submitted) return
-    const cs = collectComments(overallBody)
+    // 全 group decision 確定チェック (panels=0 は自動 approved で埋まっている)
+    const allDecided = Object.values(groupDecisions).every(d => d !== null)
+    if (!allDecided) return
+
+    const decisions: Record<string, GroupDecision> = {}
+    for (const [k, v] of Object.entries(groupDecisions)) {
+      if (v !== null) decisions[k] = v
+    }
+    const cs = collectComments()
+    const body: ResultJson = {
+      decision: 'submit',
+      groupDecisions: decisions,
+      comments: cs,
+    }
     try {
       await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          decision,
-          reviewedPanels: Array.from(reviewedPanels),
-          comments: cs,
-        } satisfies ResultJson),
+        body: JSON.stringify(body),
       })
-      setSubmitted(decision)
-      setModalDecision(null)
+      setSubmitted('submit')
       setTimeout(() => {
         try { window.close() } catch { /* noop */ }
       }, 300)
@@ -214,10 +353,10 @@ export function App({ payload }: Props) {
     }
   }
 
-  // v4.8.0: context+ ボタンの新動作。現状 state (Reviewed + line comments + 未保存 draft) を
-  // 回収し、decision='regen-group' で POST /result に送ってから window.close()。
-  // SKILL.md 側がこれを受けて summary.json の panels[] を「より広い context」で再生成し、
-  // restore JSON を渡しつつ Skill 再起動するループに繋がる。
+  // v4.12.0 context+: 現状 state (group decisions + コメント + line comment drafts) を回収し、
+  // decision='regen-group' で POST /result に送ってから window.close()。
+  // SKILL.md 側がこれを受けて summary.json の panels[] を再生成 + restore JSON を Write して
+  // Skill 再起動するループに繋がる。
   const onRequestContext = useCallback(
     async (groupId: string) => {
       if (regenPending || submitted) return
@@ -233,14 +372,16 @@ export function App({ payload }: Props) {
         asIs: p.asIs ? { file: p.asIs.file, ranges: p.asIs.ranges } : undefined,
         toBe: p.toBe ? { file: p.toBe.file, ranges: p.toBe.ranges } : undefined,
       }))
-      const cs = collectComments('')
-      const drafts = collectAllDrafts()
+      const decisions: Record<string, GroupDecision> = {}
+      for (const [k, v] of Object.entries(groupDecisions)) {
+        if (v !== null) decisions[k] = v
+      }
       const body: ResultJson = {
         decision: 'regen-group',
-        reviewedPanels: Array.from(reviewedPanels),
-        comments: cs,
+        groupDecisions: decisions,
+        comments: collectComments(),
         regenGroup: { groupId, currentRanges },
-        lineCommentDrafts: drafts,
+        lineCommentDrafts: collectAllDrafts(),
       }
       try {
         await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
@@ -249,7 +390,6 @@ export function App({ payload }: Props) {
           body: JSON.stringify(body),
         })
         setSubmitted('regen')
-        // SKILL.md が新しい summary.json で再起動してくれる前提。window.close で UI を畳む。
         setTimeout(() => {
           try { window.close() } catch { /* noop */ }
         }, 300)
@@ -259,7 +399,7 @@ export function App({ payload }: Props) {
         setTimeout(() => setToast(null), 3000)
       }
     },
-    [groupsState, reviewedPanels, regenPending, submitted, lineCommentHandlers.lineComments],
+    [groupsState, groupDecisions, groupComments, regenPending, submitted, lineCommentHandlers.lineComments],
   )
 
   // nav resizer (旧 App から流用、CSS variable 直接書き込み + rAF batch)
@@ -275,18 +415,33 @@ export function App({ payload }: Props) {
 
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
+    // パフォーマンス最適化 (v4.12.0): ドラッグ中だけ body に is-resizing-nav class を当て、
+     // CSS 側で .group-section / .group-nav-wrapper に will-change: grid-template-columns を付与。
+     // これにより Chrome が grid 再計算を独立 layer に隔離し、reflow コストが下がる。
+     // ドラッグ終了時に class を外して will-change を消す (常時付けると memory コストが上がる)。
+    document.body.classList.add('is-resizing-nav')
     resizer.classList.add('dragging')
     try { resizer.setPointerCapture(pointerId) } catch { /* noop */ }
 
+    // パフォーマンス最適化 (v4.12.0): drag 開始時の section.left を 1 度だけキャッシュ。
+    // ドラッグ中に getBoundingClientRect() を呼ぶと「直前の setProperty 後のスタイル更新」を
+    // 完了させるための forced sync layout が rAF callback 内で発生し、frame budget を食い潰す。
+    // 座標は drag 中変わらないので start でキャッシュすれば flush は純粋に style write だけになる。
+    const cachedSectionLeft = section.getBoundingClientRect().left
     let rafId: number | null = null
     let pendingClientX = 0
+    let lastWrittenPx = -1
     function flush() {
       rafId = null
       if (!container) return
-      const sectionLeft = section!.getBoundingClientRect().left
-      const next = pendingClientX - sectionLeft
+      const next = pendingClientX - cachedSectionLeft
       const clamped = Math.max(NAV_WIDTH_MIN, Math.min(NAV_WIDTH_MAX, next))
-      container.style.setProperty('--nav-width', `${clamped}px`)
+      const rounded = Math.round(clamped)
+      // パフォーマンス最適化 (v4.12.0): 同じ px 値なら setProperty を skip (style recalc を起こさない)。
+      // 1px 未満の微動でも cascade が走るのを防ぐ。
+      if (rounded === lastWrittenPx) return
+      lastWrittenPx = rounded
+      container.style.setProperty('--nav-width', `${rounded}px`)
     }
     function onMove(ev: PointerEvent) {
       pendingClientX = ev.clientX
@@ -297,6 +452,7 @@ export function App({ payload }: Props) {
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
+      document.body.classList.remove('is-resizing-nav')
       resizer.classList.remove('dragging')
       try { resizer.releasePointerCapture(pointerId) } catch { /* noop */ }
       resizer.removeEventListener('pointermove', onMove)
@@ -308,10 +464,22 @@ export function App({ payload }: Props) {
     resizer.addEventListener('pointercancel', onUp)
   }, [])
 
-  if (submitted) {
-    const msg = submitted === 'regen'
-      ? 'Requesting context expansion. You can close this tab — review will re-open with the expanded panels.'
-      : `${submitted} received. You can close this tab.`
+  if (submitted === 'regen') {
+    return (
+      <div className="done">
+        Requesting context expansion. You can close this tab — review will re-open with the expanded panels.
+      </div>
+    )
+  }
+  if (submitted === 'submit') {
+    const approved = Object.values(groupDecisions).filter(d => d === 'approved').length
+    const rc = Object.values(groupDecisions).filter(d => d === 'request-changes').length
+    const total = groupsState.length
+    const msg = approved === total
+      ? `Review submitted (all ${total} groups approved). You can close this tab — Claude will create commits.`
+      : rc === total
+        ? `Review submitted (all ${total} groups request-changes). You can close this tab.`
+        : `Review submitted (${approved} approved / ${rc} request-changes). You can close this tab.`
     return <div className="done">{msg}</div>
   }
 
@@ -323,78 +491,174 @@ export function App({ payload }: Props) {
       ? 'Staged Diff Review'
       : 'Diff Review'
 
+  const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
+  const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
+
+  // Activity タブ: AI Review Report カード (overall サマリ + group インデックス)
+  // 「上から順に何が変わったかを俯瞰したい」フェーズの初手画面。クリックで Guide にジャンプする。
+  const activityContent = (
+    <div className="page-header">
+      <div className="report-card">
+        <div className="report-card-eyebrow">AI Review Report</div>
+        <h1>{title}</h1>
+        <div className="meta" dangerouslySetInnerHTML={{ __html: meta }} />
+        {overallHtml ? (
+          <div className="markdown" dangerouslySetInnerHTML={{ __html: overallHtml }} />
+        ) : null}
+        {groupsState.length > 0 ? (
+          <ul className="report-index">
+            {groupsState.map((g, i) => (
+              <li key={g.groupId}>
+                <button
+                  type="button"
+                  className="report-index-item"
+                  onClick={() => {
+                    setTab('guide')
+                    if (g.panels[0]) jumpToPanel(g.panels[0].panelId)
+                  }}
+                  aria-label={`Jump to group ${i + 1}: ${g.title}`}
+                >
+                  <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="report-index-title">{g.title}</span>
+                  <span className="report-index-meta">
+                    {g.panels.length} panel{g.panels.length === 1 ? '' : 's'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
+  )
+
+  // Guide タブ: stacked-group レビュー本体 (panel + decision)
+  const guideContent = (
+    <div className="groups-container" ref={containerRef}>
+      {groupsState.map((g, i) => (
+        <GroupSection
+          key={g.groupId}
+          index={i}
+          total={groupsState.length}
+          groupId={g.groupId}
+          title={g.title}
+          description={g.description}
+          panels={g.panels}
+          onJumpToPanel={jumpToPanel}
+          onNavResizerPointerDown={onNavResizerPointerDown}
+          regenPending={regenPending}
+          onRequestContext={onRequestContext}
+          decision={groupDecisions[g.groupId] ?? null}
+          comment={groupComments[g.groupId] ?? ''}
+          onDecisionChange={onDecisionChange}
+          onCommentChange={onCommentChange}
+          submitDisabled={regenPending}
+          reviewedPanels={reviewedPanels}
+          onToggleReviewed={onToggleReviewed}
+          onJumpToGroupIndex={onJumpToGroupIndex}
+          {...lineCommentHandlers}
+        />
+      ))}
+    </div>
+  )
+
+  // Diff タブ: GitHub 風の「ファイル単位 split-side-by-side 差分」を縦積みで表示。
+  // Guide タブの AI グルーピングを介さず、git diff の出力ファイル順にすべて並べる。
+  // PanelBlock は Guide タブと完全同一実装 (lazyHighlight + intrinsic-size + sticky header)。
+  //
+  // v4.12.0 (refinement): 左 sticky nav にファイル一覧 (intent + +N/-M 差分カウント) を配置。
+  // GitHub PR の Files Changed タブと同じ感覚で「全ファイル俯瞰 + クリックで該当ファイルへジャンプ」できる。
+  // 差分カウントは payload.rawPanels の segments を walk して addition/deletion 行数を集計。
+  const jumpToRawPanel = useCallback((panelId: string) => {
+    const sel = `.raw-diff-tab .panel-block[data-panel-id="${cssEscape(panelId)}"]`
+    const el = document.querySelector(sel) as HTMLElement | null
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  const diffContent = (
+    <div className="raw-diff-tab">
+      <aside className="raw-diff-nav" aria-label="Changed files">
+        {payload.rawPanels.map((p) => {
+          let add = 0
+          let del = 0
+          for (const seg of p.segments) {
+            for (const row of seg.rows) {
+              if (row.toBe.type === 'addition') add++
+              if (row.asIs.type === 'deletion') del++
+            }
+          }
+          return (
+            <button
+              key={p.panelId}
+              type="button"
+              className="raw-diff-nav-item"
+              onClick={() => jumpToRawPanel(p.panelId)}
+              title={p.intent}
+            >
+              <span className="raw-diff-nav-file">{basename(p.intent)}</span>
+              <span className="raw-diff-nav-stats">
+                {add > 0 ? <span className="raw-diff-nav-add">+{add}</span> : null}
+                {del > 0 ? <span className="raw-diff-nav-del">-{del}</span> : null}
+              </span>
+              <span className="raw-diff-nav-path">{p.intent}</span>
+            </button>
+          )
+        })}
+      </aside>
+      <div className="raw-diff-panels">
+        {payload.rawPanels.map((p) => {
+          // 巨大 panel (build artifact 等) は初期 collapsed で開いてレンダリングコストを抑制。
+          // segments の合計 row 数で判定。
+          let totalRows = 0
+          for (const seg of p.segments) totalRows += seg.rows.length
+          const file = p.toBe?.file ?? p.asIs?.file
+          const isAutoCollapseByPattern = shouldAutoCollapseFile(file)
+          const isAutoCollapseByRows = totalRows > DIFF_TAB_COLLAPSE_ROW_THRESHOLD
+          return (
+            <PanelBlock
+              key={p.panelId}
+              panel={p}
+              defaultCollapsed={isAutoCollapseByPattern || isAutoCollapseByRows}
+              {...lineCommentHandlers}
+            />
+          )
+        })}
+        {payload.rawPanels.length === 0 ? (
+          <div className="raw-diff-empty">No file changes to display.</div>
+        ) : null}
+      </div>
+    </div>
+  )
+
   return (
     <>
       <TabBar
         active={tab}
-        onChange={setTab}
+        onChange={onTabChange}
         meta={`${payload.allPanels.length} panel${payload.allPanels.length === 1 ? '' : 's'}`}
+        pending={isPending}
       />
-      <div className="page-header">
-        {/* AI Review Report カード (plan-reviewer C-2 で保持) */}
-        <div className="report-card">
-          <div className="report-card-eyebrow">AI Review Report</div>
-          <h1>{title}</h1>
-          <div className="meta" dangerouslySetInnerHTML={{ __html: meta }} />
-          {overallHtml ? (
-            <div className="markdown" dangerouslySetInnerHTML={{ __html: overallHtml }} />
-          ) : null}
-          {groupsState.length > 0 ? (
-            <ul className="report-index">
-              {groupsState.map((g, i) => (
-                <li key={g.groupId}>
-                  <button
-                    type="button"
-                    className="report-index-item"
-                    onClick={() => g.panels[0] && jumpToPanel(g.panels[0].panelId)}
-                    aria-label={`Jump to group ${i + 1}: ${g.title}`}
-                  >
-                    <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
-                    <span className="report-index-title">{g.title}</span>
-                    <span className="report-index-meta">
-                      {g.panels.length} panel{g.panels.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      </div>
-      <div className="groups-container" ref={containerRef}>
-        {groupsState.map((g, i) => (
-          <GroupSection
-            key={g.groupId}
-            index={i}
-            total={groupsState.length}
-            groupId={g.groupId}
-            title={g.title}
-            description={g.description}
-            panels={g.panels}
-            reviewedPanels={reviewedPanels}
-            onJumpToPanel={jumpToPanel}
-            onToggleReviewed={toggleReviewed}
-            onNavResizerPointerDown={onNavResizerPointerDown}
-            regenPending={regenPending}
-            onRequestContext={onRequestContext}
-            {...lineCommentHandlers}
-          />
-        ))}
-      </div>
-      <ActionBar
-        reviewedCount={reviewedPanels.size}
-        totalPanels={payload.allPanels.length}
-        onMarkAll={markAll}
-        onApprove={() => setModalDecision('approve')}
-        onReject={() => setModalDecision('reject')}
-      />
-      {modalDecision ? (
-        <SubmitModal
-          decision={modalDecision}
-          onCancel={() => setModalDecision(null)}
-          onConfirm={(body) => submit(modalDecision, body)}
-        />
+      {/* 訪問済みタブのみレンダー + 非アクティブは content-visibility: hidden で keep alive。
+          display: none と違い render state を保持したまま「次回表示時のコストを最小化」する。
+          ResizeObserver の一斉発火問題 (LoAF で計測された 6 秒級の主犯) も display:none 復帰時の
+          0→実サイズ遷移が無くなるため抑制される。 */}
+      {visitedTabs.has('activity') ? (
+        <div className={tab === 'activity' ? '' : 'tab-hidden'}>{activityContent}</div>
       ) : null}
+      {visitedTabs.has('guide') ? (
+        <div className={tab === 'guide' ? '' : 'tab-hidden'}>{guideContent}</div>
+      ) : null}
+      {visitedTabs.has('diff') ? (
+        <div className={tab === 'diff' ? '' : 'tab-hidden'}>{diffContent}</div>
+      ) : null}
+      {/* SubmitBar は全タブで常時表示 (どこからでも Submit できるように) */}
+      <SubmitBar
+        approvedCount={approvedCount}
+        rcCount={rcCount}
+        totalGroups={groupsState.length}
+        onSubmit={submit}
+        submitting={submitted !== null}
+      />
       {toast ? <div className="toast">{toast}</div> : null}
     </>
   )
@@ -412,4 +676,13 @@ function formatMeta(payload: ClientPayload): string {
 function cssEscape(s: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s)
   return s.replace(/["\\]/g, '\\$&')
+}
+
+// "a/b/c.ts" → "c.ts" 形式の basename (rename 表記 "old → new" は new 側を採用)
+function basename(intentOrPath: string): string {
+  // rename 表記 "old → new" は new 側 (矢印の後) を使う
+  const arrowIdx = intentOrPath.indexOf('→')
+  const target = arrowIdx >= 0 ? intentOrPath.slice(arrowIdx + 1).trim() : intentOrPath
+  const slashIdx = target.lastIndexOf('/')
+  return slashIdx >= 0 ? target.slice(slashIdx + 1) : target
 }

@@ -12,6 +12,62 @@ import { getPayload } from './state.ts'
 declare const __BUILD_ID__: string
 console.log('[review-diff] client bundle build:', typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'unknown')
 
+// Phase 0 diagnostic: Long Animation Frames API でメインスレッドの長期ブロックを記録する。
+// タブ切替で何が時間を消費しているか (script / layout / render / paint) を識別するため。
+// 50ms 超のみログ (INP good の閾値、Long Task と同じ)。
+// Chrome 123+ のみ動作 (Safari/Firefox は未対応、PerformanceObserver の supportedEntryTypes で gate)。
+try {
+  if (
+    typeof PerformanceObserver !== 'undefined' &&
+    PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')
+  ) {
+    const obs = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as Array<{
+        duration: number
+        renderStart: number
+        startTime: number
+        styleAndLayoutStart: number
+        firstUIEventTimestamp: number
+        blockingDuration: number
+        scripts: Array<{
+          name: string
+          duration: number
+          sourceURL: string
+          sourceFunctionName: string
+          sourceCharPosition: number
+          invokerType: string
+          forcedStyleAndLayoutDuration: number
+        }>
+      }>) {
+        if (entry.duration < 50) continue
+        const renderDur = entry.styleAndLayoutStart > 0
+          ? Math.round(entry.styleAndLayoutStart - entry.renderStart)
+          : 0
+        const layoutDur = entry.styleAndLayoutStart > 0
+          ? Math.round(entry.startTime + entry.duration - entry.styleAndLayoutStart)
+          : 0
+        const topScripts = (entry.scripts ?? [])
+          .slice()
+          .sort((a, b) => b.duration - a.duration)
+          .slice(0, 3)
+          .map(s =>
+            `${Math.round(s.duration)}ms ${s.invokerType ?? '?'} fsl=${Math.round(s.forcedStyleAndLayoutDuration ?? 0)}ms ${s.sourceFunctionName || '(anon)'} @ ${s.sourceURL || '(inline)'}`,
+          )
+        console.warn(
+          `[LoAF] dur=${Math.round(entry.duration)}ms render=${renderDur}ms layout=${layoutDur}ms block=${Math.round(entry.blockingDuration ?? 0)}ms`,
+          topScripts.length > 0 ? '\n  top scripts:\n    ' + topScripts.join('\n    ') : '',
+        )
+      }
+    })
+    obs.observe({ type: 'long-animation-frame', buffered: true } as PerformanceObserverInit)
+    console.log('[review-diff] LoAF observer attached (Chrome 123+)')
+  } else {
+    console.log('[review-diff] LoAF not supported in this browser')
+  }
+} catch (e) {
+  console.warn('[review-diff] LoAF setup failed:', e)
+}
+
 // グローバル pointerdown ロガー: 「ユーザーが何処を押下したか」「React の onPointerDown 経路に
 // 入る前段で阻害されていないか」を観測するため、window レベル (capture phase) で全 pointerdown を
 // ログする。出力例: target=SPAN(.text-token) td-closest=Yes data-side=right data-line=42
@@ -22,8 +78,6 @@ window.addEventListener('pointerdown', (e) => {
   const codeCell = t?.closest?.('.cell-code[data-side]') as HTMLElement | null
   const cell = t?.closest?.('[data-side][data-line-number]') as HTMLElement | null
   const trigger = t?.closest?.('.line-comment-trigger') as HTMLElement | null
-  const modal = t?.closest?.('.modal-dialog')
-  const actionBar = t?.closest?.('.action-bar')
   const elsAtPoint = document.elementsFromPoint(e.clientX, e.clientY)
     .slice(0, 6)
     .map((el) => `${el.tagName}.${typeof el.className === 'string' ? el.className.toString().slice(0, 30) : ''}`)

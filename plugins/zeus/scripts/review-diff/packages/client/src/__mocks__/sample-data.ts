@@ -89,4 +89,5 @@ export const sampleData: ClientPayload = {
   ],
   allPanels: [panelA.panelId, panelB.panelId],
   expandable: true,
+  rawPanels: [],
 }

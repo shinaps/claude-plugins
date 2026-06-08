@@ -40,7 +40,7 @@ test('POST /result without Origin header is rejected via app.fetch', async () =>
     new Request(`http://127.0.0.1:${port}/result?token=${token}`, {
       method: 'POST',
       headers: { Host: `127.0.0.1:${port}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'approve', reviewedPanels: [], comments: [] }),
+      body: JSON.stringify({ decision: 'submit', groupDecisions: {}, comments: [] }),
     }),
   )
   expect(res.status).toBe(403)
@@ -91,12 +91,16 @@ test('POST /result with valid token + Origin resolves waitResult (e2e via serve)
   const post = await fetch(`${origin}/result?token=${token}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: origin },
-    body: JSON.stringify({ decision: 'approve', reviewedPanels: ['p1'], comments: [] }),
+    body: JSON.stringify({
+      decision: 'submit',
+      groupDecisions: { g0: 'approved' },
+      comments: [],
+    }),
   })
   expect(post.status).toBe(200)
   const result = await started.waitResult()
-  expect(result.decision).toBe('approve')
-  expect(result.reviewedPanels).toEqual(['p1'])
+  expect(result.decision).toBe('submit')
+  expect(result.groupDecisions).toEqual({ g0: 'approved' })
 })
 
 // v4.8.0: POST /result で decision='regen-group' を素通しで受け取れることを確認する。
@@ -109,7 +113,7 @@ test('POST /result with decision=regen-group passes through to waitResult', asyn
   const origin = `${u.protocol}//${u.host}`
   const body = {
     decision: 'regen-group',
-    reviewedPanels: ['p1', 'p2'],
+    groupDecisions: { g0: 'approved', g1: 'request-changes' },
     comments: [],
     regenGroup: {
       groupId: 'g2',
@@ -127,7 +131,7 @@ test('POST /result with decision=regen-group passes through to waitResult', asyn
   expect(post.status).toBe(200)
   const result = await started.waitResult()
   expect(result.decision).toBe('regen-group')
-  expect(result.reviewedPanels).toEqual(['p1', 'p2'])
+  expect(result.groupDecisions).toEqual({ g0: 'approved', g1: 'request-changes' })
   expect(result.regenGroup?.groupId).toBe('g2')
   expect(result.lineCommentDrafts?.['draft:p1:asis:5']).toBe('draft body')
 })

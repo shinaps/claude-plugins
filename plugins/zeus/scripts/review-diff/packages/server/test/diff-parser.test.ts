@@ -26,6 +26,14 @@ test('parseDiff: simple modified file → FileChange', () => {
   expect(f.hasStructuralChange).toBe(false)
   expect(f.eolOnlyChange).toBe(false)
   expect(f.language).toBe('typescript')
+  // v4.12.0: hunks の境界情報も emit する
+  expect(f.hunks.length).toBeGreaterThan(0)
+  expect(f.hunks[0]).toMatchObject({
+    fromStart: expect.any(Number),
+    fromLines: expect.any(Number),
+    toStart: expect.any(Number),
+    toLines: expect.any(Number),
+  })
 })
 
 test('parseDiff: renamed file with content change exposes oldPath + status=renamed', () => {
@@ -52,6 +60,8 @@ test('parseDiff: binary file → hasStructuralChange=true, hasContentChange=fals
   expect(f.hasContentChange).toBe(false)
   expect(f.hasStructuralChange).toBe(true)
   expect(f.eolOnlyChange).toBe(false)
+  // binary は hunks 空配列 (BinaryFilesChunk は fromFileRange/toFileRange を持たない)
+  expect(f.hunks).toEqual([])
 })
 
 test('parseDiff: new file → status=added, asIsChangedLines empty, toBeChangedLines populated', () => {

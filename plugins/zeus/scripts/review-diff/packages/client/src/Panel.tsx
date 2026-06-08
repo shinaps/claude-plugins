@@ -20,6 +20,7 @@
 //   - sortAnchorKeys: 範囲 → 単一の順、で並べる (旧 DiffTable と同じ UX)。
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
 import { parseLineCommentKey } from './state'
@@ -57,11 +58,15 @@ type DragState = {
 export type PanelProps = {
   panel: RenderedPanel
   highlight?: boolean
+  // v4.12.0 (refinement): PanelHeader 右に Hide diff ボタンを出すための callback。
+  // PanelBlock 側で「userOverride='collapse' 状態に切替」をハンドル。
+  onCollapse?: () => void
 } & LineCommentHandlers
 
 export const Panel = memo(function Panel({
   panel,
   highlight = true,
+  onCollapse,
   ...handlers
 }: PanelProps) {
   const [drag, setDrag] = useState<DragState>(null)
@@ -82,16 +87,32 @@ export const Panel = memo(function Panel({
     let raf = 0
     const sync = () => {
       raf = 0
-      // 案 F: .code-row が box を持つので row 単位で観測 + min-height を当てる (cell 単位より単純)。
       const leftRows = container.querySelectorAll<HTMLElement>('.panel-side-asis .code-row')
       const rightRows = container.querySelectorAll<HTMLElement>('.panel-side-tobe .code-row')
       const n = Math.min(leftRows.length, rightRows.length)
+      if (n === 0) return
+      // パフォーマンス最適化 (v4.12.0): display:none / content-visibility:hidden 中は offsetHeight=0 になり
+      // 全 row に minHeight=0 を書く副作用を避けるため、最初の 1 行だけ probe して skip 判定。
+      // ResizeObserver は display:none 復帰時に「全 row が 0→実サイズ」の遷移で一斉発火するため、
+      // 非表示中の sync 呼出をスキップすれば LoAF で計測された forced-layout 3.1 秒級の主犯を抑制できる。
+      if (leftRows[0].offsetHeight === 0 && rightRows[0].offsetHeight === 0) return
+
+      // パフォーマンス最適化 (v4.12.0): read / write を 3-pass に厳密分離して forced sync layout を
+      // N 回 → 1 回に削減する。元実装は loop 内で `offsetHeight` 直後に `style.minHeight` を書いていたため、
+      // 各 row で layout が強制フラッシュされ N 行 = N 回の reflow になっていた (28 panel × 数千 row = 6 秒)。
+      //   Pass 1: 全 row の minHeight を '' にして natural サイズに戻す (layout 無効化のみ)
+      //   Pass 2: 全 row の offsetHeight を一括 read (このタイミングで layout が 1 回だけフラッシュ)
+      //   Pass 3: 全 row に新しい minHeight を一括 write (layout 無効化のみ)
       for (let i = 0; i < n; i++) {
         leftRows[i].style.minHeight = ''
         rightRows[i].style.minHeight = ''
       }
+      const heights: number[] = new Array(n)
       for (let i = 0; i < n; i++) {
-        const h = Math.max(leftRows[i].offsetHeight, rightRows[i].offsetHeight)
+        heights[i] = Math.max(leftRows[i].offsetHeight, rightRows[i].offsetHeight)
+      }
+      for (let i = 0; i < n; i++) {
+        const h = heights[i]
         leftRows[i].style.minHeight = `${h}px`
         rightRows[i].style.minHeight = `${h}px`
       }
@@ -115,26 +136,41 @@ export const Panel = memo(function Panel({
   // 左右スクロール同期: per-side が独立 overflow-x:auto なので、片側を横スクロールすると
   // 反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」= 1 panel 内では
   // asIs / toBe の scrollLeft が常に一致するべき。双方向 mirror で sync する。
-  // リエントラント防止のため flag で再帰呼び出しを抑止。
+  //
+  // パフォーマンス最適化 (v4.12.0): 旧実装は `syncing` フラグで再帰防止していたが、連続スクロール時に
+  // 「フラグが立っている間の event が drop される」(rAF 解除まで 16ms)。その間ユーザーが
+  // スクロールし続けると mirror 側は止まり、解除後に「累積分が一気に飛ぶ」カクカク現象が出ていた。
+  // 新実装: scroll event は drop せず latest scrollLeft を rAF にバッチ保留 → frame 単位で apply。
+  // 再帰防止は「dst が src と同値なら skip」で取る (sync 直後の反対側 scroll event は no-op)。
   useLayoutEffect(() => {
     const container = panelContainerRef.current
     if (!container) return
     const asis = container.querySelector<HTMLElement>('.panel-side-asis')
     const tobe = container.querySelector<HTMLElement>('.panel-side-tobe')
     if (!asis || !tobe) return
-    let syncing = false
-    const mirror = (src: HTMLElement, dst: HTMLElement) => () => {
-      if (syncing) return
-      syncing = true
-      dst.scrollLeft = src.scrollLeft
-      // 次フレームで flag を下ろす (scroll event がもう一方から発火し終わるのを待つ)
-      requestAnimationFrame(() => { syncing = false })
+    let rafId = 0
+    let pendingFrom: HTMLElement | null = null
+    const flush = () => {
+      rafId = 0
+      const src = pendingFrom
+      pendingFrom = null
+      if (!src) return
+      const dst = src === asis ? tobe : asis
+      if (Math.abs(dst.scrollLeft - src.scrollLeft) > 0.5) {
+        dst.scrollLeft = src.scrollLeft
+      }
     }
-    const onAsis = mirror(asis, tobe)
-    const onTobe = mirror(tobe, asis)
+    const handler = (src: HTMLElement) => () => {
+      pendingFrom = src
+      if (rafId) return
+      rafId = requestAnimationFrame(flush)
+    }
+    const onAsis = handler(asis)
+    const onTobe = handler(tobe)
     asis.addEventListener('scroll', onAsis, { passive: true })
     tobe.addEventListener('scroll', onTobe, { passive: true })
     return () => {
+      if (rafId) cancelAnimationFrame(rafId)
       asis.removeEventListener('scroll', onAsis)
       tobe.removeEventListener('scroll', onTobe)
     }
@@ -324,7 +360,7 @@ export const Panel = memo(function Panel({
       data-panel-id={panel.panelId}
       ref={panelContainerRef}
     >
-      <PanelHeader panel={panel} />
+      <PanelHeader panel={panel} onCollapse={onCollapse} />
       {panel.sourcesUnavailable ? (
         <SourcesUnavailableBanner info={panel.sourcesUnavailable} />
       ) : null}
@@ -339,14 +375,21 @@ export const Panel = memo(function Panel({
         onPointerUp={handlePointerUp}
       />
       {/* ドラッグ中の line-snap インジケータ。`+` を hover 行の gutter 中央にスナップ表示し、
-          普段の + ボタンと同じ場所で「いま範囲選択中の行」を視認化。 */}
-      {dragIndicator ? (
-        <div
-          className="drag-cursor-indicator"
-          aria-hidden="true"
-          style={{ left: dragIndicator.left, top: dragIndicator.top }}
-        >+</div>
-      ) : null}
+          普段の + ボタンと同じ場所で「いま範囲選択中の行」を視認化。
+          v4.12.0 perf-fix: panel-block に content-visibility: auto を当てたことで暗黙的に
+          contain: paint が効き、position: fixed の containing block が panel-block に redirect されて
+          中心に固定されるデグレが発生していた。createPortal で document.body 直下に逃がして
+          viewport 座標で動く本来の挙動に戻す。 */}
+      {dragIndicator
+        ? createPortal(
+            <div
+              className="drag-cursor-indicator"
+              aria-hidden="true"
+              style={{ left: dragIndicator.left, top: dragIndicator.top }}
+            >+</div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 })

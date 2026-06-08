@@ -28,13 +28,29 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { spawn, spawnSync } from 'node:child_process'
-import type { ResultJson, PrMeta, SummaryJson, Panel, RenderedGroup, Comment } from '@zeus/review-diff-shared'
+import type {
+  ResultJson,
+  PrMeta,
+  SummaryJson,
+  Panel,
+  RenderedGroup,
+  RenderedPanel,
+  Comment,
+  RestoreState,
+  GroupDecision,
+} from '@zeus/review-diff-shared'
+import { countLines } from '@zeus/review-diff-shared'
 import {
   parseDiff,
   validateSummarySchema,
   validateCoverage,
+  validateRangeSymmetry,
+  validatePanelExclusivity,
   formatMissesForStderr,
+  formatRangeSymmetryViolations,
+  formatExclusivityConflicts,
   renderPanel,
+  extractGroupPatch,
   SchemaError,
   type SourcesMap,
 } from '@zeus/review-diff-server'
@@ -49,6 +65,14 @@ const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るた�
 const PR_FETCH_CONCURRENCY = 8
 
 async function main(): Promise<void> {
+  // v4.12.0: subcommand dispatcher。argv[2] が 'extract-group-patch' なら部分 patch 生成モードに分岐。
+  // SKILL.md (bash) が `node dist/cli.js extract-group-patch --summary <...> --diff <...> --group g0`
+  // のように呼ぶ。stdout に unified diff (--unidiff-zero 互換) を吐く。
+  if (process.argv[2] === 'extract-group-patch') {
+    await extractGroupPatchCommand()
+    return
+  }
+
   // parseArgs の strictOption は default true だが、unknown flag を渡された時に process が
   // 即落ちすると forward compatibility が失われる。SKILL.md と CLI のバージョンがズレた時に
   // 余計な flag を skip できるように strict:false に倒す (validation は handler 側で行う)。
@@ -58,7 +82,7 @@ async function main(): Promise<void> {
       diff: { type: 'string' },
       'pr-meta': { type: 'string' },
       // v4.8.0: regen-group の close-relaunch で、SKILL.md が書き出した restore JSON
-      // (reviewedPanels / comments / lineCommentDrafts) を再起動後の CLI に渡すパス。
+      // (groupDecisions / groupComments / comments / lineCommentDrafts) を再起動後の CLI に渡すパス。
       // 初回起動 (regen ループの外) では未指定で OK。
       'restore-state': { type: 'string' },
     },
@@ -135,6 +159,29 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // 5.5. asIs/toBe range の対称性検証。
+  //   sources を渡して MAX_TAIL fallback を不要にする (W-1: ファイル行数を上限に使う)。
+  const sym = validateRangeSymmetry({ changes, panels: allPanels, sources })
+  if (!sym.ok) {
+    process.stderr.write(formatRangeSymmetryViolations(sym) + '\n')
+    process.exit(1)
+  }
+
+  // 5.6. panel exclusivity 検証 (同一変更行を 2 group が claim していないか)。
+  //   linear-stack の commit-per-group を破綻させないため必須。
+  const excl = validatePanelExclusivity({
+    changes,
+    groups: summary.groups.map((g, i) => ({
+      groupId: `g${i}`,
+      title: g.title,
+      panels: g.panels,
+    })),
+  })
+  if (!excl.ok) {
+    process.stderr.write(formatExclusivityConflicts(excl) + '\n')
+    process.exit(1)
+  }
+
   // 6. 各 panel を side-by-side に展開
   //
   // W-1: groupId は title に依存せず index ベースの `g${i}` で生成する。同じ title の group が
@@ -147,14 +194,47 @@ async function main(): Promise<void> {
     panels: g.panels.map(p => renderPanel(p, sources, summary.mode)),
   }))
 
-  // 7. restore state を読む (v4.8.0 close-relaunch)。
-  //    restore.json は SKILL.md が前回 CLI 終了時に書き出すもので、形式は:
-  //      { "reviewedPanels": string[], "comments": Comment[], "lineCommentDrafts": Record<string,string> }
-  //    今回再生成された panels と panelId が一致するものだけが UI に活きる
-  //    (panelId は intent 除外 hash なので、context+ で intent が書き直されても安定)。
+  // 7. restore state を読む (v4.12.0 close-relaunch)。
+  //    restore.json は SKILL.md が前回 CLI 終了時に書き出すもので、shared RestoreState 型:
+  //      { groupDecisions, groupComments, comments, lineCommentDrafts }
+  //    CLI 側で comments を line scope と group scope に pre-split して ClientPayload に注入する
+  //    (client 側の二重 seed を防止、C-4)。
   const restore = readRestoreState(values['restore-state'] as string | undefined)
+  const { lineComments, groupCommentsFromComments } = splitRestoreComments(restore?.comments ?? [])
+  // restore.groupComments を base に、comments scope='group' から再構築した groupCommentsFromComments を
+  // 上書き merge (comments 側が後勝ち = 直前 UI の最新状態を優先)。
+  const initialGroupComments: Record<string, string> = {
+    ...(restore?.groupComments ?? {}),
+    ...groupCommentsFromComments,
+  }
 
   // 8. HTML 生成 + サーバ起動
+  // v4.12.0 (refinement): Diff タブ用の「ファイル単位 panel」を別途構築する。
+  // Guide タブが AI 指定の細粒度 panel を見せるのに対し、Diff タブはグルーピング無しの
+  // 「git diff を file 順に俯瞰する」用途で、各 file の全行を 1 panel に詰める。
+  // binary / rename-only / EOL-only は実用上見せても意味がないので skip。
+  const rawPanels: RenderedPanel[] = []
+  for (const c of changes) {
+    if (!c.hasContentChange) continue
+    if (c.eolOnlyChange) continue
+    const asIsFile = c.oldPath ?? c.path
+    const toBeFile = c.path
+    const beforeSrc = sources.get(asIsFile)?.before ?? ''
+    const afterSrc = sources.get(toBeFile)?.after ?? ''
+    const beforeLines = countLines(beforeSrc)
+    const afterLines = countLines(afterSrc)
+    // panel.intent には file path をそのまま入れる (PanelHeader が太字でレンダーする)。
+    // raw panel の panelId は file path から決定的に派生させ、line comment の永続化先を Guide 側と分ける。
+    const panelId = `raw-${toBeFile}`.replace(/[^A-Za-z0-9_-]/g, '_')
+    const panel: Panel = {
+      panelId,
+      intent: c.oldPath && c.oldPath !== c.path ? `${c.oldPath} → ${c.path}` : c.path,
+      ...(beforeLines > 0 ? { asIs: { file: asIsFile, ranges: [{ start: 1, end: beforeLines }] } } : {}),
+      ...(afterLines > 0 ? { toBe: { file: toBeFile, ranges: [{ start: 1, end: afterLines }] } } : {}),
+    }
+    rawPanels.push(renderPanel(panel, sources, summary.mode))
+  }
+
   const html = buildHtml({
     schemaVersion: 1,
     summary,
@@ -162,8 +242,10 @@ async function main(): Promise<void> {
     groups: renderedGroups,
     allPanels: allPanels.map(p => p.panelId),
     expandable,
-    initialReviewedPanels: restore?.reviewedPanels,
-    initialComments: restore?.comments,
+    rawPanels,
+    initialGroupDecisions: restore?.groupDecisions,
+    initialGroupComments: Object.keys(initialGroupComments).length > 0 ? initialGroupComments : undefined,
+    initialComments: lineComments.length > 0 ? lineComments : undefined,
     initialLineCommentDrafts: restore?.lineCommentDrafts,
   })
 
@@ -178,7 +260,7 @@ async function main(): Promise<void> {
   process.stderr.write(`[review-diff] waiting up to ${TIMEOUT_MS / 1000}s for decision...\n`)
   openUrl(started.url)
 
-  const timeoutResult: ResultJson = { decision: 'timeout', reviewedPanels: [], comments: [] }
+  const timeoutResult: ResultJson = { decision: 'timeout', groupDecisions: {}, comments: [] }
   const result: ResultJson = await Promise.race([
     started.waitResult(),
     new Promise<ResultJson>((r) => setTimeout(() => r(timeoutResult), TIMEOUT_MS)),
@@ -195,13 +277,9 @@ async function main(): Promise<void> {
   setTimeout(() => process.exit(0), 100)
 }
 
-// restore.json は SKILL が書き出す中間 JSON。存在 / parse / shape 全てに defensive。
+// restore.json は SKILL が書き出す中間 JSON (shared RestoreState 型)。存在 / parse / shape 全てに defensive。
 // 1 つでも欠ければ「初回起動」と同じ扱い (initial* を undefined のまま) でフォールバック。
-type RestoreState = {
-  reviewedPanels?: string[]
-  comments?: Comment[]
-  lineCommentDrafts?: Record<string, string>
-}
+// 旧 reviewedPanels field は v4.12.0 で廃止 (clean break)。残っていても無視する。
 function readRestoreState(path: string | undefined): RestoreState | undefined {
   if (!path) return undefined
   try {
@@ -210,8 +288,20 @@ function readRestoreState(path: string | undefined): RestoreState | undefined {
     const r = raw as RestoreState
     // 部分的に取れるだけでも seed する。型不正な field だけ落とす。
     const out: RestoreState = {}
-    if (Array.isArray(r.reviewedPanels) && r.reviewedPanels.every(x => typeof x === 'string')) {
-      out.reviewedPanels = r.reviewedPanels
+    if (r.groupDecisions && typeof r.groupDecisions === 'object' && !Array.isArray(r.groupDecisions)) {
+      // value が 'approved' | 'request-changes' のもののみ採用
+      const filtered: Record<string, GroupDecision> = {}
+      for (const [k, v] of Object.entries(r.groupDecisions)) {
+        if (v === 'approved' || v === 'request-changes') filtered[k] = v
+      }
+      if (Object.keys(filtered).length > 0) out.groupDecisions = filtered
+    }
+    if (r.groupComments && typeof r.groupComments === 'object' && !Array.isArray(r.groupComments)) {
+      const filtered: Record<string, string> = {}
+      for (const [k, v] of Object.entries(r.groupComments)) {
+        if (typeof v === 'string') filtered[k] = v
+      }
+      if (Object.keys(filtered).length > 0) out.groupComments = filtered
     }
     if (Array.isArray(r.comments)) {
       // shape の細かい検証は client 側で行うので、ここは Array であれば素通し。
@@ -225,6 +315,77 @@ function readRestoreState(path: string | undefined): RestoreState | undefined {
     process.stderr.write(`[review-diff] restore-state read failed (ignored): ${e instanceof Error ? e.message : String(e)}\n`)
     return undefined
   }
+}
+
+// restore.json の comments[] を line scope と group scope に分ける。
+// 設計判断: client 側が二重 seed しないよう、CLI 側で pre-split して
+// initialComments (= line scope のみ) と initialGroupComments (= group scope の Record) に
+// 分けて payload に乗せる (C-4)。
+function splitRestoreComments(comments: Comment[]): {
+  lineComments: Comment[]
+  groupCommentsFromComments: Record<string, string>
+} {
+  const lineComments: Comment[] = []
+  const groupCommentsFromComments: Record<string, string> = {}
+  for (const c of comments) {
+    // restore.json が破損していたり、旧 v4.11.0 以前の `scope: { type: 'overall' }` が
+    // 残っている可能性に備え、shape をここで検証する。typo や undefined は静かに skip。
+    if (!c || typeof c !== 'object') continue
+    if (typeof c.body !== 'string') continue
+    if (!c.scope || typeof c.scope !== 'object') continue
+    if (c.scope.type === 'line') {
+      // line scope の内部 shape (panelId/side/file/line) も検証する。
+      // 破損 restore.json を素通しすると、useLineComments の seed で undefined/NaN が混入し
+      // 結果として「壊れた restore で不正コメントが新規生成される」副作用を生む。
+      const s = c.scope
+      if (typeof s.panelId !== 'string' || s.panelId === '') continue
+      if (s.side !== 'asIs' && s.side !== 'toBe') continue
+      if (typeof s.file !== 'string') continue
+      if (typeof s.line !== 'number' || !Number.isFinite(s.line)) continue
+      if (s.endLine != null && (typeof s.endLine !== 'number' || !Number.isFinite(s.endLine))) continue
+      lineComments.push(c)
+    } else if (c.scope.type === 'group') {
+      if (typeof c.scope.groupId !== 'string' || c.scope.groupId === '') continue
+      // 同一 groupId が複数あったら後勝ち (UI 上は 1 textarea しかないため自然な扱い)。
+      groupCommentsFromComments[c.scope.groupId] = c.body
+    }
+  }
+  return { lineComments, groupCommentsFromComments }
+}
+
+// v4.12.0 extract-group-patch subcommand: 指定 group の panels が claim する変更行だけを含む
+// unified diff (--unidiff-zero 互換) を stdout に吐く。SKILL.md (bash) が `git apply --cached
+// --unidiff-zero --recount` で linear-stack の各 commit を構築するのに使う。
+async function extractGroupPatchCommand(): Promise<void> {
+  const { values } = parseArgs({
+    options: {
+      summary: { type: 'string' },
+      diff: { type: 'string' },
+      group: { type: 'string' },
+    },
+    strict: false,
+    args: process.argv.slice(3),
+  })
+  if (!values.summary || !values.diff || !values.group) {
+    process.stderr.write('Usage: cli extract-group-patch --summary <path> --diff <path> --group <groupId>\n')
+    process.exit(1)
+  }
+  let summary: SummaryJson
+  try {
+    const raw = JSON.parse(readFileSync(values.summary as string, 'utf8'))
+    summary = validateSummarySchema(raw).summary
+  } catch (e) {
+    process.stderr.write(`failed to read/validate summary: ${e instanceof Error ? e.message : String(e)}\n`)
+    process.exit(1)
+  }
+  const diffText = readFileSync(values.diff as string, 'utf8')
+  const result = extractGroupPatch({ summary, diffText, groupId: values.group as string })
+  if (!result.ok) {
+    process.stderr.write(`extract-group-patch failed: ${result.error}\n`)
+    process.exit(1)
+  }
+  process.stdout.write(result.patch)
+  process.exit(0)
 }
 
 // 全 panel が言及する file path を集約。asIs.file + toBe.file + rename oldPath を union。

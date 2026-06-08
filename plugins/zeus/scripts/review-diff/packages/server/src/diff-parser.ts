@@ -26,6 +26,16 @@ type AnyChunk = {
   toFileRange?: ChunkRange
 }
 
+// 1 hunk の境界情報。fromLines = 0 は pure addition (`@@ -N,0 +M,K @@`)、toLines = 0 は pure deletion。
+// validateRangeSymmetry が「before_line → after_line」マッピングを構築する際に
+// 「この line が hunk 内か外か」を判定するのに使う。
+export type Hunk = {
+  fromStart: number
+  fromLines: number
+  toStart: number
+  toLines: number
+}
+
 type AnyFile = {
   type: string
   path?: string
@@ -38,9 +48,10 @@ type AnyFile = {
 // v4.7.0 新 API: FileChange
 // =====================================================================
 
-// panel-renderer / coverage-validator が必要とする最小情報集合。
-// hunks 構造は持たない (panel-renderer は asIs/toBe の raw source + ranges から
-// jsdiff で改めて LCS を取るため)。
+// panel-renderer / coverage-validator / validateRangeSymmetry が必要とする情報集合。
+// panel-renderer 自体は hunks を使わず asIs/toBe の raw source + ranges から jsdiff で
+// 改めて LCS を取るが、validateRangeSymmetry が「不変行が hunks マッピング後 toBe のどの行に
+// なるか」を逆算するために hunks を持たせる必要がある (v4.12.0)。
 export type FileChange = {
   path: string
   oldPath?: string
@@ -59,6 +70,9 @@ export type FileChange = {
   // 末尾改行のみの変化 (parse-git-diff の MessageLine "\ No newline at end of file" だけが
   // 出るケース)。coverage-validator はこのケースを skip + warn する。
   eolOnlyChange: boolean
+  // 全 hunks の境界情報。binary / structural-only / 空 diff は空配列。
+  // validateRangeSymmetry / extract-group-patch が使う。
+  hunks: Hunk[]
 }
 
 export function parseDiff(diffText: string): FileChange[] {
@@ -88,11 +102,13 @@ function fileToChange(f: AnyFile): FileChange {
       hasContentChange: false,
       hasStructuralChange: true,
       eolOnlyChange: false,
+      hunks: [],
     }
   }
 
   const asIsChangedLines = new Set<number>()
   const toBeChangedLines = new Set<number>()
+  const hunks: Hunk[] = []
   let additions = 0
   let deletions = 0
   // EOL-only 判定: addition/deletion が 0 で MessageLine のみが存在するチャンクの場合 true
@@ -116,6 +132,19 @@ function fileToChange(f: AnyFile): FileChange {
       }
     }
     if (!chunkHadChange && chunkHadMessage) sawMessageOnlyChunk = true
+    // hunk 境界情報: chunk が `@@ -from,K +to,L @@` を持っていれば抽出。
+    // EOL-only chunk (MessageLine だけ) も fromFileRange / toFileRange は持つので含めるが、
+    // EOL-only 全体としては eolOnlyChange フラグで coverage 検証側がスキップする。
+    const fr = chunk.fromFileRange
+    const tr = chunk.toFileRange
+    if (fr && tr) {
+      hunks.push({
+        fromStart: fr.start,
+        fromLines: fr.lines,
+        toStart: tr.start,
+        toLines: tr.lines,
+      })
+    }
   }
 
   const hasContentChange = additions > 0 || deletions > 0
@@ -130,6 +159,7 @@ function fileToChange(f: AnyFile): FileChange {
     hasContentChange,
     hasStructuralChange,
     eolOnlyChange,
+    hunks,
   }
 }
 

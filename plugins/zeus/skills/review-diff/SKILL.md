@@ -1,6 +1,6 @@
 ---
 name: review-diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 UI (split mode) でブラウザに開き、panel 単位 Reviewed チェック + コメント + Approve/Reject で人間ゲートする最終承認スキル。Approve なら commit に進み、Reject ならコメント反映 → Skill ツールで自動再起動。context+ ボタンは close-relaunch + state restore モデルで Reviewed / line comments / 未保存 draft を再起動後に復元。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
+description: 直前の staged diff または既存 PR の diff を Linear 風 stacked PR UI (split mode) でブラウザに開き、group 単位の Approve / Request Changes + コメントで人間ゲートする最終承認スキル。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。context+ ボタンは close-relaunch + state restore モデルで全 group の decision / コメント / 未保存 draft を再起動後に復元。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
 argument-hint: <なし | PR番号>
 ---
 
@@ -8,14 +8,10 @@ argument-hint: <なし | PR番号>
 
 `/zeus:review` が **観点別の機械レビュー** (security/logic/performance 等を AI に分析させる) なのに対し、
 このスキルは **人間が目で見て最終承認する** ためのゲートです。
-diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェック + 自由コメント + Approve/Reject を返してもらいます。
+diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** の Approve / Request Changes と自由コメントを返してもらいます。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes 以降は un-commit のまま Claude に戻して修正ループに入ります。
 
-レビュー単位は **panel** です。1 つの「変更の意味的単位 = panel」が:
-- `intent` (どんな意図の変更か、1 行)
-- `asIs` (変更前: ファイル + 行範囲集合)
-- `toBe` (変更後: ファイル + 行範囲集合)
+レビューの主単位は **group** です。group は 1 つの「読書セクション = 意味的にまとまった変更の塊」で、複数の panel を含みます。panel は表示単位で、`intent` + `asIs` + `toBe` (ファイル + 行範囲集合) を持ちます。
 
-を持つ最小ユニットになっており、git の hunk より粗くも細かくもなれ、cross-file 移動も 1 panel で表現できます。
 表示は split mode (左右並列) 固定、context+ ボタンは close-relaunch + state restore モデルで動作します。
 
 ## 引数仕様と動作モード
@@ -44,6 +40,7 @@ diff を Linear 風のローカル UI で開き、panel 単位 Reviewed チェ�
 
 **Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
 **regen-group カウンタ (regenCount) も同様に会話メモリで管理**し、5 回到達で AskUserQuestion で確認。
+**validator fail による summary 再生成カウンタ (summaryRegenCount) も会話メモリで管理**し、3 回到達で AskUserQuestion で確認。
 
 `slug` の決め方:
 - staged モード: 変更ファイル名から代表的な 1〜2 個を kebab-case で繋ぐ
@@ -61,6 +58,7 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 - **git add / git commit / git push は必ず別実行で 1 コマンドずつ** (CLAUDE.md ルール)
 - **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
 - **regen-group 連続 5 回でユーザー確認**: regenCount ≥ 5 で `AskUserQuestion` (無限再生成防止)
+- **summary 再生成 (validator fail) 連続 3 回でユーザー確認**: summaryRegenCount ≥ 3 で `AskUserQuestion`
 - **CLI タイムアウトは 9 分** (Bash ツール 10 分制約のため)
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
@@ -163,6 +161,68 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
   - `asIs` / `toBe` の `ranges` で「変更だけでなく文脈ごと見せたい論理単位」を切り取る
 - 「ここをレビューしてほしい」「ここはリスク高」のような **人間に向けた注釈テキストは書かない**。
   そういう情報はコード自体で語れていなければならない。
+
+#### group の並び順は「読書順 = レビュー順」 (v4.12.0 重要)
+
+groups[] は **「人間が読む順番」** で並べる。intent ベースの topic 分類 (型刷新 / 実装 / テスト 等) ではなく、
+**読みやすさ** を優先して並べる:
+- **抽象 → 具象** (型定義 → 型を使う側 → UI レイヤ)
+- **原因 → 結果** (validator 追加 → CLI 側で呼び出し → エラーハンドリング)
+- **コア → 周辺** (ビジネスロジック → そのテスト → ドキュメント更新)
+
+panel 内も同様、「最初に読むべき panel」を group の先頭に置く。
+レビュアーが上から順に読むだけで設計意図がメンタルモデルに組み上がるよう、順序自体を語りに使う。
+
+#### 同一変更行排他原則 (v4.12.0 重要)
+
+stacked PR 風で **group 単位 commit** するため、同じ git 変更行を複数 group が touch すると
+commit-per-group が破綻する。CLI が `validatePanelExclusivity` で検出して fail させる。
+
+ルール:
+- **同一 (file, side, line) の変更行 (deletion/addition) は 1 group の 1 panel だけが range に含める**
+- **不変な context 行は複数 group で重複 OK** (どの group も「文脈として見せたい」のは自然)
+
+違反した場合の stderr 例:
+```
+Panel exclusivity validation failed. The same changed line is claimed by multiple groups:
+  packages/foo.ts [toBe] line 42:
+    group g0 "型刷新" panel p3
+    group g1 "API 実装" panel p7
+```
+→ 該当行を「どちらの group のテーマに属するか」判断して、片方の panel ranges から外す。
+
+#### asIs / toBe ranges の対称性 (v4.12.0 重要)
+
+panel.asIs.ranges と panel.toBe.ranges に含まれる **不変行 (= 変更されなかった行)** は、
+git diff の hunk から逆算した行マッピングで「両側に対応行が含まれている」状態にしなければならない。
+そうでないと、jsdiff の LCS が「不変行を変更行扱い」して UI 上のハイライトが嘘になる。
+
+CLI が `validateRangeSymmetry` で検出して fail させる。
+
+例 (NG):
+- 真の変更は 90-95 → 90-115 (10 行追加で末尾シフト)
+- asIs.ranges = [70-110] (不変行 96-110 を含む)
+- toBe.ranges = [70-110] (toBe で対応する不変行は 116-130 のはずだが、含まれていない)
+→ jsdiff LCS が末尾 5 行を deletion 扱いして赤で表示される
+→ `validateRangeSymmetry` が「toBe.ranges を [70-130] まで拡張せよ」と stderr に出して exit 1
+
+修正方法:
+1. asIs.ranges を Read で実測 (関数 header から closing brace まで等)
+2. **その同じ論理ブロックが toBe で何行〜何行になっているか** を、変更後ファイルを Read で再度実測
+3. 変更行 (deletion/addition) は panel ごとに分け、context 行は両側ペアになるよう調整
+
+#### groups[] の配列順は絶対に変えない (v4.12.0 重要)
+
+regen-group 後の再生成で `groups[]` の配列順を変えると `g${i}` キーが意味を失い、
+restore.json の `groupDecisions` / `groupComments` 復元が破綻する。
+**panels[] の追加・range 拡張は OK、group の挿入・削除・入れ替えは禁止**。
+
+#### group は最低 1 panel
+
+`panels: []` の group は禁止。context-only でも最低 1 panel を入れる。
+(理由: ゼロ panel の group は UI 上 decision UI が disable され、自動 approved 扱いになるが、
+レビュアーは何を判断したのか曖昧になる。意図的な context-only group は最低 1 つの「読書 anchor」
+panel を持たせる)
 
 #### スキーマ
 
@@ -284,21 +344,30 @@ CLI の挙動:
 - stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
 - CLI 内部タイムアウトは 9 分 (Bash の 10 分より 1 分早く自爆して整合性を取る)
 - 終了時に stdout に **1 行の JSON** が出る:
-  `{"decision":"approve"|"reject"|"timeout"|"regen-group", ...}`
+  `{"decision":"submit"|"timeout"|"regen-group", ...}` (合否は groupDecisions の分布から判定)
 
-#### Comment / Result shape
+#### Comment / Result shape (v4.12.0)
 
 `comments[]` の各要素は scope union 構造:
-- `{ "body": "...", "scope": { "type": "overall" } }` — 全体コメント
+- `{ "body": "...", "scope": { "type": "group", "groupId": "g0" } }` — group コメント
 - `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42 } }` — 単一行コメント
 - `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42, "endLine": 58 } }` — 行範囲コメント
+
+(旧 `scope: { type: 'overall' }` は廃止)
 
 ResultJson 全体:
 ```json
 {
-  "decision": "approve" | "reject" | "timeout" | "regen-group",
-  "reviewedPanels": ["panel-id-1", "panel-id-2"],
-  "comments": [ /* 上記 shape */ ],
+  "decision": "submit" | "timeout" | "regen-group",
+  "groupDecisions": {
+    "g0": "approved",
+    "g1": "approved",
+    "g2": "request-changes"
+  },
+  "comments": [
+    { "body": "型定義 OK", "scope": { "type": "group", "groupId": "g0" } },
+    { "body": "ここ null check 漏れ", "scope": { "type": "line", "panelId": "p3", "side": "toBe", "file": "src/foo.ts", "line": 42 } }
+  ],
   "regenGroup": {            // decision='regen-group' の時のみ
     "groupId": "g2",
     "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ]
@@ -310,27 +379,94 @@ ResultJson 全体:
 ```
 
 注意:
-- 記録単位は **`reviewedPanels`** (panelId ベース)
+- 評価単位は **`groupDecisions`** (groupId → 'approved' | 'request-changes')
+- groupId は `g${i}` 形式 (`i` は summary.json の `groups[]` index)
+- 全体の合否は `groupDecisions` の分布から SKILL.md が判定 (全 approved / 全 RC / mixed)
+- `decision='timeout'` の時は `groupDecisions` が空オブジェクト
 - 行コメントの side は **`asIs` / `toBe`** (camelCase)
 - 行コメントの `file` は panel の対応する側 (`asIs.file` または `toBe.file`) を自動で入れる
 
-### Phase 6: 結果分岐
+### Phase 6: 結果分岐 (v4.12.0)
 
 stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WORK_DIR}/result.json` にも自動保存されている。
 
-#### approve
+#### decision = 'submit' → linear-stack commit (新規)
 
-- commit メッセージを diff から生成 (semantic prefix + 簡潔な要約)
-- **git add / commit / push は必ず別コマンドで実行** (CLAUDE.md ルール)
-- push はユーザーから明示要求がない限りしない
-- commit (+ push) が完了したら **work-dir をクリーンアップ**:
-  ```bash
-  rm -rf "$WORK_DIR"
-  ```
+`groupDecisions` の分布から、まず全体合否を判定する:
 
-#### reject
+```bash
+TOTAL=$(jq '.groupDecisions | length' "$WORK_DIR/result.json")
+APPROVED=$(jq '[.groupDecisions[] | select(. == "approved")] | length' "$WORK_DIR/result.json")
+RC=$(jq '[.groupDecisions[] | select(. == "request-changes")] | length' "$WORK_DIR/result.json")
+```
 
-1. **rejectCount をメインの会話メモリで +1** (state.json は使わない)
+| 分布 | パス |
+|---|---|
+| APPROVED == TOTAL | **全 approved** → linear-stack で全 group commit |
+| RC == TOTAL | **全 RC** → commit を作らず reject ルート (rejectCount++, Skill 再起動) |
+| 0 < APPROVED < TOTAL | **mixed** → 先頭から approved を commit、最初の RC で break、残りは un-commit のまま Claude に戻す |
+
+##### linear-stack commit ループ (bash)
+
+```bash
+# 先頭から走査。最初の RC で break。
+GROUPS_LEN=$(jq '.groups | length' "$WORK_DIR/summary.json")
+COMMIT_COUNT=0
+LAST_GID=""
+for i in $(seq 0 $((GROUPS_LEN - 1))); do
+  GID="g${i}"
+  DECISION=$(jq -r --arg id "$GID" '.groupDecisions[$id] // "missing"' "$WORK_DIR/result.json")
+  if [ "$DECISION" = "request-changes" ]; then
+    echo "[review-diff] stopped at $GID (request-changes)"
+    LAST_GID="$GID"
+    break
+  fi
+  if [ "$DECISION" != "approved" ]; then
+    # missing は許容しない (timeout でも groupDecisions は空、フローには来ない)
+    echo "[review-diff] unexpected decision for $GID: $DECISION"
+    break
+  fi
+  # 部分 patch 抽出 (--unidiff-zero 互換)
+  node "$CLI" extract-group-patch \
+    --summary "$WORK_DIR/summary.json" \
+    --diff "$WORK_DIR/diff.patch" \
+    --group "$GID" \
+    > "$WORK_DIR/patch.${GID}.diff" 2>/dev/null
+  # 空 patch (context-only approved group) は commit skip
+  if [ ! -s "$WORK_DIR/patch.${GID}.diff" ]; then
+    echo "[review-diff] skipped empty group $GID"
+    continue
+  fi
+  # index を初期化して当該 group のみ stage
+  git restore --staged . 2>/dev/null || true
+  if ! git apply --cached --unidiff-zero --recount "$WORK_DIR/patch.${GID}.diff" 2>/dev/null; then
+    echo "[review-diff] FATAL: failed to apply patch for $GID — aborting" >&2
+    git restore --staged .
+    # 全 commit を諦め、ユーザーに状況を提示
+    break
+  fi
+  # commit メッセージは AI が group.title + description + 該当 group の comment + panel.intent から生成
+  # (semantic prefix を含む 1〜2 行サマリ)
+  git commit -m "$COMMIT_MSG_FOR_${GID}"
+  COMMIT_COUNT=$((COMMIT_COUNT + 1))
+done
+echo "[review-diff] created $COMMIT_COUNT commits"
+git log --oneline -n "$COMMIT_COUNT"
+```
+
+ポイント:
+- `extract-group-patch` は `dist/cli.js` の subcommand。`--unidiff-zero` 互換の patch を出す
+- `git apply --cached --unidiff-zero --recount` で line count のずれを git 側に吸収させる
+- 各 commit メッセージは **AI が** `group.title` + group description + 該当 group の `comments` (scope='group') + 各 panel.intent から生成 (semantic prefix 含む)
+- mixed パスでは「N commits を作って g${k} onwards は request-changes のため un-commit」をユーザーに明示
+- 全 commit 完了後 (= 全 approved or mixed パスで break まで) は **work-dir をクリーンアップ** (`rm -rf "$WORK_DIR"`)
+- mixed パスで RC group が残った場合は、その後 reject ルートに合流して修正実装 → Skill 再起動
+
+##### 全 RC パス (= reject ルート)
+
+全 group が 'request-changes' の場合:
+
+1. **rejectCount をメインの会話メモリで +1**
 2. UI で集めた `comments` 配列をユーザーに提示し、どの指摘を反映するか合意を取る
 3. `rejectCount >= 3` の場合は **必ず `AskUserQuestion`** で「このまま続行 / 中止 / 方針見直し」を聞く
 4. 修正実装を行う (大きい変更なら `/zeus:dev` への橋渡しを提案)
@@ -339,41 +475,51 @@ stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WO
    rm -rf "$WORK_DIR"
    ```
 6. `Skill('zeus:review-diff', args)` で自動再起動
-   - staged モードなら args は空
-   - pr モードなら同じ PR 番号を渡す
-   - Skill ツールが使えない環境では `AskUserQuestion` で「もう一度 /zeus:review-diff を手動実行してください」と告げる
 
-#### regen-group
+##### mixed パスの「残った RC 以降」処理
 
-ブラウザの context+ ボタン押下で `decision: 'regen-group'` が返る。これは「現在の group の context が
-狭すぎる、もっと広げて見たい」という人間からのリクエスト。close-relaunch + state restore で対応する。
+mixed パスで approved を全部 commit した後、最初の RC group 以降が un-stage で残る:
+
+1. ユーザーに「g${k} 以降は request-changes のため un-commit、コメントは以下: ...」を提示
+2. RC group の `comments` を要約して修正方針を提案
+3. ユーザー合意後に修正実装 → 残った変更を `git add` → `Skill('zeus:review-diff', args)` で再起動
+4. 再起動側では、もう commit された変更は HEAD に取り込まれているので、`git diff --cached` は残った RC 部分 + 新しい修正だけが対象になる
+
+#### decision = 'regen-group'
+
+ブラウザの context+ ボタン押下で `decision: 'regen-group'` が返る。close-relaunch + state restore で対応する。
 
 手順:
 
 1. **regenCount をメインの会話メモリで +1**。`regenCount >= 5` なら **AskUserQuestion** で
-   「このまま広げ続ける / 中止して再起動なし / 方針見直し」を聞き、停止判断を仰ぐ (無限再生成防止)。
+   「このまま広げ続ける / 中止 / 方針見直し」を聞く (無限再生成防止)。
 2. `result.json` から `regenGroup.groupId` と `regenGroup.currentRanges` を取得。
 3. **work-dir はクリーンアップしない** (summary.json / diff.patch は再利用、restore.json を作る)。
 4. **summary.json を Read → 該当 group の panels[] を再生成** して Write:
    - `currentRanges` を参考に、各 panel の `asIs.ranges` / `toBe.ranges` を **±5〜10 行拡張**
    - 必要なら file 全体を覆う追加 panel を当該 group に挿入
-   - 他の group / 他 group の panels は触らない (cross-group 影響を作らない)
+   - **`groups[]` の配列順は絶対に変えない** (group の挿入・削除・入れ替え禁止)
+   - 他 group の panels は触らない (cross-group 影響を作らない)
    - panelId は安定 ID (intent 除外 hash) を保持するため、asIs/toBe の file を変えない限り変わらない
-5. **`restore.json` を Write** で書き出す:
+5. **`restore.json` を Write** で書き出す (v4.12.0 shape):
    ```json
    {
-     "reviewedPanels": ["..."],
-     "comments": [...],
-     "lineCommentDrafts": {"draft:p1:asis:42": "..."}
+     "groupDecisions": { "g0": "approved", "g1": "approved" },  // 該当 group (g2) の decision はクリア
+     "groupComments": { "g0": "型 OK", "g1": "API も OK" },     // 該当 group の comment はクリア
+     "comments": [ /* line scope のみ抽出して載せる */ ],
+     "lineCommentDrafts": { "draft:p1:asis:42": "..." }
    }
    ```
-   `result.json` の `reviewedPanels` / `comments` / `lineCommentDrafts` をそのままコピーする。
+   - `groupDecisions`: `result.json.groupDecisions` から **regenGroup.groupId に該当する key を削除** したもの (Q-3: 該当 group の decision のみクリア)
+   - `groupComments`: `result.json.comments` から `scope.type==='group'` を集約、ただし **regenGroup.groupId に該当するものは除外**
+   - `comments`: `result.json.comments` から `scope.type==='line'` のみ抽出
+   - `lineCommentDrafts`: そのままコピー
 6. **`Skill('zeus:review-diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
    - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
    - Phase 5 の CLI 起動に `--restore-state "$WORK_DIR/restore.json"` を追加する
 7. Skill ツールが使えない環境では `AskUserQuestion` で「context を広げた summary.json で再 review するには
-   もう一度 /zeus:review-diff を手動実行してください (restore.json が work-dir に残っているので Reviewed と
-   draft は維持されます)」と告げる。
+   もう一度 /zeus:review-diff を手動実行してください (restore.json が work-dir に残っているので decision と
+   コメントは維持されます)」と告げる。
 
 実装メモ:
 - regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
@@ -388,6 +534,17 @@ stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WO
   ```bash
   rm -rf "$WORK_DIR"
   ```
+
+#### validator fail (CLI exit 1)
+
+`validateCoverage` / `validateRangeSymmetry` / `validatePanelExclusivity` のいずれかが fail すると CLI が
+stderr に違反内容を出して exit 1 する。SKILL.md 側の処理:
+
+1. **summaryRegenCount をメインの会話メモリで +1**
+2. `summaryRegenCount >= 3` で **AskUserQuestion** で「summary.json を再生成して続行 / panel 設計を手動見直し / 中止」を聞く
+3. stderr の違反内容を Read で把握 → summary.json を Write で再生成 (修正提案に従って ranges を調整、または exclusivity 違反の解消)
+4. **work-dir は維持** (summary.json だけ更新、restore.json があれば残す)
+5. `Skill('zeus:review-diff', args)` で自動再起動
 
 ## 不明点があれば AskUserQuestion で聞く
 

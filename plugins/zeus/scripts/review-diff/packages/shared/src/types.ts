@@ -1,7 +1,12 @@
-// shared 型定義 (v4.8.0 panel model)。client/server/cli が import する。
-// v4.8.0 で Channels インフラ + unified mode を全廃し、context+ は close-relaunch +
-// state restore モデルに変更。FeedbackEvent / PanelsUpdatedEvent は消滅し、ResultJson に
-// 'regen-group' decision + restore 用 lineCommentDrafts を追加した。
+// shared 型定義 (v4.12.0 stacked PR 風 group ベース承認モデル)。client/server/cli が import する。
+// 設計判断:
+//   - panel 単位の Reviewed 概念を廃止し、group 単位の Approve / Request Changes に統合
+//   - 全体の Approve/Reject ボタンは廃止、Submit Review 1 つに統一
+//   - groupDecisions の分布から SKILL.md 側が「全 approved / 全 RC / mixed」を判定し linear-stack で
+//     commit-per-group を作る (CLI は git 操作しない)
+//   - Comment.scope の 'overall' は廃止し 'group' に統合 (情報密度向上、UI の colocate 設計)
+//   - regen-group / restore.json モデルは維持し、再起動時に groupDecisions / groupComments /
+//     lineCommentDrafts を seed して状態をシームレスに復元する
 // server-only の SourcesMap / FileSource は packages/server/src/server.ts 内で別途定義。
 
 // =====================================================================
@@ -66,19 +71,24 @@ export type SummaryJson = {
 }
 
 // =====================================================================
-// Comment / Result
+// Comment / Result (v4.12.0 stacked group モデル)
 // =====================================================================
 
-// v4.7.0 Comment shape (scope union 化、null マジック値撤廃)。
-//   - scope: { type: 'overall' }  → オーバーオールコメント
-//   - scope: { type: 'line', ... } → panel 内の行 (または範囲) コメント
+// group 単位の Approve / Request Changes 状態。
+// null は client state のみで使う「未決定」を表し、ResultJson には載らない (Submit ボタンが
+// 全 group decision 確定時のみ active 化する仕様のため)。
+export type GroupDecision = 'approved' | 'request-changes'
+
+// Comment shape (v4.12.0): scope は group か line の 2 択。overall は廃止。
+//   - scope: { type: 'group', groupId } → group ヘッダのコメント欄に書かれた本文
+//   - scope: { type: 'line', ... }      → panel 内の行 (または範囲) コメント
 //     file を併記する理由は、grep で `jq '.comments[] | select(.scope.file=="x.ts")'` を
 //     1 段引きできるようにするため + cross-file panel で side だけだとどの file の行か
 //     逆引きが必要になるため。
 export type Comment = {
   body: string
   scope:
-    | { type: 'overall' }
+    | { type: 'group'; groupId: string }
     | {
         type: 'line'
         panelId: string
@@ -89,16 +99,18 @@ export type Comment = {
       }
 }
 
-// v4.8.0: decision に 'regen-group' を追加。
-//   context+ ボタン押下時、ブラウザ側で現状 state (Reviewed + line comments + 未保存 draft) を
-//   回収して POST /result で送り、CLI を一度終了させる (window.close 連動)。
-//   SKILL.md が summary.json の該当 group の panels を「より広い context」で再生成して、
-//   restore state を渡しつつ Skill('zeus:review-diff') を再起動する設計。
-//   approve / reject / timeout では regenGroup は undefined。
-//   lineCommentDrafts は regen 時の seed として使われる (approve / reject では無視可)。
+// v4.12.0: decision は 'submit' / 'timeout' / 'regen-group' の 3 値。
+//   全体の Approve / Reject は廃止し、合否は groupDecisions の分布から SKILL.md が判定する
+//   (全 approved → 全 commit / 全 RC → reject ルート / mixed → 先頭から approved を commit、
+//    最初の RC で break、残り un-staged)。
+//   - 'submit'     : ユーザーが Submit Review ボタンを押した (全 group decision 確定済み)
+//   - 'timeout'    : CLI が 9 分タイムアウトで自爆 (groupDecisions は空オブジェクト)
+//   - 'regen-group': context+ ボタン押下、close-relaunch + state restore モデルへ
 export type ResultJson = {
-  decision: 'approve' | 'reject' | 'timeout' | 'regen-group'
-  reviewedPanels: string[]
+  decision: 'submit' | 'timeout' | 'regen-group'
+  // groupId → 'approved' | 'request-changes'。timeout 時のみ空オブジェクト。
+  groupDecisions: Record<string, GroupDecision>
+  // group scope と line scope のコメント。overall は廃止 (group に統合)。
   comments: Comment[]
   regenGroup?: {
     groupId: string
@@ -111,6 +123,16 @@ export type ResultJson = {
   }
   // sessionStorage に残っていた未保存 draft 本文。key: `draft:${panelId}:${side}:${num}[:${end}]`
   // 再起動後に sessionStorage に書き戻して、書きかけが残る UX を担保する。
+  lineCommentDrafts?: Record<string, string>
+}
+
+// v4.12.0: SKILL.md (bash) が CLI 再起動間で状態を中継するための JSON shape。
+//   CLI の readRestoreState が defensive に読み込む。client/server 両方から参照できるよう
+//   shared に export しておく (旧版は cli.ts ローカル型だった)。
+export type RestoreState = {
+  groupDecisions?: Record<string, GroupDecision>
+  groupComments?: Record<string, string>
+  comments?: Comment[]
   lineCommentDrafts?: Record<string, string>
 }
 
@@ -166,14 +188,26 @@ export type ClientPayload = {
   summary: SummaryJson
   prMeta: PrMeta | null
   groups: RenderedGroup[]
-  // 全 panel の panelId を flatten (App.tsx の Reviewed 集計 / nav 用)
+  // 全 panel の panelId を flatten (nav scroll-spy 用)。Reviewed 集計は v4.12.0 で廃止。
   allPanels: string[]
   // staged モードなら true。PR モードで gh CLI 経由で base/head blob が取れたら true。
   expandable: boolean
-  // v4.8.0: context+ の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
-  // restore.json を ClientPayload に注入する。初回起動 (restore なし) では全て undefined。
-  // App.tsx の useState 初期化 + useLineComments の seed として消費される。
-  initialReviewedPanels?: string[]
-  initialLineCommentDrafts?: Record<string, string>
+  // v4.12.0 (refinement): Diff タブ用の「GitHub 風 file-by-file 差分」レンダー済み panel 集合。
+  // 各要素は「1 ファイル = 1 panel (full file range)」で、Guide タブの AI グルーピングを介さず
+  // 「すべての変更ファイルを順に俯瞰する」用途。Panel コンポーネントを再利用するので shiki ハイライト
+  // と split-side-by-side、行コメント機能はそのまま使える。
+  rawPanels: RenderedPanel[]
+  // v4.12.0: context+ の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
+  // restore.json を pre-filter して ClientPayload に注入する。初回起動では全て undefined。
+  //   - initialGroupDecisions  : group ごとの Approve / Request Changes 状態を復元
+  //   - initialGroupComments   : group コメント欄の textarea 値を復元
+  //   - initialComments        : line scope のコメントのみ (group scope は CLI が pre-filter で抜く)
+  //   - initialLineCommentDrafts: 未保存の line comment draft (sessionStorage 復元用)
+  initialGroupDecisions?: Record<string, GroupDecision>
+  initialGroupComments?: Record<string, string>
   initialComments?: Comment[]
+  initialLineCommentDrafts?: Record<string, string>
+  // v4.12.0 (refinement): panel 読了マーカ (左 nav の dot click でトグルする視覚アシスト)。
+  // group decision の真の評価軸とは別軸の「どこまで読んだか」追跡。regen-group で復元する。
+  initialReviewedPanels?: string[]
 }
