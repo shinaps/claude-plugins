@@ -235,6 +235,9 @@ export function App({ payload }: Props) {
   }, [scrollTarget])
 
   const onDecisionChange = useCallback((id: string, next: GroupDecision | null) => {
+    // v5.0.3: ユーザー操作で decision が変わった瞬間に auto-submit を arm する。
+    // restore 経由の初期状態が全埋まりでも、ここを経由しない限り発火しない。
+    autoSubmitArmedRef.current = true
     setGroupDecisions(prev => ({ ...prev, [id]: next }))
     // decision 確定 (approved / request-changes どちらも) で次 group に自動スクロール。
     // RC でも遷移させる理由: RC を付けた後にユーザーがその場に留まる強い動機は無く、むしろ
@@ -527,6 +530,26 @@ export function App({ payload }: Props) {
 
   const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
   const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
+
+  // v5.0.3: 全 group decision が確定した瞬間に submit を自動発火する。
+  // reviewKind は groupDecisions の分布から判定 (全 approved → 'approve'、それ以外 → 'request-changes')。
+  // 「Comment」だけは明示的にボタンで送る運用 (= 自動 submit には乗らない、note 付きで残せる)。
+  // submit 内で submitted === null ガードがあるので二重発火しない。
+  // restore (= regen-group/comment-reply 復帰) で initial がすでに全埋まりだった場合に意図せず即 submit が
+  // 走らないよう、autoSubmitArmedRef でユーザーの操作 (= setDecision を経由した遷移) が一度でも起きるまでは
+  // 発火しない仕掛けにする。
+  const autoSubmitArmedRef = useRef(false)
+  const totalGroups = groupsState.length
+  const allDecided = totalGroups > 0 && (approvedCount + rcCount) === totalGroups
+  useEffect(() => {
+    if (!autoSubmitArmedRef.current) return
+    if (!allDecided) return
+    if (submitted || regenPending) return
+    // 全 approved なら approve、1 つでも RC があれば request-changes 扱い (linear-stack 側で先頭から
+    // approved を commit、最初の RC で break する既存ロジックがそのまま走る)
+    const reviewKind: ReviewKind = rcCount === 0 ? 'approve' : 'request-changes'
+    submit({ reviewKind })
+  }, [allDecided, rcCount, submitted, regenPending])
 
   // Activity タブ: Editorial Dashboard 風の俯瞰画面。
   // diff 規模 (Files/Additions/Deletions/Progress) + 言語/レイヤ別 proportional bar + group index で
