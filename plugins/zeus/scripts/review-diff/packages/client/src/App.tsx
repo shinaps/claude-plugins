@@ -27,6 +27,7 @@ import { GroupSection } from './GroupSection'
 import { PanelBlock } from './PanelBlock'
 import { SubmitBar } from './SubmitBar'
 import { ChunkNavigator } from './ChunkNavigator'
+import { ActivityView } from './ActivityView'
 import { shouldAutoCollapseFile } from './auto-collapse'
 
 // Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
@@ -503,47 +504,24 @@ export function App({ payload }: Props) {
   const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
   const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
 
-  // Activity タブ: AI Review Report カード (overall サマリ + group インデックス)
-  // 「上から順に何が変わったかを俯瞰したい」フェーズの初手画面。クリックで Guide にジャンプする。
+  // Activity タブ: Editorial Dashboard 風の俯瞰画面。
+  // diff 規模 (Files/Additions/Deletions/Progress) + 言語/レイヤ別 proportional bar + group index で
+  // 「これから何をレビューするか」を 3 秒で把握できるよう設計。JSX 本体は ActivityView に切り出し済み。
   const activityContent = (
-    <div className="m-0 px-6 pt-6 pb-2 w-full">
-      {/* shadow inset で背景グラデの上端を subtly highlight する意図 (絶対値 rgba で固定値表現) */}
-      <div className="max-w-[960px] bg-gradient-to-b from-surface to-background border border-border-soft rounded-xl px-7 pt-6 pb-5 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset]">
-        <div className="text-[10px] tracking-[0.14em] uppercase text-accent font-semibold mb-2">AI Review Report</div>
-        <h1 className="m-0 mb-2 text-2xl font-semibold tracking-[-0.01em]">{title}</h1>
-        <div className="text-text-muted text-xs mb-4 font-mono" dangerouslySetInnerHTML={{ __html: meta }} />
-        {overallHtml ? (
-          // markdown BEM 維持: prose 用 token 上書きスコープとして globals.css にあるため。
-          <div
-            className="markdown prose prose-invert prose-sm max-w-[760px] text-[13.5px] leading-[1.65]"
-            dangerouslySetInnerHTML={{ __html: overallHtml }}
-          />
-        ) : null}
-        {groupsState.length > 0 ? (
-          <ul className="list-none m-0 mt-5 pt-4 border-t border-border-soft flex flex-col gap-0.5 max-h-[40vh] overflow-y-auto">
-            {groupsState.map((g, i) => (
-              <li key={g.groupId}>
-                <button
-                  type="button"
-                  className="flex items-baseline gap-3 w-full px-2.5 py-2 border-0 rounded-md bg-transparent text-inherit text-left cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
-                  onClick={() => {
-                    setTab('guide')
-                    if (g.panels[0]) jumpToPanel(g.panels[0].panelId)
-                  }}
-                  aria-label={`Jump to group ${i + 1}: ${g.title}`}
-                >
-                  <span className="font-mono text-[11px] text-text-dim tabular-nums min-w-[22px]">{String(i + 1).padStart(2, '0')}</span>
-                  <span className="flex-1 text-sm font-medium text-text">{g.title}</span>
-                  <span className="text-[11px] text-text-dim tabular-nums">
-                    {g.panels.length} panel{g.panels.length === 1 ? '' : 's'}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-    </div>
+    <ActivityView
+      title={title}
+      metaHtml={meta}
+      overallHtml={overallHtml}
+      rawPanels={payload.rawPanels}
+      groups={groupsState}
+      groupDecisions={groupDecisions}
+      approvedCount={approvedCount}
+      rcCount={rcCount}
+      onJumpToGroup={(_groupId, firstPanelId) => {
+        setTab('guide')
+        if (firstPanelId) jumpToPanel(firstPanelId)
+      }}
+    />
   )
 
   // Guide タブ: stacked-group レビュー本体 (panel + decision)
