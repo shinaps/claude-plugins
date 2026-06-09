@@ -37,6 +37,15 @@ export type PrMeta = {
   changedFiles?: number
 }
 
+// 複数プロジェクトのレビュータブを同時に開いたとき、どのリポジトリのレビューかを
+// ブラウザタブ / ヘッダでぱっと見で識別するための情報。git から引けなければ null。
+export type ProjectInfo = {
+  // リポジトリルートの directory 名 (git rev-parse --show-toplevel の basename)
+  name: string
+  // detached HEAD では null
+  branch: string | null
+}
+
 // =====================================================================
 // Panel schema
 // =====================================================================
@@ -319,6 +328,7 @@ export type ClientPayload = {
   schemaVersion: 1
   summary: SummaryJson
   prMeta: PrMeta | null
+  project: ProjectInfo | null
   groups: RenderedGroup[]
   // 全 panel の panelId を flatten (nav scroll-spy 用)。
   allPanels: string[]
