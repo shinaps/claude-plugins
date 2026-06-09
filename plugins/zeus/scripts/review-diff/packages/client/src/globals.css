@@ -118,6 +118,11 @@
     /* ダークテーマ統一: thumb=border、track=transparent */
     scrollbar-color: var(--color-border) transparent;
     scrollbar-width: thin;
+    /* 両 side に常に scrollbar 高さぶん (8px) の余裕を確保。
+       片側だけが横 scrollbar を出すと、その side の content 領域が 8px 縮み、もう片側との
+       合計高さがずれて「下の方の行が左右でズレて見える」現象が起きていた (実機再現確認済)。
+       padding-bottom で常時 8px 確保すれば scrollbar の表示有無に関わらず両 side の bottom が揃う。 */
+    padding-bottom: 8px;
   }
   .panel-side::-webkit-scrollbar { height: 8px; }
   .panel-side::-webkit-scrollbar-track { background: transparent; }

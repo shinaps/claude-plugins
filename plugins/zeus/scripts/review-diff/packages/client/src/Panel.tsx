@@ -32,6 +32,41 @@ import { createShiki } from './shiki-bundle'
 const SHIKI = createShiki()
 const CLICK_THRESHOLD_MS = 200
 
+type FlatRow = {
+  row: SideBySideRow
+  segmentIndex: number
+  rowIndex: number
+  isFirstOfSegment: boolean
+  // 連続する addition / deletion ブロックを 1 chunk とした index。context / empty 行は -1。
+  // 「次の変更箇所」グローバル navigator が `[data-chunk-idx]` を querySelectorAll で集めて
+  // panel をまたぐ全 chunk リストを構築する anchor として使う。
+  chunkIdx: number
+}
+
+// chunk 検出: addition / deletion が連続する塊を 1 chunk としてまとめる。
+// context や empty が挟まれば chunk 境界。chunkIdx は panel scope (各 panel で 0 から)。
+// グローバル navigator は panel をまたいで「最初の chunk row」を順に並べることで全体 navigation を実現する。
+function flattenWithChunks(panel: RenderedPanel): FlatRow[] {
+  const flat: FlatRow[] = []
+  panel.segments.forEach((seg, si) => {
+    seg.rows.forEach((row, ri) => {
+      flat.push({ row, segmentIndex: si, rowIndex: ri, isFirstOfSegment: ri === 0 && si > 0, chunkIdx: -1 })
+    })
+  })
+  let chunkIdx = -1
+  let inChunk = false
+  for (const r of flat) {
+    const isChange = r.row.asIs.type === 'deletion' || r.row.toBe.type === 'addition'
+    if (isChange) {
+      if (!inChunk) { chunkIdx++; inChunk = true }
+      r.chunkIdx = chunkIdx
+    } else {
+      inChunk = false
+    }
+  }
+  return flat
+}
+
 function highlightCode(raw: string, lang: string): string {
   try {
     const html = SHIKI.codeToHtml(raw, { lang, theme: 'github-dark' })
@@ -75,6 +110,11 @@ export const Panel = memo(function Panel({
   // resolveLineAtPoint の AC-6 scope check (別 panel の cell を弾く) で使用。
   const panelContainerRef = useRef<HTMLDivElement>(null)
 
+  // chunk = 連続する addition/deletion 塊。SplitBody に flat を渡すために計算する。
+  // ナビゲーション本体は ChunkNavigator (左下 floating) が document 全体を querySelectorAll で
+  // 走査して panel をまたいで動くので、ここでは「chunkIdx を code-row に乗せる」だけが責務。
+  const flat = useMemo(() => flattenWithChunks(panel), [panel])
+
   // 行高同期: per-side scroll container が分かれた結果、左右で行高がズレる
   // (例: 左 side のみ wrap して高さが伸びるケース)。subgrid なら親 grid 内で自動的に揃うが、
   // 本実装では左右が別 scroll container なので subgrid が使えない。
@@ -101,15 +141,23 @@ export const Panel = memo(function Panel({
       // N 回 → 1 回に削減する。元実装は loop 内で `offsetHeight` 直後に `style.minHeight` を書いていたため、
       // 各 row で layout が強制フラッシュされ N 行 = N 回の reflow になっていた (28 panel × 数千 row = 6 秒)。
       //   Pass 1: 全 row の minHeight を '' にして natural サイズに戻す (layout 無効化のみ)
-      //   Pass 2: 全 row の offsetHeight を一括 read (このタイミングで layout が 1 回だけフラッシュ)
+      //   Pass 2: 全 row の getBoundingClientRect().height を一括 read (1 回だけ layout flush)
       //   Pass 3: 全 row に新しい minHeight を一括 write (layout 無効化のみ)
+      //
+      // height 計測に getBoundingClientRect().height + Math.ceil を使う理由 (sub-pixel 蓄積ずれ修正):
+      //   offsetHeight は integer (Chrome は floor)。Shiki の font metrics で asis=17.00 / tobe=17.04 の
+      //   ような sub-pixel 差が出ると、offsetHeight は両方 17 → min-height: 17px → tobe は 17.04 の
+      //   ままで揃わず、行ごとに +0.04 ずつ累積し 数百行で数 px のずれになる (実機 DevTools で確認済)。
+      //   getBoundingClientRect().height は float、Math.ceil() で sub-pixel を吸収して大きい側に揃える。
       for (let i = 0; i < n; i++) {
         leftRows[i].style.minHeight = ''
         rightRows[i].style.minHeight = ''
       }
       const heights: number[] = new Array(n)
       for (let i = 0; i < n; i++) {
-        heights[i] = Math.max(leftRows[i].offsetHeight, rightRows[i].offsetHeight)
+        const la = leftRows[i].getBoundingClientRect().height
+        const lb = rightRows[i].getBoundingClientRect().height
+        heights[i] = Math.ceil(Math.max(la, lb))
       }
       for (let i = 0; i < n; i++) {
         const h = heights[i]
@@ -366,6 +414,7 @@ export const Panel = memo(function Panel({
       ) : null}
       <SplitBody
         panel={panel}
+        flat={flat}
         highlight={highlight}
         commentKeysByAnchor={commentKeysByAnchor}
         handlers={handlers}
@@ -403,6 +452,8 @@ type RowHandlerProps = {
 
 type BodyProps = {
   panel: RenderedPanel
+  // chunkIdx 付きで Panel から受け取る。↑↓ ジャンプの anchor として code-row に data-chunk-idx を撒く。
+  flat: FlatRow[]
   highlight: boolean
   commentKeysByAnchor: Map<string, string[]>
   handlers: LineCommentHandlers
@@ -412,15 +463,8 @@ type BodyProps = {
 // 各 side 内では「コードセル + その下に該当 side のコメントスレッド」を縦に積む。
 // asIs コメントは左 side、toBe コメントは右 side に出る (構造上左右に紐づくので自然)。
 function SplitBody({
-  panel, highlight, commentKeysByAnchor, handlers, ...rowProps
+  panel, flat, highlight, commentKeysByAnchor, handlers, ...rowProps
 }: BodyProps) {
-  // 全 row を flatten。segment 区切りは divider 行で表現。
-  const flat: Array<{ row: SideBySideRow; segmentIndex: number; rowIndex: number; isFirstOfSegment: boolean }> = []
-  panel.segments.forEach((seg, si) => {
-    seg.rows.forEach((row, ri) => {
-      flat.push({ row, segmentIndex: si, rowIndex: ri, isFirstOfSegment: ri === 0 && si > 0 })
-    })
-  })
   return (
     // panel-body-split: split mode の親 2 列 grid。border-soft 色 + gap: 1px で列境界を表現。
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] bg-border-soft gap-px">
@@ -434,7 +478,7 @@ function SplitBody({
         {/* panel-side-inner も BEM 維持: width: max-content + min-width: 100% の uniform-width row 要件 +
             sticky cell-ln の containing block が壊れない構造前提。 */}
         <div className="panel-side-inner">
-          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment }) => (
+          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment, chunkIdx }) => (
             <SideRow
               key={`asis-${segmentIndex}-${rowIndex}`}
               side="asIs"
@@ -442,6 +486,7 @@ function SplitBody({
               panel={panel}
               highlight={highlight}
               isFirstOfSegment={isFirstOfSegment}
+              chunkIdx={chunkIdx}
               commentKeysByAnchor={commentKeysByAnchor}
               handlers={handlers}
               {...rowProps}
@@ -451,7 +496,7 @@ function SplitBody({
       </div>
       <div className="panel-side panel-side-tobe" data-side-container="tobe">
         <div className="panel-side-inner">
-          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment }) => (
+          {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment, chunkIdx }) => (
             <SideRow
               key={`tobe-${segmentIndex}-${rowIndex}`}
               side="toBe"
@@ -459,6 +504,7 @@ function SplitBody({
               panel={panel}
               highlight={highlight}
               isFirstOfSegment={isFirstOfSegment}
+              chunkIdx={chunkIdx}
               commentKeysByAnchor={commentKeysByAnchor}
               handlers={handlers}
               {...rowProps}
@@ -472,8 +518,10 @@ function SplitBody({
 
 // split mode 内の 1 side 1 行 + (その side の) コメント。
 // 行高同期 (ResizeObserver) のために .code-row class を必ず付ける。
+// chunkIdx: -1 なら context、>=0 なら chunk 内 row。code-row に data-chunk-idx として出して
+// PanelHeader の prev/next ボタン + ↑↓ キーが querySelector で参照する anchor になる。
 function SideRow({
-  side, row, panel, highlight, isFirstOfSegment,
+  side, row, panel, highlight, isFirstOfSegment, chunkIdx,
   commentKeysByAnchor, handlers,
   isInDragRange, onPointerDown, onPointerMove, onPointerUp,
 }: {
@@ -482,6 +530,7 @@ function SideRow({
   panel: RenderedPanel
   highlight: boolean
   isFirstOfSegment: boolean
+  chunkIdx: number
   commentKeysByAnchor: Map<string, string[]>
   handlers: LineCommentHandlers
 } & RowHandlerProps) {
@@ -536,7 +585,10 @@ function SideRow({
               → test の querySelector('.cell-code[data-side=...]') 依存 + Shiki pre 透過化セレクタ
         変更時はテストが落ちる + 動的合成が壊れるため、ここは BEM 文字列を直接編集してはならない。
       */}
-      <div className={`code-row code-row-${sideClass} code-row-${cell.type}${selectedClass}`}>
+      <div
+        className={`code-row code-row-${sideClass} code-row-${cell.type}${selectedClass}`}
+        {...(chunkIdx >= 0 ? { 'data-chunk-idx': String(chunkIdx) } : {})}
+      >
         <div
           className={`cell-ln cell-ln-${sideClass} cell-ln-${cell.type}`}
           {...gutterPointerProps(cell.line)}

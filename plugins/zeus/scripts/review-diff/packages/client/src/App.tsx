@@ -26,6 +26,7 @@ import { TabBar } from './TabBar'
 import { GroupSection } from './GroupSection'
 import { PanelBlock } from './PanelBlock'
 import { SubmitBar } from './SubmitBar'
+import { ChunkNavigator } from './ChunkNavigator'
 import { shouldAutoCollapseFile } from './auto-collapse'
 
 // Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
@@ -672,6 +673,10 @@ export function App({ payload }: Props) {
       {visitedTabs.has('diff') ? (
         <div className={tab === 'diff' ? '' : 'tab-hidden'}>{diffContent}</div>
       ) : null}
+      {/* ChunkNavigator (左下): SubmitBar と対称配置で「全 diff 通しの chunk ジャンプ」を提供。
+          activity タブには diff が無いので非表示にしたいが、ChunkNavigator 自身が「chunk 0 件なら null 返す」
+          ガードを持つので常時 render しても安全。 */}
+      <ChunkNavigator />
       {/* SubmitBar は全タブで常時表示 (どこからでも Submit できるように) */}
       <SubmitBar
         approvedCount={approvedCount}
