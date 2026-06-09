@@ -53,7 +53,7 @@ export function CommentForm(props: CommentFormProps) {
     >
       <textarea
         ref={ref}
-        className="w-full min-h-[70px] bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] resize-y outline-none transition-colors duration-100 focus:border-accent"
+        className="w-full min-h-[70px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
         placeholder="コメントを書く (Cmd/Ctrl+Enter で保存、Esc でキャンセル)"
         value={body}
         onChange={(e) => setBody(e.target.value)}

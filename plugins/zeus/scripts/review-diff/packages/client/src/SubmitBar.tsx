@@ -52,12 +52,15 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
       role="toolbar"
       aria-label="Submit review"
     >
+      {/* field-sizing: content (Chrome 123+) で content 量に合わせて auto-resize、対応ブラウザでは scrollbar 出ず。
+          overflow-y-auto は Safari/Firefox 非対応時の fallback (伸びないが scrollbar で読める)。
+          長文ノートを書いても floating bar 全体が下から伸びる形に。 */}
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Submit に添える全体コメント (任意)"
         rows={2}
-        className="w-full min-h-[44px] resize-none bg-background text-text border border-border rounded-md px-2.5 py-1.5 font-sans text-xs leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
+        className="w-full min-h-[44px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-1.5 font-sans text-xs leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
         aria-label="Optional submit note"
       />
       <div className="flex items-center gap-2">

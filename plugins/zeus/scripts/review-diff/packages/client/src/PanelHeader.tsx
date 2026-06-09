@@ -6,6 +6,7 @@
 //       - collapsed 状態では onExpand + totalRowsHint → "Show N rows" ボタン
 //     どちらの状態でも panel タイトル + ファイル名は維持され、行数は Show diff ボタンに集約。
 
+import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 
 export type PanelHeaderProps = {
@@ -54,9 +55,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint }: Pane
             <span className="font-mono tabular-nums text-text-dim mr-0.5">{totalRowsHint.toLocaleString()} rows</span>
           ) : null}
           <span>Show diff</span>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 5.5 7 9.5 11 5.5" />
-          </svg>
+          <ChevronDown size={14} strokeWidth={1.5} aria-hidden />
         </button>
       ) : null}
       {onCollapse ? (
@@ -67,9 +66,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint }: Pane
           title="Hide diff"
           aria-label="Hide this panel"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 8.5 7 4.5 11 8.5" />
-          </svg>
+          <ChevronUp size={14} strokeWidth={1.5} aria-hidden />
         </button>
       ) : null}
     </div>

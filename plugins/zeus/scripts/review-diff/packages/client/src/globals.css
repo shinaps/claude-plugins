@@ -226,17 +226,16 @@
    *   utilities が components より優先される。結果として下の :hover scope rule (opacity: 0.85) が
    *   永遠に負け、行 hover で + ボタンが出ないバグになる。base 自体をここに置けば utility と
    *   layer が一致して hover で正常に上書きされる (utility に opacity 系を一切書かない前提)。
+   *   hover で transform を変えない設計: ボタン自体が動くと「カチッ」と狙いづらく感じるので、
+   *   visibility だけ opacity でフェードする静的振る舞いに統一する。
    */
   .line-comment-trigger {
     opacity: 0;
-    transition: opacity 100ms ease, transform 100ms ease;
+    transition: opacity 100ms ease;
   }
   .panel-side-asis .code-row:hover .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
   .panel-side-tobe .code-row:hover .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
-  .line-comment-trigger:hover {
-    opacity: 1;
-    transform: translateY(-50%) scale(1.1);
-  }
+  .line-comment-trigger:hover { opacity: 1; }
   .line-comment-trigger:focus-visible {
     opacity: 1;
     outline: 2px solid var(--color-accent-soft);
@@ -244,22 +243,24 @@
   }
 
   /* drag-cursor-indicator: portal で document.body に出るカーソル追従インジケータ。
-     pointer-events: none で drag 経路を阻害しない。 */
+     pointer-events: none で drag 経路を阻害しない。
+     寸法 / box-shadow / border-radius / opacity は hover 時の .line-comment-trigger と完全に揃える。
+     幅高は .line-comment-trigger の Tailwind w-4 と同値の 1rem で書く (px hardcode しない)。
+     px で書くと body font-size: 13px に応じて rem 側が縮んで両者の実サイズがズレるため、rem 統一で
+     アクセシビリティ (ユーザー font-size 拡大) にも追従させる。 */
   .drag-cursor-indicator {
     position: fixed;
     transform: translate(-50%, -50%);
-    width: 14px;
-    height: 14px;
+    width: 1rem;
+    height: 1rem;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--color-accent);
     color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1;
     border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    opacity: 0.85;
     pointer-events: none;
     z-index: 9999;
     user-select: none;
@@ -384,12 +385,6 @@
     border-color: var(--color-accent-soft);
     background: var(--color-accent-soft);
   }
-  /* btn-context-icon .spin animation */
-  .btn-context-icon .spin {
-    animation: btn-context-spin 0.9s linear infinite;
-    transform-origin: 50% 50%;
-  }
-
   /* btn-decision selected state */
   .btn-decision.btn-approve.is-selected {
     background: rgba(74, 222, 128, 0.2);
@@ -452,10 +447,6 @@
 @keyframes tabbar-pending {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }
-}
-@keyframes btn-context-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* === @media: モバイル時 group-section の grid 解除 ======================== */

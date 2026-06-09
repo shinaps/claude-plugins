@@ -35,10 +35,16 @@ const PanelIdSchema = z.string().regex(/^[A-Za-z0-9 _-]*$/, {
   message: 'panelId must match /^[A-Za-z0-9 _-]*$/ (letters, digits, space, underscore, hyphen, or empty for auto-generation)',
 })
 
+// panel.intent: 1 panel 内変更の見出し。UI ヘッダ 2 行内に収めるための長さ制限。
+// 詳細は group.description / overallSummary に書き分けるよう運用で誘導する。
+const PANEL_INTENT_MAX = 100
+
 const PanelSchema = z
   .object({
     panelId: PanelIdSchema,
-    intent: z.string().min(1),
+    intent: z.string().min(1).max(PANEL_INTENT_MAX, {
+      message: `intent must be at most ${PANEL_INTENT_MAX} characters (keep it short; put detail in group.description / overallSummary)`,
+    }),
     asIs: PanelSideSchema.optional(),
     toBe: PanelSideSchema.optional(),
   })

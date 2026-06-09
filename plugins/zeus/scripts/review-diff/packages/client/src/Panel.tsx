@@ -21,6 +21,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Plus } from 'lucide-react'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
 import { parseLineCommentKey } from './state'
@@ -271,21 +272,62 @@ export const Panel = memo(function Panel({
       document.body.classList.remove('is-dragging-line-range')
       return
     }
+    // drag indicator は **drag 開始 side** にロックする。
+    // 反対 side のパネルや空白領域 (summary / 中央コラム) にカーソルが移動しても、
+    // X は開始 side のアンカーで固定、Y だけカーソルに追従して開始 side の行に snap する。
+    // (resolveLineAtPoint と同じ side ロックポリシー: 範囲選択も開始 side 内で完結する)
+    const sideAttr = sideToAttr(drag.side)
+    const cellLns = Array.from(
+      panelContainerRef.current?.querySelectorAll<HTMLElement>(`.cell-ln[data-side="${sideAttr}"]`) ?? []
+    )
+    // anchorX: drag 開始 side の最初の cell-ln から trigger ボタン中心を実測。
+    // ハードコード (旧: lnRect.left + 9) だと button 幅変更で drag 中だけズレるため動的測定。
+    // is-dragging-line-range クラス付与前に測ること: クラスが付くと trigger は display:none される。
+    let anchorX = 0
+    if (cellLns.length > 0) {
+      const firstLn = cellLns[0]
+      const lnRect = firstLn.getBoundingClientRect()
+      let triggerCenterX = 9 // フォールバック (button 未マウントの極稀ケース)
+      const sampleTrigger = firstLn.querySelector<HTMLElement>('.line-comment-trigger')
+      if (sampleTrigger) {
+        const tr = sampleTrigger.getBoundingClientRect()
+        triggerCenterX = (tr.left - lnRect.left) + tr.width / 2
+      }
+      anchorX = lnRect.left + triggerCenterX
+    }
     document.body.classList.add('is-dragging-line-range')
     function onMove(e: PointerEvent) {
-      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
-      if (!el) return
-      const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
-      if (!cell || !panelContainerRef.current?.contains(cell)) return
-      // 同じ row の cell-ln (gutter) を取得して位置を決定 (cell-code から hover してても gutter 位置に出す)
-      const row = cell.closest('.code-row') as HTMLElement | null
-      if (!row) return
-      const ln = row.querySelector('.cell-ln') as HTMLElement | null
-      if (!ln) return
+      if (cellLns.length === 0) return
+      // hot-path: anchorX 縦線上で elementsFromPoint。drag 開始 side の cell-ln 縦列に
+      // 必ず当たるので画面上どこでカーソルがあっても Y で snap できる。
+      // 高速 (stacked element 数 = せいぜい 5-10 個) で 99% のケースを捌く。
+      let ln: HTMLElement | null = null
+      const els = document.elementsFromPoint(anchorX, e.clientY)
+      for (const el of els) {
+        if (el instanceof HTMLElement && el.classList.contains('cell-ln') && el.dataset.side === sideAttr) {
+          ln = el
+          break
+        }
+      }
+      // cold-path: 画面外 (Y が panel 上下端の外) や行間ギャップで miss したとき、
+      // cell-ln 群を線形探索して cursor Y に最も近い行を選ぶ (panel 端で clamp する効果)。
+      if (!ln) {
+        let closest = cellLns[0]
+        let closestDist = Infinity
+        for (const candidate of cellLns) {
+          const r = candidate.getBoundingClientRect()
+          const center = r.top + r.height / 2
+          const dist = Math.abs(e.clientY - center)
+          if (dist < closestDist) {
+            closestDist = dist
+            closest = candidate
+          }
+        }
+        ln = closest
+      }
       const lnRect = ln.getBoundingClientRect()
-      // gutter 内の + ボタンと同じ位置: 左端 + 9px (line-comment-trigger の left:2px + ボタン中心)
       setDragIndicator({
-        left: lnRect.left + 9,
+        left: anchorX,
         top: lnRect.top + lnRect.height / 2,
       })
     }
@@ -323,18 +365,46 @@ export const Panel = memo(function Panel({
   function resolveLineAtPoint(
     clientX: number, clientY: number, expectSide: Side,
   ): number | null {
+    // hot-path: cursor 直下に expectSide の cell があれば即返却。
+    // panel 内で expectSide 上をドラッグしている通常ケースをこの分岐で 99% 捌く。
     const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
-    if (!el) return null
-    const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
-    if (!cell) return null
-    // panelContainerRef.contains で AC-6 構造的担保: 別 panel の cell は無視
-    if (panelContainerRef.current && !panelContainerRef.current.contains(cell)) return null
-    const sideAttr = cell.dataset.side
-    const side = sideAttr ? attrToSide(sideAttr) : null
-    const num = cell.dataset.lineNumber
-    if (!side || side !== expectSide || !num) return null
-    const n = Number(num)
-    return Number.isFinite(n) ? n : null
+    if (el) {
+      const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
+      // panelContainerRef.contains で AC-6 構造的担保: 別 panel の cell は無視
+      if (cell && (!panelContainerRef.current || panelContainerRef.current.contains(cell))) {
+        const sideAttr = cell.dataset.side
+        const side = sideAttr ? attrToSide(sideAttr) : null
+        if (side === expectSide) {
+          const num = cell.dataset.lineNumber
+          const n = num ? Number(num) : NaN
+          if (Number.isFinite(n)) return n
+        }
+      }
+    }
+    // cold-path: cursor が panel 外 / 反対 side / 中央コラム / panel 上下端の外側にいるとき、
+    // expectSide の cell-ln 群を線形探索して cursor Y に最も近い行を選ぶ (clamp 効果)。
+    // drag indicator の onMove と同じ snap ポリシーで、行ハイライトも同じ行に追従する。
+    if (!panelContainerRef.current) return null
+    const sideAttr = sideToAttr(expectSide)
+    const cellLns = panelContainerRef.current.querySelectorAll<HTMLElement>(
+      `.cell-ln[data-side="${sideAttr}"]`,
+    )
+    let closestNum: number | null = null
+    let closestDist = Infinity
+    for (const ln of cellLns) {
+      const num = ln.dataset.lineNumber
+      if (!num) continue
+      const n = Number(num)
+      if (!Number.isFinite(n)) continue
+      const r = ln.getBoundingClientRect()
+      const center = r.top + r.height / 2
+      const dist = Math.abs(clientY - center)
+      if (dist < closestDist) {
+        closestDist = dist
+        closestNum = n
+      }
+    }
+    return closestNum
   }
 
   function handlePointerDown(
@@ -435,7 +505,9 @@ export const Panel = memo(function Panel({
               className="drag-cursor-indicator"
               aria-hidden="true"
               style={{ left: dragIndicator.left, top: dragIndicator.top }}
-            >+</div>,
+            >
+              <Plus className="w-3 h-3" strokeWidth={3} aria-hidden="true" />
+            </div>,
             document.body,
           )
         : null}
@@ -655,7 +727,7 @@ function LineTrigger({
   return (
     <button
       type="button"
-      className="line-comment-trigger absolute left-0.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 p-0 inline-flex items-center justify-center border-0 rounded-[4px] bg-accent text-white text-[11px] font-bold leading-none cursor-pointer z-[2] shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
+      className="line-comment-trigger absolute left-0.5 top-1/2 -translate-y-1/2 w-4 h-4 p-0 inline-flex items-center justify-center border-0 rounded-[4px] bg-accent text-white cursor-pointer z-[2] shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
       aria-label="Add comment to this line"
       title="Add comment / drag to select range"
       onClick={(e) => {
@@ -663,7 +735,7 @@ function LineTrigger({
         if (e.detail === 0) onOpenLineForm(panelId, { side, number: lineNumber })
       }}
     >
-      +
+      <Plus className="w-3 h-3" strokeWidth={3} aria-hidden="true" />
     </button>
   )
 }
@@ -790,7 +862,7 @@ function SavedComment({
       <div className="comment-bubble is-editing relative bg-surface border border-border-soft rounded-lg px-3 py-2.5 text-text text-[13px]">
         <textarea
           ref={ref}
-          className="w-full min-h-[70px] bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] resize-y outline-none transition-colors duration-100 focus:border-accent"
+          className="w-full min-h-[70px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

@@ -20,6 +20,7 @@
 //   見えている panel を active 表示する。
 
 import { useEffect, useState } from 'react'
+import { Plus, Loader2, Circle, ChevronUp, ChevronDown } from 'lucide-react'
 import type { RenderedPanel, GroupDecision } from '@zeus/review-diff-shared'
 import { renderMarkdown } from './markdown'
 
@@ -174,8 +175,8 @@ export function GroupNav({
       <div className="mb-4" role="group" aria-label="Request more context">
         {!ctxExpanded ? (
           <div className="flex justify-start">
-            {/* btn-context BEM 維持: .is-pending state による accent 色化 + .btn-context-icon .spin animation が
-                globals.css にあるため。base 見た目は utility。 */}
+            {/* btn-context BEM 維持: .is-pending state による accent 色化が globals.css にあるため。
+                base 見た目は utility。spinner は lucide Loader2 + animate-spin。 */}
             <button
               type="button"
               className={`btn-context inline-flex items-center gap-2 px-3 py-[7px] text-xs font-medium font-sans tracking-[-0.005em] text-text bg-surface-2 border border-border-soft rounded-md cursor-pointer shadow-[0_1px_0_rgba(0,0,0,0.2)] transition-[background,border,color,transform] duration-[120ms] enabled:hover:bg-surface-3 enabled:hover:border-border enabled:hover:text-text enabled:active:translate-y-[0.5px] focus-visible:outline-none focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-[0.45] disabled:cursor-not-allowed disabled:bg-transparent${regenPending ? ' is-pending' : ''}`}
@@ -189,8 +190,7 @@ export function GroupNav({
               aria-busy={regenPending}
               aria-expanded={false}
             >
-              {/* btn-context-icon BEM 維持: 内側 .spin の rotate animation を globals.css でスコープしているため */}
-              <span className="btn-context-icon inline-flex w-3 h-3 [color:currentColor]" aria-hidden="true">
+              <span className="inline-flex items-center w-3 h-3" aria-hidden="true">
                 {regenPending ? <SpinnerIcon /> : <PlusIcon />}
               </span>
               <span className="tabular-nums">
@@ -263,8 +263,13 @@ export function GroupNav({
       {/* group-decision-section BEM の `margin-top: auto` は flex column 親 (.group-nav) で必要だったが、
           ここでは utility `mt-auto` で代替する。残りは utility 化。 */}
       <div className="mt-auto pt-4 border-t border-border-soft flex flex-col gap-2.5">
+        {/* field-sizing: content (Chrome 123+) で textarea を content 量に合わせて自動拡張。
+            JS で scrollHeight を測る古典的 auto-resize より軽量、対応ブラウザでは scrollbar も出ない。
+            overflow-y-auto 併用: 非対応ブラウザ (Safari/Firefox) では拡張しないので、scrollbar で
+            内容を読めるようにする fallback。対応ブラウザでは content に合わせて伸びるので scrollbar も出ない。
+            min-height は 60px キープ、max-height は撤去 (RC コメントの長文も全部見える)。 */}
         <textarea
-          className="w-full min-h-[60px] max-h-[200px] resize-none bg-background text-text border border-border rounded-[7px] px-2.5 py-2 font-sans text-xs leading-[1.5] outline-none transition-colors duration-[120ms] focus:border-accent disabled:bg-surface-2 disabled:text-text-dim disabled:cursor-not-allowed"
+          className="w-full min-h-[60px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-[7px] px-2.5 py-2 font-sans text-xs leading-[1.5] outline-none transition-colors duration-[120ms] focus:border-accent disabled:bg-surface-2 disabled:text-text-dim disabled:cursor-not-allowed"
           placeholder={
             noPanels
               ? 'No panels in this group'
@@ -423,54 +428,41 @@ function cssEscape(s: string): string {
   return s.replace(/[^A-Za-z0-9_-]/g, '\\$&')
 }
 
-// ---------- inline SVG icons ----------
+
+// ---------- icon wrappers ----------
+// lucide-react で統一。各 wrapper は size / strokeWidth / 色 (currentColor 経由) のデフォルトを固定。
+//
+// CheckDotIcon は「filled circle に抜き文字 check」というブランド固有表現で、lucide の CircleCheck を
+// fill=currentColor + stroke=background で着色して抜き文字を擬似的に再現する。SpinnerIcon は
+// 旧 .spin BEM class を捨てて utility `animate-spin` (Tailwind 標準) に切替。
+
 function PlusIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <path d="M6 2v8M2 6h8" />
-    </svg>
-  )
+  return <Plus size={12} strokeWidth={1.5} aria-hidden />
 }
 
 function SpinnerIcon() {
-  return (
-    <svg className="spin" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <path d="M6 1.5 a4.5 4.5 0 1 1 -3.18 1.32" />
-    </svg>
-  )
+  return <Loader2 size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
 }
 
 function RingDotIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1" fill="none" />
-    </svg>
-  )
+  return <Circle size={12} strokeWidth={1} aria-hidden />
 }
 
 function ChevronUpIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 7.5 6 4.5 9 7.5" />
-    </svg>
-  )
+  return <ChevronUp size={12} strokeWidth={1.6} aria-hidden />
 }
 
 function ChevronDownIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 4.5 6 7.5 9 4.5" />
-    </svg>
-  )
+  return <ChevronDown size={12} strokeWidth={1.6} aria-hidden />
 }
 
 function CheckDotIcon() {
-  // 読了 (= reviewed) の状態を表現する filled dot + check mark。
-  // 視覚的にも「埋まった = 完了」のメタファ。
-  // stroke に design token を直接指定する理由: 親の currentColor (= success 緑) を fill に使い、
-  // 抜き文字でチェックを描くため。`var(--color-background)` は @theme で実体化された CSS var を直参照する。
+  // 「filled circle + 抜き文字 check」というブランド固有メタファのため inline SVG を維持する。
+  // lucide の CircleCheck は svg ルートに fill/stroke を当てると内側 path にも継承されてしまい
+  // open path のチェックが「緑塗りつぶしの V 字」になる仕様 (Icon.mjs が子要素に個別属性を渡さない設計) で、
+  // 「fill 緑の円 + 抜き文字 check stroke」を表現できない。明示的に circle / path を書き分ける必要あり。
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
       <circle cx="6" cy="6" r="5" fill="currentColor" />
       <path d="M3.6 6.2 5 7.6 8.4 4.2" stroke="var(--color-background)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>

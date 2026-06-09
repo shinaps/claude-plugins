@@ -12,6 +12,7 @@
 //   - chunk が 0 件なら非表示 (diff が context のみのレアケース)
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronUp, ChevronDown } from 'lucide-react'
 
 // sticky tabbar (46px) + sticky panel-header (~46px) + 余白で、jump 先 chunk が panel-header の
 // 真下に綺麗に貼り付くようにする。
@@ -164,9 +165,7 @@ export function ChunkNavigator() {
           title="前の変更箇所へ (↑ キー)"
           aria-label="Previous change"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 8.5 7 4.5 11 8.5" />
-          </svg>
+          <ChevronUp size={14} strokeWidth={1.6} aria-hidden />
         </button>
         <button
           type="button"
@@ -176,9 +175,7 @@ export function ChunkNavigator() {
           title="次の変更箇所へ (↓ キー)"
           aria-label="Next change"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 5.5 7 9.5 11 5.5" />
-          </svg>
+          <ChevronDown size={14} strokeWidth={1.6} aria-hidden />
         </button>
       </div>
       <span className="text-[11px] text-text-muted font-mono tabular-nums">
