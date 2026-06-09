@@ -5,7 +5,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
-import { getPayload } from './state.ts'
+import { getPayload, startHeartbeat } from './state.ts'
 // CSS を entry に import する目的は「production build で dist/globals.css を生成させる」だけ。
 // Vite library mode は entry の依存グラフに含まれる CSS だけを output asset に書き出すため、
 // dev-entry.tsx の import だけでは build 時に CSS が出ない。runtime では cli の <style> inline 配信が
@@ -102,6 +102,10 @@ const root = document.getElementById('root')
 if (!root) throw new Error('#root not found')
 
 const payload = getPayload()
+
+// タブが閉じられたら CLI 側で「heartbeat 途絶 → 自発 exit」が走る前提なので、起動時に開始する。
+// dev サーバ (HMR) 経由ではトークン無しで起動するので startHeartbeat が no-op になる安全策あり。
+startHeartbeat()
 
 createRoot(root).render(
   <StrictMode>

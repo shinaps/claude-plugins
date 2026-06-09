@@ -51,10 +51,14 @@ export type CreateAppOptions = {
   onBruteForce?: () => void // テスト時は process.exit を差し替えたい
   onResult: (r: ResultJson) => void
   sources?: SourcesMap
+  // ブラウザから一定間隔で /heartbeat が打たれる。最終 ping 時刻を CLI 側に伝えるための callback。
+  // CLI は最終 ping から一定時間 (gracePeriod) 経過したら「タブ close された」と判断して終了する。
+  // 渡されない場合は heartbeat 機能無効 (テスト互換用)。
+  onHeartbeat?: () => void
 }
 
 export function createApp(opts: CreateAppOptions): Hono {
-  const { html, getPort, token, onResult } = opts
+  const { html, getPort, token, onResult, onHeartbeat } = opts
   const sources: SourcesMap = opts.sources ?? new Map()
   const onBruteForce = opts.onBruteForce ?? (() => setTimeout(() => process.exit(1), 50))
 
@@ -114,6 +118,15 @@ export function createApp(opts: CreateAppOptions): Hono {
   app.get('/', (c) => {
     c.header('Content-Type', 'text/html; charset=utf-8')
     return c.body(html)
+  })
+
+  // GET /heartbeat → ブラウザから 5 秒間隔で打たれる「タブ生存通知」。
+  // CLI 側は最終 ping から N 秒 (gracePeriod) 経過したら「タブ close」と判断して exit する設計。
+  // これによりユーザーがタブを閉じれば数秒以内に CLI も自動終了し、zombie process を防ぐ。
+  // 認証は token middleware で既に通過済み (token 認証済みリクエストしかここに来ない)。
+  app.get('/heartbeat', (c) => {
+    if (onHeartbeat) onHeartbeat()
+    return c.body(null, 204)
   })
 
   // GET /source → unchanged-lines バナークリックで呼ばれる。
@@ -198,6 +211,9 @@ export type StartedServer = {
   url: string
   port: number
   waitResult: () => Promise<ResultJson>
+  // 最後にブラウザから /heartbeat が来た時刻 (Date.now() 形式)。CLI 側で「タブが閉じられたか」を
+  // 検知するために poll する。未受信の場合は null (初回 ping が来るまでの猶予期間)。
+  getLastHeartbeat: () => number | null
   close: () => void
 }
 
@@ -212,6 +228,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
 
   // serve() callback で実 port が判明するまで getPort() の参照先を遅延しておく。
   let port = 0
+  let lastHeartbeatAt: number | null = null
 
   let server: ServerType
   const app = createApp({
@@ -222,6 +239,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     onResult: (json) => {
       resolveResult(json)
       try { server.close() } catch { /* noop */ }
+    },
+    onHeartbeat: () => {
+      lastHeartbeatAt = Date.now()
     },
   })
 
@@ -250,6 +270,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     url,
     port,
     waitResult: () => resultPromise,
+    getLastHeartbeat: () => lastHeartbeatAt,
     close: () => {
       try { server.close() } catch { /* noop */ }
     },

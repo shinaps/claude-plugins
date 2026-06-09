@@ -50,7 +50,7 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 
 このスキルは **エージェントを起動しない**。
 diff から `summary.json` を組み立てる作業はメインエージェント自身が Read + Write で行い、
-レビュー UI 部分は同梱 Node CLI (`dist/cli.js`) を Bash 同期実行で立ち上げる。
+レビュー UI 部分は同梱 Node CLI (`dist/cli.js`) を Bash の `run_in_background: true` で起動し、`TaskOutput` で完了を待ち合わせる。
 
 ## 動作原則
 
@@ -59,7 +59,7 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 - **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
 - **regen-group 連続 5 回でユーザー確認**: regenCount ≥ 5 で `AskUserQuestion` (無限再生成防止)
 - **summary 再生成 (validator fail) 連続 3 回でユーザー確認**: summaryRegenCount ≥ 3 で `AskUserQuestion`
-- **CLI タイムアウトは 9 分** (Bash ツール 10 分制約のため)
+- **CLI に絶対値タイムアウトは無い**: タブが閉じられたら client → server の heartbeat が止まり、CLI が 15 秒以内に自発 exit する設計。Bash は `run_in_background` で起動して TaskOutput で待つので Bash tool の 10 分制約も無関係
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
 ## 実行フロー
@@ -322,9 +322,11 @@ UI は summary.json の `groups[]` 順 / 各 group 内の `panels[]` 順 を **�
 
 pr モードの `pr` フィールドは現状 CLI からは参照されない (CLI は `--pr-meta` フラグから直接読む archival 用途)。`null` でも `pr-meta.json` の内容をそのまま入れても挙動は変わらないが、後で `summary.json` だけ見て文脈を復元できるよう、PR モードでは入れておくことを推奨。
 
-### Phase 5: CLI 起動
+### Phase 5: CLI 起動 (background mode + TaskOutput 待ち)
 
-Bash 同期実行 (timeout 600000ms = 10 分):
+CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskOutput で待つ**。
+これで Bash 同期 tool の 10 分制約から解放され、ユーザーがじっくりレビューしても問題ない。
+タブを閉じれば CLI 側 heartbeat 検知で数秒以内に自発 exit するので zombie process も出ない。
 
 ```bash
 # 通常起動 (初回 or rejectループ)
@@ -339,10 +341,21 @@ fi
 node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json"
 ```
 
+**起動手順 (メインがやること)**:
+
+1. 上記コマンドのいずれかを **`Bash(run_in_background: true)`** で起動 → task ID を取得
+2. 起動後 1〜2 秒待って `.output` を Read し、stderr の `[review-diff] URL: ...` を確認
+   - URL を出すまでは macOS の `open` で自動的にブラウザが立ち上がるので、通常は URL 取得すら不要
+   - ブラウザが起動しない環境 (リモートなど) では URL をユーザーに案内する
+3. **`TaskOutput(task_id, block: true)`** で完了通知を待つ
+   - block: true は CLI が exit (= ユーザーが Submit / regen-group / タブ close 検知 timeout) するまで待ち続ける
+   - 待ち時間に上限なし。Claude 側で並行して別の作業もできる
+4. 完了したら `.output` ファイル末尾を Read し、最後の `{"decision":...}` 行を JSON.parse
+
 CLI の挙動:
 - macOS では `open` が自動で立ち上がりブラウザに UI が出る
 - stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
-- CLI 内部タイムアウトは 9 分 (Bash の 10 分より 1 分早く自爆して整合性を取る)
+- ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する (= 旧 9 分絶対値タイムアウトは撤廃)
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"submit"|"timeout"|"regen-group", ...}` (合否は groupDecisions の分布から判定)
 

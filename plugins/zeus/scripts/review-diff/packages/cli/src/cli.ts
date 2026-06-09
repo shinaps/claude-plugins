@@ -56,7 +56,15 @@ import {
 import { buildHtml } from './template'
 import { openUrl } from './open'
 
-const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るため、1 分早めに自爆して整合性を取る
+// ブラウザから 5 秒ごとに /heartbeat が打たれる前提で、最終 ping から N ms 経過したら「タブが閉じられた」と
+// 判断して CLI も自発的に終了する。Skill ツール側は run_in_background で起動して TaskOutput で
+// 待ち合わせるモデルに移行したので、絶対値タイムアウト (旧 9 分制限) は撤廃した。
+// 15 秒 = 5s 間隔の heartbeat を 3 回連続で取りこぼした猶予幅 (ネットワーク詰まり / GC pause を吸収)。
+const HEARTBEAT_GRACE_MS = 15 * 1000
+// 初回 ping が来るまでの猶予 (ブラウザ open + bundle ロード + 初回 fetch まで)。
+// この期間内は heartbeat 未受信でも終了しない。
+const HEARTBEAT_BOOT_GRACE_MS = 30 * 1000
+const HEARTBEAT_POLL_INTERVAL_MS = 3 * 1000
 
 // gh api への並列度上限。GitHub の rate limit (authenticated 5000 req/hour) に余裕を残しつつ、
 // N ファイル × 2 (base/head) の blob 取得を現実的な時間で終わらせるための値。
@@ -256,13 +264,39 @@ async function main(): Promise<void> {
   })
 
   process.stderr.write(`[review-diff] URL: ${started.url}\n`)
-  process.stderr.write(`[review-diff] waiting up to ${TIMEOUT_MS / 1000}s for decision...\n`)
+  process.stderr.write(`[review-diff] waiting for decision (tab close → auto exit via heartbeat)...\n`)
   openUrl(started.url)
 
+  // タブ close 検知: ブラウザは setInterval で /heartbeat を打っている。
+  // 最終 ping から HEARTBEAT_GRACE_MS 経過したらタブが閉じられたと判断して timeout 扱いで終了する。
+  // 起動直後は HEARTBEAT_BOOT_GRACE_MS の間「まだ初回 ping 来ていないだけ」扱いで猶予する。
+  const startedAt = Date.now()
   const timeoutResult: ResultJson = { decision: 'timeout', groupDecisions: {}, comments: [] }
+  const heartbeatLoss = new Promise<ResultJson>((resolve) => {
+    const interval = setInterval(() => {
+      const last = started.getLastHeartbeat()
+      const now = Date.now()
+      if (last === null) {
+        // 初回 ping 未着でも boot grace 期間内なら待つ
+        if (now - startedAt < HEARTBEAT_BOOT_GRACE_MS) return
+        process.stderr.write(`[review-diff] no initial heartbeat within ${HEARTBEAT_BOOT_GRACE_MS}ms — exiting\n`)
+        clearInterval(interval)
+        resolve(timeoutResult)
+        return
+      }
+      if (now - last > HEARTBEAT_GRACE_MS) {
+        process.stderr.write(`[review-diff] heartbeat lost for ${Math.round((now - last) / 1000)}s — tab closed, exiting\n`)
+        clearInterval(interval)
+        resolve(timeoutResult)
+      }
+    }, HEARTBEAT_POLL_INTERVAL_MS)
+    // unref で「heartbeat 監視だけ残った」状態でも process が exit できるようにする (実害は無いが念のため)
+    interval.unref?.()
+  })
+
   const result: ResultJson = await Promise.race([
     started.waitResult(),
-    new Promise<ResultJson>((r) => setTimeout(() => r(timeoutResult), TIMEOUT_MS)),
+    heartbeatLoss,
   ])
 
   try {

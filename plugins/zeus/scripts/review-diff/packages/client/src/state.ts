@@ -13,6 +13,35 @@ export function getToken(): string {
   return new URL(location.href).searchParams.get('token') ?? ''
 }
 
+// CLI 側に「タブがまだ生きている」と知らせる heartbeat の送出ループを起動する。
+// 設計: CLI は最終 ping から 15 秒経過したら「タブが閉じられた」と判断して exit するため、
+// 5 秒間隔で /heartbeat を打って 3 回連続損失で初めて判定が発火するようにする。
+// fetch は keepalive: true で「unload 直前に発火した最後の 1 発も配信を試みる」が、
+// 普通のタブ close では新規 ping が止まる → 15s 後に CLI が自発的に exit する流れ。
+// errors は黙殺 (network 詰まり / abort で続く ping 自体は止めない)。
+export function startHeartbeat(): () => void {
+  const token = getToken()
+  if (!token) return () => {}
+  let stopped = false
+  const send = () => {
+    if (stopped) return
+    try {
+      void fetch(`/heartbeat?token=${encodeURIComponent(token)}`, {
+        method: 'GET',
+        keepalive: true,
+        cache: 'no-store',
+      }).catch(() => { /* ignore */ })
+    } catch { /* ignore */ }
+  }
+  // 初回は即時、その後 5 秒間隔。CLI 側 boot grace 30s 内に届けば「初回 ping 来た」扱いで安心。
+  send()
+  const interval = window.setInterval(send, 5000)
+  return () => {
+    stopped = true
+    window.clearInterval(interval)
+  }
+}
+
 // 行コメントの内部キー (panel model)。
 //   単一行:   `${panelId}\x1f${side}\x1f${number}`
 //   行範囲:   `${panelId}\x1f${side}\x1f${number}\x1f${endNumber}`
