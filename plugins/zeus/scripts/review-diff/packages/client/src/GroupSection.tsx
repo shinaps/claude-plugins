@@ -48,8 +48,12 @@ export const GroupSection = memo(function GroupSection({
   ...lineCommentHandlers
 }: Props) {
   return (
+    // group-section BEM 維持: dynamic --nav-width を grid-template-columns に含むため
+    // (`var(--nav-width, 320px) minmax(0,1fr)`)、utility だと表現が冗長 + content-visibility:auto +
+    // media query での grid 解除も globals.css に集約している。
     <section className="group-section" data-group-index={index} data-group-id={groupId}>
-      <div className="group-nav-wrapper">
+      {/* group-nav-wrapper は nav-resizer (absolute) の containing block */}
+      <div className="group-nav-wrapper relative min-w-0">
         <GroupNav
           index={index}
           total={total}
@@ -69,15 +73,20 @@ export const GroupSection = memo(function GroupSection({
           onToggleReviewed={onToggleReviewed}
           onJumpToGroupIndex={onJumpToGroupIndex}
         />
+        {/*
+          nav-resizer BEM 維持: ::before で grab zone 拡張 (視覚バーと掴み領域の分離) と、
+          drag 中の `.dragging` class による accent 色化が globals.css にあるため。
+          視覚バー自体の幅 (4px) と placement (absolute right:0) は utility で十分。
+        */}
         <div
-          className="nav-resizer"
+          className="nav-resizer absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent z-10 transition-colors duration-100 hover:bg-accent"
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize navigation"
           onPointerDown={onNavResizerPointerDown}
         />
       </div>
-      <div className="group-panels-column">
+      <div className="min-w-0 flex flex-col">
         {panels.map((p) => {
           // v4.12.0 (refinement): 初期 collapsed 判定は 2 条件 (どちらか満たせば collapsed):
           //   - group decision が approved (= レビュー済み、コードを隠してレンダリングコスト抑制)

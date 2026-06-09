@@ -44,7 +44,7 @@ export function CommentForm(props: CommentFormProps) {
 
   return (
     <form
-      className="comment-form"
+      className="bg-surface border border-border-soft rounded-lg p-2.5 px-3 flex flex-col gap-2"
       onSubmit={(e) => {
         e.preventDefault()
         onSave(body)
@@ -53,7 +53,7 @@ export function CommentForm(props: CommentFormProps) {
     >
       <textarea
         ref={ref}
-        className="comment-textarea"
+        className="w-full min-h-[70px] bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] resize-y outline-none transition-colors duration-100 focus:border-accent"
         placeholder="コメントを書く (Cmd/Ctrl+Enter で保存、Esc でキャンセル)"
         value={body}
         onChange={(e) => setBody(e.target.value)}
@@ -70,15 +70,18 @@ export function CommentForm(props: CommentFormProps) {
           }
         }}
       />
-      <div className="comment-form-actions">
+      <div className="flex justify-end gap-1.5">
         <button
           type="button"
-          className="comment-btn comment-btn-cancel"
+          className="px-3 py-1 border border-border rounded-md text-xs font-medium font-sans cursor-pointer bg-transparent text-text-muted hover:bg-surface-3 hover:text-text transition-colors duration-100"
           onClick={onCancel}
         >
           キャンセル
         </button>
-        <button type="submit" className="comment-btn comment-btn-save">
+        <button
+          type="submit"
+          className="px-3 py-1 border border-accent bg-accent rounded-md text-xs font-medium font-sans cursor-pointer text-white hover:brightness-[1.08] transition-[filter,background] duration-100"
+        >
           保存
         </button>
       </div>

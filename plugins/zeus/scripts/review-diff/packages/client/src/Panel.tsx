@@ -356,7 +356,7 @@ export const Panel = memo(function Panel({
 
   return (
     <div
-      className="panel-grid panel-grid-split"
+      className="font-mono text-xs bg-surface"
       data-panel-id={panel.panelId}
       ref={panelContainerRef}
     >
@@ -422,11 +422,17 @@ function SplitBody({
     })
   })
   return (
-    <div className="panel-body panel-body-split">
+    // panel-body-split: split mode の親 2 列 grid。border-soft 色 + gap: 1px で列境界を表現。
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] bg-border-soft gap-px">
+      {/*
+        panel-side BEM 維持: drag-select.test.tsx が `querySelector('.cell-ln[data-side=...]')` で
+        参照する側ラベル + per-side ::-webkit-scrollbar カスタム + asis/tobe scoped の line-comment-trigger
+        点灯 rule + Panel.tsx 自身が `querySelector('.panel-side-asis .code-row')` で row 取得する
+        contract。utility 化不可。
+      */}
       <div className="panel-side panel-side-asis" data-side-container="asis">
-        {/* panel-side-inner で width: max-content + min-width: 100% を持たせ、内側 row 全行が
-            同じ width (= widest cell)。これで全行で bg paint area が揃い、sticky の containing
-            block が安定 (panel-side が scroll container、inner がその子で flex row を縦に積む)。 */}
+        {/* panel-side-inner も BEM 維持: width: max-content + min-width: 100% の uniform-width row 要件 +
+            sticky cell-ln の containing block が壊れない構造前提。 */}
         <div className="panel-side-inner">
           {flat.map(({ row, segmentIndex, rowIndex, isFirstOfSegment }) => (
             <SideRow
@@ -516,11 +522,20 @@ function SideRow({
 
   return (
     <>
-      {isFirstOfSegment ? <div className="panel-segment-divider" aria-hidden="true" /> : null}
-      {/* row 自身に cell.type (context/addition/deletion/empty) のクラスも持たせ、row 単位で bg を
-          塗る (案 F: display: contents 廃止、min-width: max-content の row 全幅で bg paint area が
-          確実に row 物理幅まで広がる)。display: contents だと paint area が viewport 幅で
-          クリップされる Chromium 挙動を回避。 */}
+      {isFirstOfSegment ? (
+        <div className="h-0 border-t border-dashed border-border-soft my-1" aria-hidden="true" />
+      ) : null}
+      {/*
+        以下の BEM は全て維持必須:
+          - code-row / code-row-${sideClass} / code-row-${type} / line-selected
+              → drag-select.test.tsx の closest('.code-row') と toHaveClass('line-selected') 依存 +
+                addition/deletion/empty の row bg 動的合成 (globals.css の @layer components)
+          - cell-ln / cell-ln-${sideClass} / cell-ln-${type}
+              → test の querySelector('.cell-ln[data-side=...]') 依存 + sticky gutter + add/del 色合成
+          - cell-code / cell-code-${sideClass} / cell-code-${type}
+              → test の querySelector('.cell-code[data-side=...]') 依存 + Shiki pre 透過化セレクタ
+        変更時はテストが落ちる + 動的合成が壊れるため、ここは BEM 文字列を直接編集してはならない。
+      */}
       <div className={`code-row code-row-${sideClass} code-row-${cell.type}${selectedClass}`}>
         <div
           className={`cell-ln cell-ln-${sideClass} cell-ln-${cell.type}`}
@@ -576,10 +591,19 @@ function LineTrigger({
   lineNumber: number
   onOpenLineForm: LineCommentHandlers['onOpenLineForm']
 }) {
+  // line-comment-trigger BEM 維持: row hover scoped selector (panel-side-asis .code-row:hover .cell-ln-asis
+  // .line-comment-trigger { opacity }) と body.is-dragging-line-range で display:none させる JS contract +
+  // hover/focus-visible 状態の transform: scale 効果が globals.css に集約されているため。
+  // 静的見た目 (絶対位置 / 形状) は utility で表現。
+  //
+  // opacity / transition は utility に書かない: Tailwind v4 cascade で utilities が components より
+  // 優先されるため、utility に opacity-0 を書くと globals.css 側の :hover { opacity: 0.85 } が常に負ける
+  // (= ホバーしても + が出ないバグ)。base opacity:0 と transition は globals.css の .line-comment-trigger
+  // に書いてあるので、ここでは形だけ utility で済ませる。
   return (
     <button
       type="button"
-      className="line-comment-trigger"
+      className="line-comment-trigger absolute left-0.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 p-0 inline-flex items-center justify-center border-0 rounded-[4px] bg-accent text-white text-[11px] font-bold leading-none cursor-pointer z-[2] shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
       aria-label="Add comment to this line"
       title="Add comment / drag to select range"
       onClick={(e) => {
@@ -611,8 +635,11 @@ function CommentRow({
       : `行 ${parsed.number}`
 
   const thread = (
-    <div className="comment-thread" data-side={sideToAttr(parsed.side)}>
-      <div className="comment-thread-header">{label}</div>
+    <div
+      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-[13px] leading-[1.5]"
+      data-side={sideToAttr(parsed.side)}
+    >
+      <div className="font-mono text-[11px] text-text-dim tracking-[0.04em] uppercase">{label}</div>
       {savedList?.map((body, i) => (
         <SavedComment
           key={`${lineKey}-${i}`}
@@ -648,9 +675,12 @@ function CommentRow({
   // comment row は該当 side の scroll container 内 (SideRow の兄弟) として出される。
   // 親の panel-side が overflow-x:auto なので、コメントは side 幅 (panel の左 or 右半分) に
   // フィットして表示される。横スクロールはコード行と共有。
+  //
+  // comment-row BEM 維持: width calc が `(100vw - var(--nav-width) - 48px) / 2 - 1px` で
+  // dynamic CSS var を含む。utility 化すると arbitrary value がきわめて読みにくくなる。
   return (
-    <div className="comment-row comment-row-split" data-comment-side={sideToAttr(parsed.side)}>
-      <div className="comment-cell">{thread}</div>
+    <div className="comment-row" data-comment-side={sideToAttr(parsed.side)}>
+      <div className="p-0">{thread}</div>
     </div>
   )
 }
@@ -665,9 +695,15 @@ function SourcesUnavailableBanner({ info }: { info: NonNullable<RenderedPanel['s
   if (info.toBe) sides.push('toBe')
   const detail = sides.length > 0 ? ` Affected side: ${sides.join(' + ')}.` : ''
   return (
-    <div className="sources-unavailable-banner" role="status" data-kind={info.kind}>
-      <span className="sources-unavailable-icon" aria-hidden="true">⚠</span>
-      <span className="sources-unavailable-text">{text}{detail}</span>
+    // sources-unavailable-banner BEM 維持: [data-kind="unknown-file"] の attribute selector で色切替する rule が
+    // globals.css にあるため。base 色 (赤系) のみ utility で表現し、yellow への切替は selector に任せる。
+    <div
+      className="sources-unavailable-banner flex items-center gap-2.5 px-3.5 py-2.5 bg-[rgba(248,113,113,0.08)] border-b border-[rgba(248,113,113,0.25)] text-text text-xs leading-[1.5]"
+      role="status"
+      data-kind={info.kind}
+    >
+      <span className="text-sm shrink-0" aria-hidden="true">⚠</span>
+      <span className="text-text-muted">{text}{detail}</span>
     </div>
   )
 }
@@ -695,12 +731,14 @@ function SavedComment({
     }
   }, [isEditing, editingBody, body])
 
+  // comment-bubble BEM 維持: `:hover .comment-actions { opacity: 1 }` 起動の scope selector が
+  // globals.css にある + is-editing は外側からの状態指定 hook 用に残す (現在は padding 切替に使用)。
   if (isEditing) {
     return (
-      <div className="comment-bubble is-editing">
+      <div className="comment-bubble is-editing relative bg-surface border border-border-soft rounded-lg px-3 py-2.5 text-text text-[13px]">
         <textarea
           ref={ref}
-          className="comment-textarea"
+          className="w-full min-h-[70px] bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] resize-y outline-none transition-colors duration-100 focus:border-accent"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -713,17 +751,17 @@ function SavedComment({
             }
           }}
         />
-        <div className="comment-form-actions">
+        <div className="flex justify-end gap-1.5 mt-2">
           <button
             type="button"
-            className="comment-btn comment-btn-cancel"
+            className="px-3 py-1 border border-border rounded-md text-xs font-medium font-sans cursor-pointer bg-transparent text-text-muted hover:bg-surface-3 hover:text-text transition-colors duration-100"
             onClick={() => onCancelEdit(lineKey, index)}
           >
             キャンセル
           </button>
           <button
             type="button"
-            className="comment-btn comment-btn-save"
+            className="px-3 py-1 border border-accent bg-accent rounded-md text-xs font-medium font-sans cursor-pointer text-white hover:brightness-[1.08] transition-[filter,background] duration-100"
             onClick={() => onSaveEdit(lineKey, index, draft)}
           >
             保存
@@ -733,19 +771,21 @@ function SavedComment({
     )
   }
   return (
-    <div className="comment-bubble">
-      <div className="comment-body">{body}</div>
-      <div className="comment-actions">
+    <div className="comment-bubble relative bg-surface border border-border-soft rounded-lg px-4 py-3 text-text text-[13px]">
+      <div className="whitespace-pre-wrap break-words">{body}</div>
+      {/* comment-actions BEM 維持: comment-bubble:hover/focus-within で opacity を 1 に切り替える
+          scope selector が globals.css にあるため。base の opacity:0 と placement は utility で表現。 */}
+      <div className="comment-actions absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-100">
         <button
           type="button"
-          className="comment-action-btn"
+          className="bg-transparent border border-border text-text-muted text-[11px] px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:bg-surface-3 hover:text-text"
           onClick={() => onStartEdit(lineKey, index, body)}
         >
           編集
         </button>
         <button
           type="button"
-          className="comment-action-btn comment-action-danger"
+          className="bg-transparent border border-border text-text-muted text-[11px] px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:text-danger hover:border-[rgba(248,113,113,0.4)]"
           onClick={() => {
             if (confirm('このコメントを削除しますか？')) onDelete(lineKey, index)
           }}

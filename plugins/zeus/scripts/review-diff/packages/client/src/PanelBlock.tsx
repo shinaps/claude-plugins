@@ -109,10 +109,14 @@ export function PanelBlock(props: PanelBlockProps) {
   if (isCollapsed) {
     // collapsed 状態でも PanelHeader (intent + ファイル名) を維持。
     // 右端の Show diff ボタンに「N rows」を併記し、UX 上「ここに何行ある panel か」が一目で分かる。
+    //
+    // panel-block BEM 維持: globals.css で content-visibility:auto + scroll-margin-top + sticky panel-header
+    // のスコープ用に必要。panel-block-collapsed は scroll anchor 用の panel-header 内 selector
+    // (`.panel-block-collapsed .panel-header { border-bottom: none }`) があるため維持。
     return (
       <div
         ref={blockRef}
-        className="panel-block panel-block-collapsed"
+        className="panel-block panel-block-collapsed bg-surface border border-border-soft rounded-[10px] mb-4 overflow-hidden"
         data-panel-id={panel.panelId}
         style={{ containIntrinsicSize: 'auto 60px' }}
       >
@@ -128,7 +132,7 @@ export function PanelBlock(props: PanelBlockProps) {
   return (
     <div
       ref={blockRef}
-      className="panel-block"
+      className="panel-block bg-surface border border-border-soft rounded-[10px] mb-4"
       data-panel-id={panel.panelId}
       style={{ containIntrinsicSize: `auto ${intrinsicHeight}px` }}
     >

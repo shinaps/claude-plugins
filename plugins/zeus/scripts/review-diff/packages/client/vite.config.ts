@@ -1,5 +1,6 @@
 import { defineConfig } from '@voidzero-dev/vite-plus-core'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -19,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 //   dev では packages/client/index.html を Vite が serve し、その中で /src/dev-entry.tsx
 //   を import する。root を src/ に置くと index.html のパス解決が壊れる。
 export default defineConfig(({ command }) => ({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   root: resolve(__dirname),
   // ブラウザバンドルに混入する Node 由来の process.env 参照を静的置換で消す。
   // React の prod build 判定や、Shiki / parse-git-diff 等の dep が
@@ -47,7 +48,17 @@ export default defineConfig(({ command }) => ({
       fileName: () => 'index.js',
     },
     cssCodeSplit: false,
-    // 本番 CSS は cli の build.mjs が styles.css を直接読んで __CSS_STRING__ に注入する。
+    // CSS の出力ファイル名を固定して cli/build.mjs が決め打ちで読めるようにする。
+    // Tailwind v4 は @tailwindcss/vite が build 時に utility を tree-shake した CSS を吐き、
+    // cssCodeSplit: false でそれを単一ファイル化、assetFileNames で hash 無しの globals.css に固定。
+    // 旧実装は src/styles.css を直読みしていたが、Tailwind 移行で source CSS は @theme + @layer の
+    // 入力に変わったため、ブラウザに送るのは「Vite が tailwind 解決した出力」一択。
+    rollupOptions: {
+      output: {
+        assetFileNames: (info) =>
+          info.name?.endsWith('.css') ? 'globals.css' : '[name][extname]',
+      },
+    },
     sourcemap: false,
     minify: true,
   },

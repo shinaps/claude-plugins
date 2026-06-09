@@ -48,11 +48,22 @@ const DOMPURIFY_JS = await readLib(
   'dist/purify.js',
 )
 
-// styles.css は client パッケージ内。define 注入で template.ts の __CSS_STRING__ に流す。
-// なぜ client の src を直読みするか:
-//   IIFE bundle に CSS を含めると <style> 注入と inline 配信のタイミングが二重になる。
-//   cli が単一の <style>${CSS_STRING}</style> を <head> に置く形に責務を集約する。
-const CSS_STRING = await readFile(resolve(clientDir, 'src/styles.css'), 'utf8')
+// CSS は client パッケージの Vite build 出力 (dist/globals.css) を読む。
+// なぜ src ではなく dist を読むか:
+//   Tailwind v4 移行後、source CSS は @import "tailwindcss" + @theme + @layer の入力に変わった。
+//   ブラウザに送るのは @tailwindcss/vite が tree-shake + 解決した最終 CSS で、これは dist/globals.css に出る。
+//   vite.config.ts の rollupOptions.output.assetFileNames でファイル名を globals.css に固定済み。
+//   不存在時は client build が走っていない (workspace build 順序の事故) ことを示すので fail-fast する。
+const CSS_PATH = resolve(clientDir, 'dist/globals.css')
+let CSS_STRING
+try {
+  CSS_STRING = await readFile(CSS_PATH, 'utf8')
+} catch (err) {
+  throw new Error(
+    `${CSS_PATH} not found. client パッケージの build が先に走っている必要があります ` +
+      `(pnpm --filter @zeus/review-diff-client build を実行してください)。元エラー: ${err.message}`,
+  )
+}
 
 // ---- Step 3: cli.ts を CJS bundle。conditions に "@zeus/source" を渡し、
 //                shared/server の TS ソースを直接食わせる (build 不要構成)

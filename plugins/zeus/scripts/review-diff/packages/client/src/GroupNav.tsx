@@ -77,23 +77,32 @@ export function GroupNav({
 
   const decisionInteractive = !noPanels && !submitDisabled
 
+  // jump-btn の utility 文字列。先頭/末尾で disabled になるため `enabled:hover:*` で切り分け。
+  const JUMP_BTN =
+    'bg-transparent border border-border-soft text-text-dim w-[22px] h-[22px] rounded-[5px] inline-flex items-center justify-center cursor-pointer p-0 transition-colors duration-[120ms] enabled:hover:bg-surface-2 enabled:hover:text-text enabled:hover:border-border disabled:opacity-[0.35] disabled:cursor-not-allowed'
+
   return (
+    // group-nav BEM 維持: sticky + max-height: calc(100vh - 96px) + ::-webkit-scrollbar カスタムが
+    // globals.css にあるため (細い 4px の縦バー)。
     <aside className="group-nav">
-      <header className="group-nav-header">
-        <div className="group-nav-eyebrow">
-          <span className="group-nav-eyebrow-label">GROUP</span>
-          <span className="group-nav-numerals" aria-label={`Group ${index + 1} of ${total}`}>
-            <span className="group-nav-num">{num}</span>
-            <span className="group-nav-num-sep">/</span>
-            <span className="group-nav-num-tot">{tot}</span>
+      <header className="pb-[18px] mb-[18px] border-b border-border-soft">
+        <div className="flex items-center justify-between mb-3.5 min-h-6">
+          <span className="font-mono text-[10px] font-semibold tracking-[0.18em] text-text-dim uppercase">GROUP</span>
+          <span
+            className="inline-flex items-baseline font-mono tabular-nums text-text-dim tracking-tight"
+            aria-label={`Group ${index + 1} of ${total}`}
+          >
+            <span className="text-[17px] font-semibold text-text">{num}</span>
+            <span className="text-sm mx-[3px] text-text-dim opacity-60">/</span>
+            <span className="text-sm text-text-dim">{tot}</span>
           </span>
           {/* v4.12.0 (refinement) グループ間ナビゲーション。
               eyebrow 直後に prev/next 矢印を置いて scroll を 1 click でやれるようにする。
               先頭/末尾の group では片側を disabled (cursor not-allowed + opacity 落とし)。 */}
-          <div className="group-nav-jump" role="group" aria-label="Jump between groups">
+          <div className="inline-flex gap-0.5 ml-auto items-center" role="group" aria-label="Jump between groups">
             <button
               type="button"
-              className="group-nav-jump-btn"
+              className={JUMP_BTN}
               onClick={() => onJumpToGroupIndex(index - 1)}
               disabled={index === 0}
               aria-label="Previous group"
@@ -103,7 +112,7 @@ export function GroupNav({
             </button>
             <button
               type="button"
-              className="group-nav-jump-btn"
+              className={JUMP_BTN}
               onClick={() => onJumpToGroupIndex(index + 1)}
               disabled={index === total - 1}
               aria-label="Next group"
@@ -113,24 +122,34 @@ export function GroupNav({
             </button>
           </div>
           {badge ? (
-            <span className={`group-decision-badge ${badge.cls}`} aria-label={`Decision: ${badge.label}`}>
+            // group-decision-badge BEM 維持: is-approved/is-rc/is-no-panels の色切替が globals.css にあるため
+            <span
+              className={`group-decision-badge inline-flex items-center px-2 py-0.5 ml-1.5 text-[10px] font-semibold tracking-[0.06em] uppercase rounded-full border border-transparent ${badge.cls}`}
+              aria-label={`Decision: ${badge.label}`}
+            >
               {badge.label}
             </span>
           ) : null}
         </div>
-        <h2 className="group-title">{title}</h2>
+        <h2 className="text-[19px] font-semibold text-text m-0 mb-2.5 tracking-[-0.015em] leading-[1.25]">{title}</h2>
         {descHtml ? (
-          <div className="group-desc" dangerouslySetInnerHTML={{ __html: descHtml }} />
+          // group-desc BEM 維持: prose 内 typography token の上書き scope として globals.css で使用。
+          <div
+            className="group-desc prose prose-invert prose-sm max-w-none text-[12.5px] leading-[1.55] mb-4"
+            dangerouslySetInnerHTML={{ __html: descHtml }}
+          />
         ) : null}
       </header>
 
       {/* v4.8.0: context+ は close-relaunch ループの起点。クリックで現状 state を回収して
           CLI を終了させ、SKILL.md 側で summary.json を再生成してから Skill を再起動する。
           regenPending=true 中は他 group も含め全ての context+ を disable する。 */}
-      <div className="group-context-actions" role="group" aria-label="Request more context">
+      <div className="flex justify-start mb-4" role="group" aria-label="Request more context">
+        {/* btn-context BEM 維持: .is-pending state による accent 色化 + .btn-context-icon .spin animation が
+            globals.css にあるため。base 見た目は utility。 */}
         <button
           type="button"
-          className={`btn-context${regenPending ? ' is-pending' : ''}`}
+          className={`btn-context inline-flex items-center gap-2 px-3 py-[7px] text-xs font-medium font-sans tracking-[-0.005em] text-text bg-surface-2 border border-border-soft rounded-md cursor-pointer shadow-[0_1px_0_rgba(0,0,0,0.2)] transition-[background,border,color,transform] duration-[120ms] enabled:hover:bg-surface-3 enabled:hover:border-border enabled:hover:text-text enabled:active:translate-y-[0.5px] focus-visible:outline-none focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-[0.45] disabled:cursor-not-allowed disabled:bg-transparent${regenPending ? ' is-pending' : ''}`}
           disabled={regenPending}
           title={
             regenPending
@@ -140,17 +159,20 @@ export function GroupNav({
           onClick={() => onRequestContext(groupId)}
           aria-busy={regenPending}
         >
-          <span className="btn-context-icon" aria-hidden="true">
+          {/* btn-context-icon BEM 維持: 内側 .spin の rotate animation を globals.css でスコープしているため */}
+          <span className="btn-context-icon inline-flex w-3 h-3 [color:currentColor]" aria-hidden="true">
             {regenPending ? <SpinnerIcon /> : <PlusIcon />}
           </span>
-          <span className="btn-context-label">
+          <span className="tabular-nums">
             {regenPending ? 'Regenerating' : 'More context'}
           </span>
         </button>
       </div>
 
       {panels.length ? (
-        <nav className="group-panel-list" aria-label="Panels in this group">
+        // group-panel-list の `margin-left: -2px + padding-left: 2px` は active rail (::before) を
+        // nav 左端ぴったりに見せるためのオフセット。utility 化可能だがセマンティック wrap で残置。
+        <nav className="flex flex-col gap-px -ml-0.5 pl-0.5" aria-label="Panels in this group">
           {panels.map((p) => (
             <PanelItem
               key={p.panelId}
@@ -166,9 +188,11 @@ export function GroupNav({
 
       {/* v4.12.0 decision section: panels=0 の group は disable + no-panels 表示
           (ユーザーは何を見ずに decide するのかわからないので、自動 approved 扱いを App 側で行う) */}
-      <div className="group-decision-section">
+      {/* group-decision-section BEM の `margin-top: auto` は flex column 親 (.group-nav) で必要だったが、
+          ここでは utility `mt-auto` で代替する。残りは utility 化。 */}
+      <div className="mt-auto pt-4 border-t border-border-soft flex flex-col gap-2.5">
         <textarea
-          className="group-comment"
+          className="w-full min-h-[60px] max-h-[200px] resize-none bg-background text-text border border-border rounded-[7px] px-2.5 py-2 font-sans text-xs leading-[1.5] outline-none transition-colors duration-[120ms] focus:border-accent disabled:bg-surface-2 disabled:text-text-dim disabled:cursor-not-allowed"
           placeholder={
             noPanels
               ? 'No panels in this group'
@@ -180,10 +204,12 @@ export function GroupNav({
           disabled={!decisionInteractive}
           onChange={(e) => onCommentChange(groupId, e.target.value)}
         />
-        <div className="group-decision-bar" role="radiogroup" aria-label="Group decision">
+        <div className="flex gap-1.5" role="radiogroup" aria-label="Group decision">
+          {/* btn-decision + btn-approve/btn-rc BEM 維持: .is-selected で approved=緑、rc=赤に色を切り替える
+              scope rule が globals.css にあるため。base 見た目は utility。 */}
           <button
             type="button"
-            className={`btn-decision btn-approve${decision === 'approved' ? ' is-selected' : ''}`}
+            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'approved'}
             onClick={() => onDecisionChange(groupId, decision === 'approved' ? null : 'approved')}
@@ -192,7 +218,7 @@ export function GroupNav({
           </button>
           <button
             type="button"
-            className={`btn-decision btn-rc${decision === 'request-changes' ? ' is-selected' : ''}`}
+            className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'request-changes'}
             onClick={() => onDecisionChange(groupId, decision === 'request-changes' ? null : 'request-changes')}
@@ -223,11 +249,18 @@ function PanelItem({
   ].filter(Boolean).join(' ')
   // dot indicator は button として独立配置。クリックで reviewed toggle、
   // 親 (.group-panel-item) のジャンプとは別アクション (stopPropagation で分離)。
+  //
+  // group-panel-item BEM 維持: ::before の accent rail + .is-active で rail visible 化 + .is-reviewed で
+  // indicator-btn 色変化 (= success 緑) + focus-visible で内側 box-shadow 表示 が globals.css にある。
+  // base 見た目 (flex 配置 / radius / font-size) は utility で表現、上記 state は className に残置。
   return (
-    <div className={className} aria-current={active ? 'true' : undefined}>
+    <div
+      className={`${className} relative flex items-stretch gap-0 bg-transparent text-text rounded-[5px] text-xs transition-colors duration-[120ms] hover:bg-surface-2`}
+      aria-current={active ? 'true' : undefined}
+    >
       <button
         type="button"
-        className="panel-item-indicator-btn"
+        className="panel-item-indicator-btn bg-transparent border-0 py-2 pl-2 pr-1 cursor-pointer text-text-dim inline-flex items-start transition-colors duration-[120ms] hover:text-text"
         onClick={(e) => {
           e.stopPropagation()
           onToggleReviewed(panel.panelId)
@@ -236,27 +269,36 @@ function PanelItem({
         aria-label={reviewed ? 'Mark as not reviewed' : 'Mark as reviewed'}
         aria-pressed={reviewed}
       >
-        <span className="panel-item-indicator" aria-hidden="true">
+        {/* panel-item-indicator BEM 維持: .group-panel-item.is-active .panel-item-indicator の
+            color: var(--color-accent) を globals.css でスコープしているため (active 行は dot も accent) */}
+        <span
+          className="panel-item-indicator inline-flex items-center justify-center mt-px text-text-dim shrink-0 transition-colors duration-[120ms]"
+          aria-hidden="true"
+        >
           {reviewed ? <CheckDotIcon /> : <RingDotIcon />}
         </span>
       </button>
       <button
         type="button"
-        className="panel-item-jump"
+        className="bg-transparent border-0 py-2 pl-1 pr-2.5 text-left cursor-pointer text-text text-xs flex-1 min-w-0 hover:bg-surface-2 hover:rounded-[5px]"
         onClick={() => onJump(panel.panelId)}
         title={panel.intent}
       >
-        <span className="panel-item-text">
-          <span className="panel-intent-line">{panel.intent}</span>
-          <span className="panel-files-line">
+        <span className="flex flex-col gap-[3px] min-w-0">
+          {/* panel-intent-line BEM 維持: `.group-panel-item.is-active .panel-intent-line` で text color
+              を accent ON 時に上書きする rule が globals.css にあるため。 */}
+          <span className="panel-intent-line font-medium text-text whitespace-normal break-words leading-[1.4] tracking-[-0.005em] transition-colors duration-[120ms]">
+            {panel.intent}
+          </span>
+          <span className="text-[10.5px] text-text-dim font-mono flex gap-1 items-center flex-wrap break-all">
             {asIs && toBe && asIs !== toBe ? (
               <>
-                <span className="file-name">{basename(asIs)}</span>
-                <span className="file-arrow" aria-hidden>→</span>
-                <span className="file-name">{basename(toBe)}</span>
+                <span className="min-w-0 break-all">{basename(asIs)}</span>
+                <span className="text-text-dim opacity-70" aria-hidden>→</span>
+                <span className="min-w-0 break-all">{basename(toBe)}</span>
               </>
             ) : (
-              <span className="file-name">{basename(toBe ?? asIs ?? '(no file)')}</span>
+              <span className="min-w-0 break-all">{basename(toBe ?? asIs ?? '(no file)')}</span>
             )}
           </span>
         </span>
@@ -353,10 +395,12 @@ function ChevronDownIcon() {
 function CheckDotIcon() {
   // 読了 (= reviewed) の状態を表現する filled dot + check mark。
   // 視覚的にも「埋まった = 完了」のメタファ。
+  // stroke に design token を直接指定する理由: 親の currentColor (= success 緑) を fill に使い、
+  // 抜き文字でチェックを描くため。`var(--color-background)` は @theme で実体化された CSS var を直参照する。
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <circle cx="6" cy="6" r="5" fill="currentColor" />
-      <path d="M3.6 6.2 5 7.6 8.4 4.2" stroke="var(--background)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M3.6 6.2 5 7.6 8.4 4.2" stroke="var(--color-background)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   )
 }

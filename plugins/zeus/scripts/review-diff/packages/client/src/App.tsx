@@ -464,9 +464,10 @@ export function App({ payload }: Props) {
     resizer.addEventListener('pointercancel', onUp)
   }, [])
 
+  // done state: 全画面センター寄せの完了メッセージ。
   if (submitted === 'regen') {
     return (
-      <div className="done">
+      <div className="px-6 py-20 text-center text-lg text-text w-full">
         Requesting context expansion. You can close this tab — review will re-open with the expanded panels.
       </div>
     )
@@ -480,7 +481,7 @@ export function App({ payload }: Props) {
       : rc === total
         ? `Review submitted (all ${total} groups request-changes). You can close this tab.`
         : `Review submitted (${approved} approved / ${rc} request-changes). You can close this tab.`
-    return <div className="done">{msg}</div>
+    return <div className="px-6 py-20 text-center text-lg text-text w-full">{msg}</div>
   }
 
   const meta = formatMeta(payload)
@@ -497,30 +498,35 @@ export function App({ payload }: Props) {
   // Activity タブ: AI Review Report カード (overall サマリ + group インデックス)
   // 「上から順に何が変わったかを俯瞰したい」フェーズの初手画面。クリックで Guide にジャンプする。
   const activityContent = (
-    <div className="page-header">
-      <div className="report-card">
-        <div className="report-card-eyebrow">AI Review Report</div>
-        <h1>{title}</h1>
-        <div className="meta" dangerouslySetInnerHTML={{ __html: meta }} />
+    <div className="m-0 px-6 pt-6 pb-2 w-full">
+      {/* shadow inset で背景グラデの上端を subtly highlight する意図 (絶対値 rgba で固定値表現) */}
+      <div className="max-w-[960px] bg-gradient-to-b from-surface to-background border border-border-soft rounded-xl px-7 pt-6 pb-5 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset]">
+        <div className="text-[10px] tracking-[0.14em] uppercase text-accent font-semibold mb-2">AI Review Report</div>
+        <h1 className="m-0 mb-2 text-2xl font-semibold tracking-[-0.01em]">{title}</h1>
+        <div className="text-text-muted text-xs mb-4 font-mono" dangerouslySetInnerHTML={{ __html: meta }} />
         {overallHtml ? (
-          <div className="markdown" dangerouslySetInnerHTML={{ __html: overallHtml }} />
+          // markdown BEM 維持: prose 用 token 上書きスコープとして globals.css にあるため。
+          <div
+            className="markdown prose prose-invert prose-sm max-w-[760px] text-[13.5px] leading-[1.65]"
+            dangerouslySetInnerHTML={{ __html: overallHtml }}
+          />
         ) : null}
         {groupsState.length > 0 ? (
-          <ul className="report-index">
+          <ul className="list-none m-0 mt-5 pt-4 border-t border-border-soft flex flex-col gap-0.5 max-h-[40vh] overflow-y-auto">
             {groupsState.map((g, i) => (
               <li key={g.groupId}>
                 <button
                   type="button"
-                  className="report-index-item"
+                  className="flex items-baseline gap-3 w-full px-2.5 py-2 border-0 rounded-md bg-transparent text-inherit text-left cursor-pointer transition-colors duration-[120ms] hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
                   onClick={() => {
                     setTab('guide')
                     if (g.panels[0]) jumpToPanel(g.panels[0].panelId)
                   }}
                   aria-label={`Jump to group ${i + 1}: ${g.title}`}
                 >
-                  <span className="report-index-number">{String(i + 1).padStart(2, '0')}</span>
-                  <span className="report-index-title">{g.title}</span>
-                  <span className="report-index-meta">
+                  <span className="font-mono text-[11px] text-text-dim tabular-nums min-w-[22px]">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="flex-1 text-sm font-medium text-text">{g.title}</span>
+                  <span className="text-[11px] text-text-dim tabular-nums">
                     {g.panels.length} panel{g.panels.length === 1 ? '' : 's'}
                   </span>
                 </button>
@@ -533,8 +539,9 @@ export function App({ payload }: Props) {
   )
 
   // Guide タブ: stacked-group レビュー本体 (panel + decision)
+  // pb-[200px] は SubmitBar (fixed bottom-6) の上にスクロール余白を確保する意図
   const guideContent = (
-    <div className="groups-container" ref={containerRef}>
+    <div className="m-0 w-full px-6 pb-[200px] flex-1" ref={containerRef}>
       {groupsState.map((g, i) => (
         <GroupSection
           key={g.groupId}
@@ -576,8 +583,15 @@ export function App({ payload }: Props) {
   }, [])
 
   const diffContent = (
-    <div className="raw-diff-tab">
-      <aside className="raw-diff-nav" aria-label="Changed files">
+    // raw-diff-tab BEM 維持 (jumpToRawPanel の querySelector で参照される) + 内側 scope に
+    // `--nav-width: 280px` を設定。grid-template-columns は var(--nav-width) を参照し、内側
+    // .comment-row も同じ var を calc で使うため、280 を 1 箇所だけ書く形にして将来の変更漏れを防ぐ。
+    <div className="raw-diff-tab grid gap-6 px-6 pt-4 pb-20 grid-cols-[var(--nav-width)_minmax(0,1fr)] [--nav-width:280px]">
+      {/* raw-diff-nav BEM 維持: ::-webkit-scrollbar 非表示 rule を globals.css でスコープしているため */}
+      <aside
+        className="raw-diff-nav sticky top-14 self-start max-h-[calc(100vh-80px)] overflow-y-auto pr-1 flex flex-col gap-0.5 [scrollbar-width:none] [-ms-overflow-style:none]"
+        aria-label="Changed files"
+      >
         {payload.rawPanels.map((p) => {
           let add = 0
           let del = 0
@@ -591,21 +605,21 @@ export function App({ payload }: Props) {
             <button
               key={p.panelId}
               type="button"
-              className="raw-diff-nav-item"
+              className="grid grid-cols-[1fr_auto] grid-rows-[auto_auto] gap-x-2 px-2.5 py-1.5 bg-transparent border-0 rounded-md text-left text-text font-sans cursor-pointer transition-colors duration-100 hover:bg-surface-2"
               onClick={() => jumpToRawPanel(p.panelId)}
               title={p.intent}
             >
-              <span className="raw-diff-nav-file">{basename(p.intent)}</span>
-              <span className="raw-diff-nav-stats">
-                {add > 0 ? <span className="raw-diff-nav-add">+{add}</span> : null}
-                {del > 0 ? <span className="raw-diff-nav-del">-{del}</span> : null}
+              <span className="col-start-1 row-start-1 text-[12.5px] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basename(p.intent)}</span>
+              <span className="col-start-2 row-start-1 inline-flex gap-1 items-baseline font-mono text-[10.5px] tabular-nums">
+                {add > 0 ? <span className="text-add-fg">+{add}</span> : null}
+                {del > 0 ? <span className="text-del-fg">-{del}</span> : null}
               </span>
-              <span className="raw-diff-nav-path">{p.intent}</span>
+              <span className="col-span-full row-start-2 text-[10.5px] text-text-dim font-mono overflow-hidden text-ellipsis whitespace-nowrap">{p.intent}</span>
             </button>
           )
         })}
       </aside>
-      <div className="raw-diff-panels">
+      <div className="flex flex-col min-w-0">
         {payload.rawPanels.map((p) => {
           // 巨大 panel (build artifact 等) は初期 collapsed で開いてレンダリングコストを抑制。
           // segments の合計 row 数で判定。
@@ -624,7 +638,7 @@ export function App({ payload }: Props) {
           )
         })}
         {payload.rawPanels.length === 0 ? (
-          <div className="raw-diff-empty">No file changes to display.</div>
+          <div className="px-6 py-[60px] text-center text-text-dim text-[13px]">No file changes to display.</div>
         ) : null}
       </div>
     </div>
@@ -659,7 +673,11 @@ export function App({ payload }: Props) {
         onSubmit={submit}
         submitting={submitted !== null}
       />
-      {toast ? <div className="toast">{toast}</div> : null}
+      {toast ? (
+        <div className="fixed bottom-20 right-6 bg-surface-2 border border-border rounded-lg px-3.5 py-2.5 text-xs z-50">
+          {toast}
+        </div>
+      ) : null}
     </>
   )
 }

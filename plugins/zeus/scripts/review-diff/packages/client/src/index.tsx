@@ -6,6 +6,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
 import { getPayload } from './state.ts'
+// CSS を entry に import する目的は「production build で dist/globals.css を生成させる」だけ。
+// Vite library mode は entry の依存グラフに含まれる CSS だけを output asset に書き出すため、
+// dev-entry.tsx の import だけでは build 時に CSS が出ない。runtime では cli の <style> inline 配信が
+// 担うので、ここで import した CSS が IIFE bundle 内で link tag を作っても害は無い (実際は
+// cssCodeSplit:false + 静的 link 注入無し設定で、ただ dist/globals.css にファイルだけが残る)。
+import './globals.css'
 
 // バンドルを焼いた時点で esbuild の `define` で literal に置換される。
 // ブラウザでこのログが出ないなら、表示中のタブは古いセッション (cli を再起動していない / cache)。

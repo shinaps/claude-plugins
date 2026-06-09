@@ -1,0 +1,474 @@
+/*
+ * review-diff client のグローバル CSS。
+ * Tailwind v4 + @tailwindcss/typography ベース、design token は @theme で宣言。
+ *
+ * このファイルに残しているのは「Tailwind utility では表現困難 / 表現すべきでない」もの:
+ *   - JS が直接 toggle する body class (is-resizing-nav / is-dragging-line-range)
+ *   - ::view-transition / ::-webkit-scrollbar 等の pseudo-element
+ *   - @keyframes (utility 化不可)
+ *   - test 依存 + 動的合成 BEM (.code-row / .cell-ln / .cell-code / .panel-side-* など)
+ *   - state class (.is-active / .is-pending / .is-confirming etc. JS から付与・利用される)
+ *   - CSS var (--nav-width) を含む dynamic 表現 (calc / grid-template-columns)
+ *   - prose の color token 上書き (@tailwindcss/typography 用)
+ *
+ * 静的見た目スタイルは tsx の className に utility 直書きしている。
+ */
+
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* === design token を @theme directive で宣言。
+   @theme は CSS custom property を実体化し、かつ Tailwind utility (bg-background / text-text-muted / text-accent 等)
+   として自動生成する。font-* は Tailwind の font-sans / font-mono ユーティリティに統合される。 */
+@theme {
+  --color-background: #0a0a0d;
+  --color-surface: #16161a;
+  --color-surface-2: #1c1c22;
+  --color-surface-3: #232329;
+  --color-border: #2a2d3a;
+  --color-border-soft: #1f2230;
+  --color-text: #ffffff;
+  --color-text-muted: #a0a4b0;
+  --color-text-dim: #5a5d6a;
+  --color-accent: #7170ff;
+  --color-accent-soft: rgba(113, 112, 255, 0.14);
+  --color-success: #4ade80;
+  --color-danger: #f87171;
+  --color-warn: #fbbf24;
+  --color-add-bg: rgba(74, 222, 128, 0.10);
+  --color-add-strong: rgba(74, 222, 128, 0.22);
+  --color-add-fg: #86efac;
+  --color-del-bg: rgba(248, 113, 113, 0.10);
+  --color-del-strong: rgba(248, 113, 113, 0.22);
+  --color-del-fg: #fca5a5;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* === base layer ============================================================ */
+@layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--color-background);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { min-height: 100vh; }
+  #root { min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* nav-resizer ドラッグ中の paint optimization。
+     App.tsx 側で body.classList.toggle('is-resizing-nav') する。
+     will-change で Chrome に grid-template-columns 変更を別 layer に隔離させる。 */
+  body.is-resizing-nav .group-section,
+  body.is-resizing-nav .group-nav-wrapper {
+    will-change: grid-template-columns;
+  }
+
+  /* ドラッグ中 (snapIndicatorToLine が body.is-dragging-line-range を立てた間) は
+     通常の + ボタンを隠す。ドラッグインジケータが同位置に出るため冗長になる。 */
+  body.is-dragging-line-range .line-comment-trigger { display: none; }
+
+  /* panel expand/collapse の View Transitions API. 各 panel に view-transition-name を JSX で当てる。 */
+  ::view-transition-old(panel),
+  ::view-transition-new(panel) {
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  [hidden] { display: none !important; }
+
+  /*
+   * @tailwindcss/typography の prose 上書き。
+   * 対象は <div class="markdown prose ..."> (App.tsx) と <div class="group-desc prose ..."> (GroupNav.tsx) の 2 箇所。
+   * .markdown / .group-desc BEM は prose token 上書きの scope として残置。
+   */
+  .markdown,
+  .group-desc {
+    --tw-prose-body: var(--color-text-muted);
+    --tw-prose-headings: var(--color-text);
+    --tw-prose-links: var(--color-accent);
+    --tw-prose-bold: var(--color-text);
+    --tw-prose-code: var(--color-text);
+    --tw-prose-pre-code: var(--color-text);
+    --tw-prose-pre-bg: var(--color-surface);
+    --tw-prose-quotes: var(--color-text-muted);
+    --tw-prose-quote-borders: var(--color-accent);
+    --tw-prose-bullets: var(--color-text-dim);
+    --tw-prose-counters: var(--color-text-dim);
+    --tw-prose-hr: var(--color-border-soft);
+  }
+}
+
+/* === components layer (BEM 保持 list) ====================================== */
+@layer components {
+  /* --- Diff panel grid 構造 (test 依存 + 動的合成 + 行高同期 JS の前提) --- */
+
+  /* panel-side: test 依存 (panel-side-asis/tobe data-side 連動 querySelector) + per-side 独立 scroll container */
+  .panel-side {
+    background: var(--color-surface);
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
+    display: block;
+    /* ダークテーマ統一: thumb=border、track=transparent */
+    scrollbar-color: var(--color-border) transparent;
+    scrollbar-width: thin;
+  }
+  .panel-side::-webkit-scrollbar { height: 8px; }
+  .panel-side::-webkit-scrollbar-track { background: transparent; }
+  .panel-side::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 4px;
+  }
+  .panel-side::-webkit-scrollbar-thumb:hover { background: var(--color-text-dim); }
+
+  /* panel-side-inner: width: max-content + min-width: 100% で全 row を「最も広い cell の幅 or container 幅」に
+     uniform に揃える。flex row との組み合わせで sticky cell-ln の containing block も安定。 */
+  .panel-side-inner {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* code-row: test 依存 (drag-select.test の closest('.code-row')) + 動的合成 (code-row-${sideClass}-${type}) */
+  .panel-side .code-row {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+  }
+  /* row 単位の bg: cell-code 単位ではなく row に塗ることで scrollable overflow rectangle 全幅まで paint される */
+  .code-row-addition { background: var(--color-add-bg); }
+  .code-row-deletion { background: var(--color-del-bg); }
+  .code-row-empty { background: rgba(255, 255, 255, 0.015); }
+
+  /* cell-ln: test 依存 (drag-select.test の querySelector('.cell-ln[data-side=...]')) +
+     sticky gutter + 動的合成 cell-ln-${sideClass}-${type} */
+  .cell-ln {
+    flex: 0 0 52px;
+    padding: 0 10px;
+    text-align: right;
+    color: var(--color-text-dim);
+    user-select: none;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border-soft);
+    font-size: 11px;
+    line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+  /* add/del 行の gutter は row bg が透過なので、不透明 surface ベース + row 色 overlay で覆う */
+  .cell-ln-addition {
+    background: linear-gradient(var(--color-add-bg), var(--color-add-bg)) var(--color-surface);
+    color: var(--color-add-fg);
+  }
+  .cell-ln-deletion {
+    background: linear-gradient(var(--color-del-bg), var(--color-del-bg)) var(--color-surface);
+    color: var(--color-del-fg);
+  }
+  .cell-ln.cell-ln-empty { background: var(--color-surface); }
+
+  /* cell-code: test 依存 + 動的合成 cell-code-${sideClass}-${type} + Shiki pre 透過化 */
+  .cell-code {
+    flex: 1 0 auto;
+    padding: 0 10px;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+    color: var(--color-text);
+    line-height: 1.55;
+    min-width: 0;
+    /* pointerdown 起点のドラッグ = 範囲コメント開始という UX 上の役割を優先するため text 選択を無効化 */
+    user-select: none;
+    cursor: text;
+  }
+  .cell-code pre {
+    margin: 0;
+    background: transparent !important;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    white-space: pre;
+    word-break: normal;
+    overflow: visible;
+  }
+
+  /* line-selected: test 依存 (toHaveClass) + drag 中の範囲ハイライト。
+     sticky cell-ln は code 文字が裏を流れるので linear-gradient + surface で不透明レイヤを被せる。 */
+  .code-row.line-selected > .cell-ln,
+  .code-row.line-selected > .cell-code {
+    background: rgba(113, 112, 255, 0.28);
+    transition: none;
+  }
+  .code-row.line-selected > .cell-ln {
+    background: linear-gradient(rgba(113, 112, 255, 0.28), rgba(113, 112, 255, 0.28)) var(--color-surface);
+  }
+  .code-row.line-selected > .cell-code { color: var(--color-text); }
+  /* Shiki が <pre style="background-color:..."> を inline で吐くため、pre 背景だけ透過 */
+  .code-row.line-selected > .cell-code pre { background: transparent !important; }
+
+  /*
+   * line-comment-trigger の opacity + transition を base に持つ理由:
+   *   tsx 側で opacity-0 を utility (= @layer utilities) で書くと、Tailwind v4 cascade では
+   *   utilities が components より優先される。結果として下の :hover scope rule (opacity: 0.85) が
+   *   永遠に負け、行 hover で + ボタンが出ないバグになる。base 自体をここに置けば utility と
+   *   layer が一致して hover で正常に上書きされる (utility に opacity 系を一切書かない前提)。
+   */
+  .line-comment-trigger {
+    opacity: 0;
+    transition: opacity 100ms ease, transform 100ms ease;
+  }
+  .panel-side-asis .code-row:hover .cell-ln-asis .line-comment-trigger { opacity: 0.85; }
+  .panel-side-tobe .code-row:hover .cell-ln-tobe .line-comment-trigger { opacity: 0.85; }
+  .line-comment-trigger:hover {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.1);
+  }
+  .line-comment-trigger:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 1px;
+  }
+
+  /* drag-cursor-indicator: portal で document.body に出るカーソル追従インジケータ。
+     pointer-events: none で drag 経路を阻害しない。 */
+  .drag-cursor-indicator {
+    position: fixed;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    z-index: 9999;
+    user-select: none;
+  }
+
+  /* comment-row: width が dynamic --nav-width calc を含む。
+     panel-side-inner (width: max-content) の素直な子だと thread が数万 px まで膨らむ UX 破綻があるため、
+     sticky left:0 で viewport 幅 (panel-side 表示幅) に明示固定する。 */
+  .comment-row {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    width: calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px);
+    background: var(--color-surface-2);
+    border-top: 1px solid var(--color-border-soft);
+    border-bottom: 1px solid var(--color-border-soft);
+  }
+
+  /* comment-bubble: state class (.is-editing) と :hover/.focus-within で actions を出す pseudo selector が必要 */
+  .comment-bubble:hover .comment-actions,
+  .comment-bubble:focus-within .comment-actions {
+    opacity: 1;
+  }
+
+  /* sources-unavailable-banner: data-kind attribute で色切替 (utility では表現困難) */
+  .sources-unavailable-banner[data-kind="unknown-file"] {
+    background: rgba(250, 204, 21, 0.08);
+    border-bottom-color: rgba(250, 204, 21, 0.3);
+  }
+
+  /* --- group-section: grid-template-columns に dynamic --nav-width を含む --- */
+  .group-section {
+    display: grid;
+    grid-template-columns: var(--nav-width, 320px) minmax(0, 1fr);
+    gap: 32px;
+    padding: 56px 0;
+    border-top: 1px solid var(--color-border-soft);
+    position: relative;
+    /* content-visibility: auto で viewport 外 section の layout / paint をスキップ。
+       contain-intrinsic-size 1200px は初回 placeholder ヒント (実測後はブラウザが値を覚える)。 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1200px;
+  }
+  .group-section:first-of-type { border-top: none; padding-top: 32px; }
+
+  /* group-nav: sticky で section 内に追従、最大高は viewport-96px。
+     decision section を margin-top:auto で末尾に貼り付けるため flex column。 */
+  .group-nav {
+    position: sticky;
+    top: 64px;
+    align-self: start;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+    padding-right: 8px;
+    display: flex;
+    flex-direction: column;
+  }
+  .group-nav::-webkit-scrollbar { width: 4px; }
+  .group-nav::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+  /* nav-resizer ::before で「視覚バー (細い) と grab zone (左右 8px 拡張) を分離」.
+     ユーザーが目で追うバーとポインタ位置が完全一致するため、視覚と操作のずれが起きない。 */
+  .nav-resizer::before {
+    content: '';
+    position: absolute;
+    inset: 0 -8px;
+  }
+  .nav-resizer:hover,
+  .nav-resizer.dragging {
+    background-color: var(--color-accent);
+  }
+
+  /* group-decision-badge state colors (state class が JS の文字列付与で来るため BEM 維持) */
+  .group-decision-badge.is-approved {
+    color: var(--color-add-fg);
+    border-color: rgba(74, 222, 128, 0.4);
+    background: rgba(74, 222, 128, 0.12);
+  }
+  .group-decision-badge.is-rc {
+    color: var(--color-del-fg);
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(248, 113, 113, 0.12);
+  }
+  .group-decision-badge.is-no-panels {
+    color: var(--color-text-dim);
+    border-color: var(--color-border-soft);
+    background: var(--color-surface-2);
+  }
+
+  /* group-panel-item state + ::before active rail (pseudo-element) */
+  .group-panel-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--color-accent);
+    opacity: 0;
+    transform: scaleY(0.6);
+    transform-origin: center;
+    transition: opacity 160ms ease, transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .group-panel-item.is-active::before {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  .group-panel-item.is-active { background: var(--color-surface-2); }
+  .group-panel-item.is-active .panel-intent-line { color: var(--color-text); }
+  .group-panel-item.is-active .panel-item-indicator { color: var(--color-accent); }
+  .group-panel-item.is-reviewed .panel-item-indicator-btn { color: var(--color-success); }
+  .group-panel-item:focus-visible {
+    outline: none;
+    background: var(--color-surface-2);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+  }
+
+  /* btn-context.is-pending state */
+  .btn-context.is-pending {
+    color: var(--color-accent);
+    border-color: var(--color-accent-soft);
+    background: var(--color-accent-soft);
+  }
+  /* btn-context-icon .spin animation */
+  .btn-context-icon .spin {
+    animation: btn-context-spin 0.9s linear infinite;
+    transform-origin: 50% 50%;
+  }
+
+  /* btn-decision selected state */
+  .btn-decision.btn-approve.is-selected {
+    background: rgba(74, 222, 128, 0.2);
+    border-color: rgba(74, 222, 128, 0.5);
+    color: var(--color-add-fg);
+  }
+  .btn-decision.btn-rc.is-selected {
+    background: rgba(248, 113, 113, 0.16);
+    border-color: rgba(248, 113, 113, 0.45);
+    color: var(--color-del-fg);
+  }
+
+  /* btn-submit.is-confirming animation (state class + @keyframes) */
+  .btn-submit.is-confirming {
+    background: var(--color-success);
+    color: var(--color-background);
+    animation: submit-pulse 800ms ease infinite alternate;
+  }
+
+  /* tabbar pending pseudo-element (state class + animation) */
+  .tabbar.is-pending::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 30%, var(--color-accent) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: tabbar-pending 800ms linear infinite;
+    pointer-events: none;
+  }
+
+  /* tab-hidden: content-visibility: hidden (utility 化不可、accessibility tree から除外) */
+  .tab-hidden {
+    content-visibility: hidden;
+  }
+
+  /* panel-block content-visibility (utility 化困難 + scroll-margin-top で anchor jump 整列) */
+  .panel-block {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px;
+    scroll-margin-top: 72px;
+  }
+
+  /* panel-segment sibling divider (+ combinator selector は utility 化不可) */
+  .panel-segment + .panel-segment {
+    border-top: 1px dashed var(--color-border-soft);
+  }
+
+  /* panel-block の sticky panel-header (祖先 panel-block 内でのみ sticky 化) */
+  .panel-block .panel-header {
+    position: sticky;
+    /* tabbar 実測高 46px に合わせて隙間ゼロ。tabbar が padding/font 変更でズレた時はここも追従させる */
+    top: 46px;
+    z-index: 5;
+    background: var(--color-surface-2);
+  }
+  /* collapsed の panel-header は下に何も無いため border-bottom 不要 */
+  .panel-block-collapsed .panel-header { border-bottom: none; }
+
+  /* raw-diff-nav の scrollbar 非表示 (utility では一括指定困難なため component scoped で残す) */
+  .raw-diff-nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
+}
+
+/* === @keyframes (Tailwind utility では宣言不可) =========================== */
+@keyframes submit-pulse {
+  from { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+  to { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+}
+@keyframes tabbar-pending {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@keyframes btn-context-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* === @media: モバイル時 group-section の grid 解除 ======================== */
+@media (max-width: 1000px) {
+  .group-section {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .group-nav {
+    position: static;
+    max-height: none;
+  }
+}

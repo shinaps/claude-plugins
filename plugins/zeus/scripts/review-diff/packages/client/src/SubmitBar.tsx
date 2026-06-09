@@ -56,11 +56,19 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
     : `${decided} / ${totalGroups} groups decided`
 
   return (
-    <div className="submit-bar" role="toolbar" aria-label="Submit review">
-      <span className="submit-bar-summary">{summary}</span>
+    <div
+      className="fixed bottom-6 right-6 z-40 flex items-center gap-3 px-3.5 py-2.5 bg-surface border border-border rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.3)]"
+      role="toolbar"
+      aria-label="Submit review"
+    >
+      <span className="text-[11px] text-text-muted font-mono tabular-nums">{summary}</span>
+      {/*
+        btn-submit BEM を残す理由: `.btn-submit.is-confirming` の bg/color/animation を globals.css の
+        @layer components に集約しているため。utility 側は base + disabled の見た目だけ表現する。
+      */}
       <button
         type="button"
-        className={`btn-submit${confirming ? ' is-confirming' : ''}`}
+        className={`btn-submit px-4 py-2 border border-border bg-accent text-background rounded-lg cursor-pointer text-[12.5px] font-semibold font-sans tracking-[0.01em] transition-[filter,background] duration-[120ms] enabled:hover:brightness-[1.08] disabled:bg-surface-3 disabled:text-text-dim disabled:cursor-not-allowed${confirming ? ' is-confirming' : ''}`}
         disabled={!ready}
         onClick={handleClick}
         title={
