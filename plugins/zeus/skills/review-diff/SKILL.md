@@ -374,8 +374,10 @@ ResultJson 全体:
   ],
   "regenGroup": {            // decision='regen-group' の時のみ
     "groupId": "g2",
-    "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ]
+    "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ],
+    "note": "foo() の caller も見たい"   // v4.14.0: 任意。ユーザーが inline textarea で書いた自由文
   },
+  "submitNote": "commit メッセージにはこの観点を含めて",  // v4.14.0: decision='submit' 時に SubmitBar textarea で書いた全体コメント (任意)
   "lineCommentDrafts": {      // regen-group の時に restore で活きる、それ以外は無視可
     "draft:p1:asis:42": "draft body..."
   }
@@ -461,7 +463,7 @@ git log --oneline -n "$COMMIT_COUNT"
 ポイント:
 - `extract-group-patch` は `dist/cli.js` の subcommand。`--unidiff-zero` 互換の patch を出す
 - `git apply --cached --unidiff-zero --recount` で line count のずれを git 側に吸収させる
-- 各 commit メッセージは **AI が** `group.title` + group description + 該当 group の `comments` (scope='group') + 各 panel.intent から生成 (semantic prefix 含む)
+- 各 commit メッセージは **AI が** `group.title` + group description + 該当 group の `comments` (scope='group') + 各 panel.intent + **`result.json.submitNote` (任意の全体コメント)** から生成 (semantic prefix 含む)
 - mixed パスでは「N commits を作って g${k} onwards は request-changes のため un-commit」をユーザーに明示
 - 全 commit 完了後 (= 全 approved or mixed パスで break まで) は **work-dir をクリーンアップ** (`rm -rf "$WORK_DIR"`)
 - mixed パスで RC group が残った場合は、その後 reject ルートに合流して修正実装 → Skill 再起動
@@ -497,10 +499,15 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
 
 1. **regenCount をメインの会話メモリで +1**。`regenCount >= 5` なら **AskUserQuestion** で
    「このまま広げ続ける / 中止 / 方針見直し」を聞く (無限再生成防止)。
-2. `result.json` から `regenGroup.groupId` と `regenGroup.currentRanges` を取得。
+2. `result.json` から `regenGroup.groupId` / `regenGroup.currentRanges` / `regenGroup.note` (任意) を取得。
 3. **work-dir はクリーンアップしない** (summary.json / diff.patch は再利用、restore.json を作る)。
 4. **summary.json を Read → 該当 group の panels[] を再生成** して Write:
    - `currentRanges` を参考に、各 panel の `asIs.ranges` / `toBe.ranges` を **±5〜10 行拡張**
+   - **v4.14.0 `note` (自由文) が来ていれば、それを最優先指針として panel 構成を決める**:
+     - 例: 「foo() の caller も見たい」→ caller を含む別 file の関数領域を panel として追加
+     - 例: 「呼び出しチェーン全部」→ AI がコードを追跡して関連 panel を group に挿入
+     - 例: 「テストも見せて」→ 対応する test file を新規 panel として追加
+     - note が無ければ機械的な ±5〜10 行拡張のみ
    - 必要なら file 全体を覆う追加 panel を当該 group に挿入
    - **`groups[]` の配列順は絶対に変えない** (group の挿入・削除・入れ替え禁止)
    - 他 group の panels は触らない (cross-group 影響を作らない)

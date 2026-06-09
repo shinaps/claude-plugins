@@ -322,21 +322,25 @@ export function App({ payload }: Props) {
     return out
   }
 
-  async function submit() {
+  // fillMode は SubmitBar の「Approve & Submit」「Reject & Submit」用。
+  // 未判定 group をどちらかに補完して意思を明示する。指定なしなら未判定はそのまま (null 落とし) で送る。
+  // note は SubmitBar の textarea で書いた全体コメント (任意)。SKILL.md 側で commit メッセージ生成等に活用。
+  async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string }) {
     if (submitted) return
-    // 全 group decision 確定チェック (panels=0 は自動 approved で埋まっている)
-    const allDecided = Object.values(groupDecisions).every(d => d !== null)
-    if (!allDecided) return
-
+    const fillMode = opts?.fillMode
+    const note = opts?.note?.trim() || undefined
     const decisions: Record<string, GroupDecision> = {}
-    for (const [k, v] of Object.entries(groupDecisions)) {
-      if (v !== null) decisions[k] = v
+    for (const g of groupsState) {
+      const cur = groupDecisions[g.groupId] ?? null
+      const next = cur ?? (fillMode ?? null)
+      if (next !== null) decisions[g.groupId] = next
     }
     const cs = collectComments()
     const body: ResultJson = {
       decision: 'submit',
       groupDecisions: decisions,
       comments: cs,
+      ...(note ? { submitNote: note } : {}),
     }
     try {
       await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
@@ -358,8 +362,9 @@ export function App({ payload }: Props) {
   // decision='regen-group' で POST /result に送ってから window.close()。
   // SKILL.md 側がこれを受けて summary.json の panels[] を再生成 + restore JSON を Write して
   // Skill 再起動するループに繋がる。
+  // v4.14.0 note: 「どの context を追加してほしいか」の自由文。SKILL.md 側で AI への指示として活用。
   const onRequestContext = useCallback(
-    async (groupId: string) => {
+    async (groupId: string, note?: string) => {
       if (regenPending || submitted) return
       const g = groupsState.find(x => x.groupId === groupId)
       if (!g) return
@@ -377,11 +382,12 @@ export function App({ payload }: Props) {
       for (const [k, v] of Object.entries(groupDecisions)) {
         if (v !== null) decisions[k] = v
       }
+      const trimmedNote = note?.trim() || undefined
       const body: ResultJson = {
         decision: 'regen-group',
         groupDecisions: decisions,
         comments: collectComments(),
-        regenGroup: { groupId, currentRanges },
+        regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
       }
       try {

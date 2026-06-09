@@ -32,8 +32,9 @@ type Props = {
   panels: RenderedPanel[]
   onJumpToPanel: (panelId: string) => void
   // v4.8.0 context+ (close-relaunch): regen 中は全 group の context+ ボタンを止める。
+  // v4.14.0 note: 任意の自由文。「どの context を追加してほしいか」を AI に伝える。
   regenPending: boolean
-  onRequestContext: (groupId: string) => void
+  onRequestContext: (groupId: string, note?: string) => void
   // v4.12.0 group decision + comment
   decision: GroupDecision | null
   comment: string
@@ -64,6 +65,30 @@ export function GroupNav({
 
   const activePanelId = useScrollSpy(panels)
   const noPanels = panels.length === 0
+
+  // context+ inline textarea の開閉状態と入力中の note。
+  // expand=false: + ボタンだけ。expand=true: textarea + Cancel / Send ボタン。
+  // note は空でも submit 可能 (= 旧挙動の「range だけ広げる」と同等)。
+  const [ctxExpanded, setCtxExpanded] = useState(false)
+  const [ctxNote, setCtxNote] = useState('')
+  // regenPending が立つ (= 別 group で context+ 発火) と全 group の context+ が止まるので、
+  // 開いていた textarea も閉じて UI を整合させる。
+  useEffect(() => {
+    if (regenPending) {
+      setCtxExpanded(false)
+      setCtxNote('')
+    }
+  }, [regenPending])
+  function sendCtx() {
+    const note = ctxNote.trim()
+    setCtxExpanded(false)
+    setCtxNote('')
+    onRequestContext(groupId, note || undefined)
+  }
+  function cancelCtx() {
+    setCtxExpanded(false)
+    setCtxNote('')
+  }
 
   // decision バッジのラベルとクラス。panels=0 の group は強制 approved 扱いだが
   // バッジ表記は「NO PANELS」として区別する (Submit active 条件は満たすが UI 上は明示)。
@@ -143,30 +168,77 @@ export function GroupNav({
 
       {/* v4.8.0: context+ は close-relaunch ループの起点。クリックで現状 state を回収して
           CLI を終了させ、SKILL.md 側で summary.json を再生成してから Skill を再起動する。
-          regenPending=true 中は他 group も含め全ての context+ を disable する。 */}
-      <div className="flex justify-start mb-4" role="group" aria-label="Request more context">
-        {/* btn-context BEM 維持: .is-pending state による accent 色化 + .btn-context-icon .spin animation が
-            globals.css にあるため。base 見た目は utility。 */}
-        <button
-          type="button"
-          className={`btn-context inline-flex items-center gap-2 px-3 py-[7px] text-xs font-medium font-sans tracking-[-0.005em] text-text bg-surface-2 border border-border-soft rounded-md cursor-pointer shadow-[0_1px_0_rgba(0,0,0,0.2)] transition-[background,border,color,transform] duration-[120ms] enabled:hover:bg-surface-3 enabled:hover:border-border enabled:hover:text-text enabled:active:translate-y-[0.5px] focus-visible:outline-none focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-[0.45] disabled:cursor-not-allowed disabled:bg-transparent${regenPending ? ' is-pending' : ''}`}
-          disabled={regenPending}
-          title={
-            regenPending
-              ? 'Regenerating — this tab will close and reopen automatically'
-              : 'Request more context for this group (this tab will close and reopen with expanded panels)'
-          }
-          onClick={() => onRequestContext(groupId)}
-          aria-busy={regenPending}
-        >
-          {/* btn-context-icon BEM 維持: 内側 .spin の rotate animation を globals.css でスコープしているため */}
-          <span className="btn-context-icon inline-flex w-3 h-3 [color:currentColor]" aria-hidden="true">
-            {regenPending ? <SpinnerIcon /> : <PlusIcon />}
-          </span>
-          <span className="tabular-nums">
-            {regenPending ? 'Regenerating' : 'More context'}
-          </span>
-        </button>
+          regenPending=true 中は他 group も含め全ての context+ を disable する。
+          v4.14.0: クリックで inline textarea が開き、「どの context を追加してほしいか」を自由文で
+          AI に伝えられる (空文字なら旧挙動 = range +5〜10 行拡張だけ)。 */}
+      <div className="mb-4" role="group" aria-label="Request more context">
+        {!ctxExpanded ? (
+          <div className="flex justify-start">
+            {/* btn-context BEM 維持: .is-pending state による accent 色化 + .btn-context-icon .spin animation が
+                globals.css にあるため。base 見た目は utility。 */}
+            <button
+              type="button"
+              className={`btn-context inline-flex items-center gap-2 px-3 py-[7px] text-xs font-medium font-sans tracking-[-0.005em] text-text bg-surface-2 border border-border-soft rounded-md cursor-pointer shadow-[0_1px_0_rgba(0,0,0,0.2)] transition-[background,border,color,transform] duration-[120ms] enabled:hover:bg-surface-3 enabled:hover:border-border enabled:hover:text-text enabled:active:translate-y-[0.5px] focus-visible:outline-none focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-[0.45] disabled:cursor-not-allowed disabled:bg-transparent${regenPending ? ' is-pending' : ''}`}
+              disabled={regenPending}
+              title={
+                regenPending
+                  ? 'Regenerating — this tab will close and reopen automatically'
+                  : 'Request more context (textarea が開きます)'
+              }
+              onClick={() => setCtxExpanded(true)}
+              aria-busy={regenPending}
+              aria-expanded={false}
+            >
+              {/* btn-context-icon BEM 維持: 内側 .spin の rotate animation を globals.css でスコープしているため */}
+              <span className="btn-context-icon inline-flex w-3 h-3 [color:currentColor]" aria-hidden="true">
+                {regenPending ? <SpinnerIcon /> : <PlusIcon />}
+              </span>
+              <span className="tabular-nums">
+                {regenPending ? 'Regenerating' : 'More context'}
+              </span>
+            </button>
+          </div>
+        ) : (
+          // expanded: textarea + Cancel / Send。空文字でも Send 可 (= 旧挙動の range +5〜10 行拡張だけ)。
+          <div className="flex flex-col gap-2 p-2.5 bg-surface-2 border border-border-soft rounded-md">
+            <textarea
+              autoFocus
+              value={ctxNote}
+              onChange={(e) => setCtxNote(e.target.value)}
+              onKeyDown={(e) => {
+                // Cmd/Ctrl+Enter で送信、Esc でキャンセル (CommentForm と同じ規約)
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault()
+                  sendCtx()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelCtx()
+                }
+              }}
+              placeholder="どの context を追加してほしいか (任意。例: 「foo() の caller も見たい」「呼び出しチェーン全部」)"
+              rows={3}
+              className="w-full min-h-[60px] resize-none bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-xs leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
+            />
+            <div className="flex justify-end gap-1.5">
+              <button
+                type="button"
+                className="px-3 py-1 border border-border rounded-md text-xs font-medium font-sans cursor-pointer bg-transparent text-text-muted hover:bg-surface-3 hover:text-text transition-colors duration-100"
+                onClick={cancelCtx}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 border border-accent bg-accent rounded-md text-xs font-medium font-sans cursor-pointer text-white hover:brightness-[1.08] transition-[filter,background] duration-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={regenPending}
+                onClick={sendCtx}
+                title={ctxNote.trim() ? 'Submit with note' : 'Submit without note (= range expansion only)'}
+              >
+                Submit context+
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {panels.length ? (

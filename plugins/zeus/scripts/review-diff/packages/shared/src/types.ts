@@ -120,7 +120,14 @@ export type ResultJson = {
       asIs?: { file: string; ranges: DisplayRange[] }
       toBe?: { file: string; ranges: DisplayRange[] }
     }>
+    // v4.14.0: ユーザーが inline textarea に書いた自由文 (任意)。
+    // SKILL.md 側で AI への指示として活用する: 「foo() の caller も見たい」「呼び出しチェーン全部」など。
+    // 空文字や未入力なら省略 (= 旧挙動の「range +5〜10 行拡張だけ」と同等)。
+    note?: string
   }
+  // v4.14.0: Submit 時に SubmitBar の textarea で書いた全体コメント (任意)。
+  // SKILL.md 側で commit メッセージ生成や次アクション判断の参考にする。空文字なら省略。
+  submitNote?: string
   // sessionStorage に残っていた未保存 draft 本文。key: `draft:${panelId}:${side}:${num}[:${end}]`
   // 再起動後に sessionStorage に書き戻して、書きかけが残る UX を担保する。
   lineCommentDrafts?: Record<string, string>
