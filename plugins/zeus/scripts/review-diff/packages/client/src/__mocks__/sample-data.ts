@@ -79,6 +79,7 @@ export const sampleData: ClientPayload = {
     ],
   },
   prMeta: null,
+  project: { name: 'review-diff-demo', branch: 'main' },
   groups: [
     {
       groupId: 'g0',

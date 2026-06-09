@@ -685,6 +685,7 @@ export function App({ payload }: Props) {
         active={tab}
         onChange={onTabChange}
         meta={`${payload.allPanels.length} panel${payload.allPanels.length === 1 ? '' : 's'}`}
+        project={payload.project}
         pending={isPending}
       />
       {/* 訪問済みタブのみレンダー + 非アクティブは content-visibility: hidden で keep alive。
@@ -726,12 +727,19 @@ export function App({ payload }: Props) {
 }
 
 function formatMeta(payload: ClientPayload): string {
+  // 複数プロジェクトのレビューを並行して開いたとき Activity タブ単体でも識別できるよう、
+  // meta 行の先頭にリポジトリ名を置く (branch は PR モードなら headRefName と重複するので staged のみ)
+  const project = payload.project
   const pr: PrMeta | null = payload.prMeta
   if (pr) {
     const author = typeof pr.author === 'string' ? pr.author : (pr.author?.login ?? '')
-    return `PR #${pr.number} · ${escapeHtml(author)} · ${escapeHtml(pr.headRefName || '')} → ${escapeHtml(pr.baseRefName || '')}`
+    const prefix = project ? `${escapeHtml(project.name)} · ` : ''
+    return `${prefix}PR #${pr.number} · ${escapeHtml(author)} · ${escapeHtml(pr.headRefName || '')} → ${escapeHtml(pr.baseRefName || '')}`
   }
-  return `${payload.summary.mode === 'staged' ? 'staged diff' : 'diff'} · ${payload.allPanels.length} panel${payload.allPanels.length === 1 ? '' : 's'}`
+  const prefix = project
+    ? `${escapeHtml(project.name)}${project.branch ? ` (${escapeHtml(project.branch)})` : ''} · `
+    : ''
+  return `${prefix}${payload.summary.mode === 'staged' ? 'staged diff' : 'diff'} · ${payload.allPanels.length} panel${payload.allPanels.length === 1 ? '' : 's'}`
 }
 
 function cssEscape(s: string): string {
