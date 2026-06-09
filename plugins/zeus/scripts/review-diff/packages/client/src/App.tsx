@@ -220,11 +220,12 @@ export function App({ payload }: Props) {
 
   const onDecisionChange = useCallback((id: string, next: GroupDecision | null) => {
     setGroupDecisions(prev => ({ ...prev, [id]: next }))
-    // v4.12.0 (refinement): Approve した瞬間に次の group へ自動スクロール。
-    // Request Changes / 解除 (null) では auto-scroll しない (修正する人は同じ位置に留まりたい)。
-    // 最後の group での Approve は scroll しない (= 次が無い)。
+    // decision 確定 (approved / request-changes どちらも) で次 group に自動スクロール。
+    // RC でも遷移させる理由: RC を付けた後にユーザーがその場に留まる強い動機は無く、むしろ
+    // 次の group のレビューに進めた方が手数が減る。解除 (null) は意図的に「気が変わった」操作なので
+    // scroll しない。最後の group では次が無いので scroll しない。
     // setState 直後に DOM 更新待ちが必要なので rAF で 1 フレーム待つ。
-    if (next === 'approved') {
+    if (next === 'approved' || next === 'request-changes') {
       const idx = groupsState.findIndex(g => g.groupId === id)
       if (idx >= 0 && idx < groupsState.length - 1) {
         const target = groupsState[idx + 1]

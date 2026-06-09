@@ -7,7 +7,7 @@
  *   - ::view-transition / ::-webkit-scrollbar 等の pseudo-element
  *   - @keyframes (utility 化不可)
  *   - test 依存 + 動的合成 BEM (.code-row / .cell-ln / .cell-code / .panel-side-* など)
- *   - state class (.is-active / .is-pending / .is-confirming etc. JS から付与・利用される)
+ *   - state class (.is-active / .is-pending / .is-approved 等、JS から付与・利用される)
  *   - CSS var (--nav-width) を含む dynamic 表現 (calc / grid-template-columns)
  *   - prose の color token 上書き (@tailwindcss/typography 用)
  *
@@ -394,13 +394,6 @@
     color: var(--color-del-fg);
   }
 
-  /* btn-submit.is-confirming animation (state class + @keyframes) */
-  .btn-submit.is-confirming {
-    background: var(--color-success);
-    color: var(--color-background);
-    animation: submit-pulse 800ms ease infinite alternate;
-  }
-
   /* tabbar pending pseudo-element (state class + animation) */
   .tabbar.is-pending::after {
     content: '';
@@ -448,10 +441,6 @@
 }
 
 /* === @keyframes (Tailwind utility では宣言不可) =========================== */
-@keyframes submit-pulse {
-  from { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
-  to { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
-}
 @keyframes tabbar-pending {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }

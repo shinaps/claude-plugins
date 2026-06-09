@@ -1,15 +1,14 @@
-// 右下 floating Submit Review バー (v4.12.0)。
+// 右下 floating Submit Review バー。
 //
-// 設計判断:
-//   - SubmitModal を廃止し、Submit ボタンの 2-click confirm パターンで誤クリック保護を入れる
-//     (GitHub の "Confirm sign off" と同じ語彙)。1 回目クリックでラベルが "Click again to confirm"
-//     に変わり、2 秒経過で元に戻る。2 回連続クリックで実 submit。
-//   - 全 group decision が確定するまで disabled。残り group 数を tooltip に出すことで「あと何やれば
-//     いいか」が明示される。
-//   - ボタン上のサマリ表示 (N approved, M request-changes) で confirm banner の役割を果たす
-//     (モーダル要らずの中庸案)。
-
-import { useCallback, useEffect, useState } from 'react'
+// 設計判断 (v4.13.0):
+//   - **1-click submit**: 旧 2-click confirm は誤クリック保護として入れていたが、ユーザーは
+//     ボタンが目立つ場所 (fixed bottom-right) にあると認識しており、誤クリック実害は実運用で
+//     観測されなかった。手数を減らすため即時 submit に倒す。
+//   - **全 group decision 未確定でも submit 可能**: 「動作確認だけして OK」のような light レビューを
+//     許容する。未判定 group は SKILL.md 側で「判定無しは undecided として扱う」(commit 対象外)。
+//     summary に "N decided / M total" を出して状態は見せ続ける。
+//   - サマリ表示で「何を submit しようとしているか」が一目で分かるよう (approved / RC / 未判定 の内訳)
+//     見せ続ける。
 
 type Props = {
   approvedCount: number
@@ -20,40 +19,14 @@ type Props = {
 }
 
 export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submitting }: Props) {
-  const [confirming, setConfirming] = useState(false)
   const decided = approvedCount + rcCount
-  const ready = decided === totalGroups && !submitting
+  const undecided = totalGroups - decided
+  // submitting 中のみ disable。decision 全確定は要求しない (light レビューを許容する設計)。
+  const ready = !submitting
 
-  // 1 回目のクリック後 2 秒で confirming 状態を自動解除 (誤クリック保護)。
-  useEffect(() => {
-    if (!confirming) return
-    const t = setTimeout(() => setConfirming(false), 2000)
-    return () => clearTimeout(t)
-  }, [confirming])
-
-  // fetch error 等で submitting→null 復帰した時に、confirming=true がそのまま残ると
-  // 次の 1 クリックで即 submit が走る (誤クリック保護が破れる)。submitting が立ったら必ずリセット。
-  useEffect(() => {
-    if (submitting) setConfirming(false)
-  }, [submitting])
-
-  const handleClick = useCallback(() => {
-    if (!ready) return
-    if (!confirming) {
-      setConfirming(true)
-      return
-    }
-    // 2 段目クリック発火と同時に confirming を倒すことで、submit が fetch error で空振った場合に
-    // 再クリックでも「1 段目 → 2 段目」を確実に経由させる (誤クリック保護が空振り時も持続)。
-    // submitting=true への状態遷移を待つ方法だと、App 側の submit() が catch で submitted を
-    // 立てない設計のため、submitting prop は false のままになり useEffect が発火しない罠がある。
-    setConfirming(false)
-    onSubmit()
-  }, [ready, confirming, onSubmit])
-
-  const summary = ready
+  const summary = undecided === 0
     ? `${approvedCount} approved · ${rcCount} request-changes`
-    : `${decided} / ${totalGroups} groups decided`
+    : `${approvedCount} approved · ${rcCount} RC · ${undecided} undecided`
 
   return (
     <div
@@ -62,24 +35,14 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
       aria-label="Submit review"
     >
       <span className="text-[11px] text-text-muted font-mono tabular-nums">{summary}</span>
-      {/*
-        btn-submit BEM を残す理由: `.btn-submit.is-confirming` の bg/color/animation を globals.css の
-        @layer components に集約しているため。utility 側は base + disabled の見た目だけ表現する。
-      */}
       <button
         type="button"
-        className={`btn-submit px-4 py-2 border border-border bg-accent text-background rounded-lg cursor-pointer text-[12.5px] font-semibold font-sans tracking-[0.01em] transition-[filter,background] duration-[120ms] enabled:hover:brightness-[1.08] disabled:bg-surface-3 disabled:text-text-dim disabled:cursor-not-allowed${confirming ? ' is-confirming' : ''}`}
+        className="px-4 py-2 border border-border bg-accent text-background rounded-lg cursor-pointer text-[12.5px] font-semibold font-sans tracking-[0.01em] transition-[filter,background] duration-[120ms] enabled:hover:brightness-[1.08] disabled:bg-surface-3 disabled:text-text-dim disabled:cursor-not-allowed"
         disabled={!ready}
-        onClick={handleClick}
-        title={
-          ready
-            ? confirming
-              ? 'Click again within 2s to confirm submit'
-              : 'Submit review'
-            : `Decide remaining ${totalGroups - decided} group(s) first`
-        }
+        onClick={() => { if (ready) onSubmit() }}
+        title={ready ? 'Submit review' : 'Submitting...'}
       >
-        {confirming ? 'Click again to confirm' : 'Submit Review'}
+        Submit Review
       </button>
     </div>
   )
