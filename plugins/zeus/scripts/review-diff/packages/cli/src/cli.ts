@@ -195,13 +195,31 @@ async function main(): Promise<void> {
 
   // 8. config (editor + scripts) を読む
   let editorPreset: ReturnType<typeof loadReviewDiffConfig>['editorPreset'] = null
+  let loadedConfig: ReturnType<typeof loadReviewDiffConfig>['config'] | null = null
   try {
     const loaded = loadReviewDiffConfig(values.config as string | undefined)
     editorPreset = loaded.editorPreset
+    loadedConfig = loaded.config
   } catch (e) {
     process.stderr.write(`[review-diff] config load failed (ignored): ${(e as Error).message}\n`)
   }
   const editorAvailable = editorPreset !== null
+  // v5.0.2: config が無い / editor 未設定 / scripts 未設定 のときに stderr に明示的な hint を出す。
+  // 「サイレントに機能 off」だとユーザーが editor link / script gate の存在に気付かないため。
+  if (!values.config) {
+    process.stderr.write('[review-diff] no --config passed.\n')
+    process.stderr.write('[review-diff]   - Editor link icon will NOT be rendered (no editor preset)\n')
+    process.stderr.write('[review-diff]   - Pre-flight script gate is disabled\n')
+    process.stderr.write('[review-diff]   To enable: copy plugins/zeus/skills/review-diff/example.review-diff.config.json\n')
+    process.stderr.write('[review-diff]   to .claude/zeus/review-diff.config.json (= relative to repo root)\n')
+  } else if (loadedConfig) {
+    if (!editorAvailable) {
+      process.stderr.write('[review-diff] config has no editor.kind — editor link icon will NOT be rendered.\n')
+    }
+    if (!loadedConfig.scripts || loadedConfig.scripts.length === 0) {
+      process.stderr.write('[review-diff] config has no scripts[] — pre-flight script gate is disabled.\n')
+    }
+  }
 
   // 9. script results を読む (Pre-flight チップ表示用)
   let scriptResults: ScriptResultsPayload | undefined

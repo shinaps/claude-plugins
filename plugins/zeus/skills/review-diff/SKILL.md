@@ -376,6 +376,38 @@ pr モードの `pr` フィールドは現状 CLI からは参照されない (C
 review-diff CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
 test / typecheck などの「コミット前に通したい」検査を起動条件として強制する仕組み。
 
+#### 4.5.1 config が存在しない場合: AskUserQuestion で誘導
+
+`.claude/zeus/review-diff.config.json` がリポに無いときは、`AskUserQuestion` で
+
+「スクリプトゲート (test / typecheck 等を起動前に走らせる) を設定しますか?」
+
+を 1 回だけ聞く。選択肢:
+
+- **設定する**: `example.review-diff.config.json` をベースに、ユーザーに具体的な command を AskUserQuestion で 1-3 項目だけ聞いて (例: typecheck / test / lint の中から実行したいもの)、`.claude/zeus/review-diff.config.json` を **Write ツール** で作成 → そのまま今回のレビューから使う
+- **今回はスキップ** (= config を作らない): 今回はゲートなしで Phase 5 に進む。次回も同じ確認が出る (= 永続的な opt-out は無い、変更したくなったら手動でファイル削除)
+- **永続的にスキップ** (= flag ファイル): `.claude/zeus/review-diff.no-config` を touch して、以後 review-diff 起動時に AskUserQuestion を出さない。flag ファイルを消せば再度誘導される
+
+```bash
+# config 探索
+CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+NO_CONFIG_FLAG="${REPO_ROOT}/.claude/zeus/review-diff.no-config"
+if [ ! -f "$CONFIG_FILE" ] && [ ! -f "$NO_CONFIG_FLAG" ]; then
+  # → メインエージェントが AskUserQuestion を投げる (上記 3 択)
+  # 「設定する」を選んだ場合は example.review-diff.config.json を読んで、
+  # editor.kind / scripts[] を AskUserQuestion で詰めて Write
+  # 「今回スキップ」を選んだ場合は何もしない (CONFIG_FILE は無いまま Phase 5 へ)
+  # 「永続スキップ」を選んだ場合は flag ファイルを touch
+  :
+fi
+```
+
+editor 設定 (= toBe addition 行の hover で出るエディタリンク) も同じ config に同居するので、
+「スクリプトゲート不要だが editor リンクは使いたい」場合も Phase 4.5 で誘導される
+(= 設定する → editor.kind だけ聞いて scripts[] は省略)。
+
+#### 4.5.2 config が存在する場合: スクリプト実行
+
 ```bash
 CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
 if [ -f "$CONFIG_FILE" ]; then
@@ -407,7 +439,7 @@ fi
 - 修正 → re-stage → スキル再起動でループが自然に回る
 - 設定 `scripts[]` の各エントリは `{ name, command, matchFiles, timeoutMs? }`。`matchFiles` (glob) が staged diff の変更ファイルにヒットしたものだけ実行
 
-設定例: `plugins/zeus/skills/review-diff/example.review-diff.config.json` を参照。
+設定例: `plugins/zeus/skills/review-diff/example.review-diff.config.json` を参照。CLI 側は config 無し / editor 未設定 / scripts 未設定の各状態を stderr にメッセージで通知する (= サイレントに機能 off にならない)。
 
 ### Phase 5: CLI 起動 (background mode + TaskOutput 待ち)
 
