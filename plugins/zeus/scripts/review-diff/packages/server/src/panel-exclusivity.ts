@@ -2,7 +2,7 @@
 // claim されていないかを検証する。
 //
 // 背景:
-//   v4.12.0 で「Submit → linear-stack で group ごと 1 commit ずつ作る」モデルになったため、
+//   「Submit → linear-stack で group ごと 1 commit ずつ作る」モデルでは、
 //   同一の変更行を 2 group が touch していると extract-group-patch の生成と git apply --cached が
 //   破綻する。不変な context 行 (= changedLines に含まれない行) は複数 group で重複して表示するのは
 //   OK だが、変更行は必ず 1 group の所有でなければならない。

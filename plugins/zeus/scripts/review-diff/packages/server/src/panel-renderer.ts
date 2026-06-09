@@ -8,7 +8,7 @@
 //   - subpath import (`diff/lib/diff/array.js`) で bundle size を抑える。
 //     jsdiff は line/word/character/css/json など多くのアルゴリズムを含むが、本実装は array のみ使う。
 //   - cross-file 異言語 (例: .js → .ts) を許容するため asIsLanguage / toBeLanguage を別持ち。
-//     split mode (v4.8.0 で唯一の表示形態) では左右それぞれで別言語ハイライトする。
+//     split mode (唯一の表示形態) では左右それぞれで別言語ハイライトする。
 //   - ranges 不一致 (asIs.ranges.length !== toBe.ranges.length) を許容するため、
 //     pairCount = max(...)。余った側は空 range として segment を生成 (片側 empty 行が出る)。
 

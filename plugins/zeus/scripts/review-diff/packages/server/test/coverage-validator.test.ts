@@ -17,7 +17,7 @@ function makeChange(overrides: Partial<FileChange> & { path: string }): FileChan
     hasContentChange: overrides.hasContentChange ?? false,
     hasStructuralChange: overrides.hasStructuralChange ?? false,
     eolOnlyChange: overrides.eolOnlyChange ?? false,
-    // v4.12.0: FileChange に hunks 必須化。coverage 検証では hunks を直接使わないので
+    // FileChange に hunks 必須化。coverage 検証では hunks を直接使わないので
     // 既存テストは空配列でフォールバック。新規 validator (range-symmetry / extract-group-patch)
     // のテストでは override で実 hunk を渡す。
     hunks: overrides.hunks ?? [],

@@ -1,4 +1,4 @@
-// Vite dev サーバー用のサンプル payload (v4.7.0 panel model)。
+// Vite dev サーバー用のサンプル payload (panel model)。
 // 本番は CLI が renderPanel で segments を組み立てるが、dev では手書きで小さい panel を 2-3 件用意する。
 // レイアウト / drag-select / split↔unified トグル / Reviewed の確認用。
 

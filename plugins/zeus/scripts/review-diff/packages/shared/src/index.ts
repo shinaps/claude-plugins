@@ -13,7 +13,7 @@ export function countLines(text: string): number {
 }
 
 // =====================================================================
-// v4.7.0 panel model ヘルパ
+// panel model ヘルパ
 //
 // DOM data-* 属性の値は HTML5 仕様上は preserve されるが、既存 data-line-number 等が
 // 全小文字なので慣習統一として 'asis'/'tobe' を使う。TS 内部は Side ('asIs' | 'toBe')

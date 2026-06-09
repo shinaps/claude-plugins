@@ -11,7 +11,7 @@ export {
 } from './server'
 export { parseDiff, langForPath, type FileChange, type Hunk } from './diff-parser'
 
-// v4.7.0 panel model 系
+// panel model 系
 export {
   validateSummarySchema,
   detectLegacy,

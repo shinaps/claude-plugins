@@ -1,7 +1,7 @@
 // Panel の上部に出るヘッダ。
 //   - intent (太字)
 //   - asIs.file → toBe.file (片側だけなら片側、cross-file なら矢印で並べる)
-//   - v4.12.0 (refinement): onCollapse / onExpand のどちらかが渡されたら右端にボタンを表示。
+//   - onCollapse / onExpand のどちらかが渡されたら右端にボタンを表示。
 //       - 通常表示 (expanded) では onCollapse → chevron up アイコン (Hide)
 //       - collapsed 状態では onExpand + totalRowsHint → "Show N rows" ボタン
 //     どちらの状態でも panel タイトル + ファイル名は維持され、行数は Show diff ボタンに集約。

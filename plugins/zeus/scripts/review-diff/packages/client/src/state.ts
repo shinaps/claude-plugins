@@ -13,7 +13,7 @@ export function getToken(): string {
   return new URL(location.href).searchParams.get('token') ?? ''
 }
 
-// 行コメントの内部キー (v4.7.0 panel model)。
+// 行コメントの内部キー (panel model)。
 //   単一行:   `${panelId}\x1f${side}\x1f${number}`
 //   行範囲:   `${panelId}\x1f${side}\x1f${number}\x1f${endNumber}`
 //

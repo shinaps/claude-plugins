@@ -1,8 +1,8 @@
-// Panel のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする (v4.7.1 grid refactor)。
+// Panel のドラッグ範囲選択 / 単一クリック挙動を実機相当でテストする (grid refactor)。
 //
-// 旧 v4.7.0 (table 版) からの変更点:
-//   - DOM 構造が <table>/<tr>/<td> → <div class="panel-grid"> + <div class="code-row"> + cell に置換
-//   - panelTableRef → panelContainerRef (HTMLDivElement)
+// DOM 構造 / セレクタ前提:
+//   - <div class="panel-grid"> + <div class="code-row"> + cell 構造 (旧 <table>/<tr>/<td> ではない)
+//   - panelContainerRef は HTMLDivElement
 //   - セレクタは tagless: `[data-panel-id]` / `[data-side]` / `.cell-ln` / `.cell-code` / `.code-row`
 //   - split mode では asIs row と toBe row が別々の panel-side wrapper 配下に存在する
 //     (panel-side-asis / panel-side-tobe で per-side 独立 scroll container を実現するため)
@@ -81,7 +81,7 @@ function renderPanel(panelId = 'p1'): { panel: RenderedPanel; handlers: SpyHandl
   return { panel, handlers }
 }
 
-describe('Panel drag select (v4.7.1 grid)', () => {
+describe('Panel drag select (grid)', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     try { localStorage.clear() } catch { /* noop */ }

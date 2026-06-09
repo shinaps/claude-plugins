@@ -1,7 +1,7 @@
-// summary.json (v4.7.0 panel schema) の検証 + panelId 補完 + 重複 suffix 付与。
+// summary.json (panel schema) の検証 + panelId 補完 + 重複 suffix 付与。
 //
 // 設計判断:
-//   - 旧 v4.6 schema (groups[].files: GroupFileRef[]) は明示的に reject し、
+//   - 旧 schema (groups[].files: GroupFileRef[]) は明示的に reject し、
 //     SKILL.md Phase 4 の新形式に誘導する移行メッセージを stderr に出す。
 //     zod だと「files が無い」を「該当 field がない」エラーとしてしか表現できず、
 //     旧 schema ユーザーへの誘導文を出せない。そのため zod 前に手書きの detectLegacy で先回り判定する。
@@ -62,7 +62,7 @@ const SummarySchema = z.object({
 
 export type LegacyDetection = { legacy: boolean; reasons: string[] }
 
-// v4.6 schema 検出: groups[].files (GroupFileRef[]) が存在すれば旧 schema と確定する。
+// 旧 schema 検出: groups[].files (GroupFileRef[]) が存在すれば旧 schema と確定する。
 // schemaVersion 不在も追加サインだが、zod fail で十分検出できるため legacy 判定の主因にはしない。
 export function detectLegacy(raw: unknown): LegacyDetection {
   if (typeof raw !== 'object' || raw === null) return { legacy: false, reasons: [] }
@@ -87,7 +87,7 @@ export function validateSummarySchema(raw: unknown): ValidatedSummary {
   if (legacy.legacy) {
     const detail = legacy.reasons.map(r => `  - ${r}`).join('\n')
     throw new SchemaError(
-      'summary.json is in legacy v4.6 format and is no longer supported by /zeus:review-diff v4.7.0.\n' +
+      'summary.json is in legacy format and is no longer supported by /zeus:review-diff.\n' +
       `Detected legacy fields:\n${detail}\n\n` +
       'Migration: replace "groups[].files: GroupFileRef[]" with "groups[].panels: Panel[]" ' +
       '(see plugins/zeus/skills/review-diff/SKILL.md Phase 4 for the new schema).\n',

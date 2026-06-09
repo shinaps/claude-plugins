@@ -26,7 +26,7 @@ test('parseDiff: simple modified file → FileChange', () => {
   expect(f.hasStructuralChange).toBe(false)
   expect(f.eolOnlyChange).toBe(false)
   expect(f.language).toBe('typescript')
-  // v4.12.0: hunks の境界情報も emit する
+  // hunks の境界情報も emit する
   expect(f.hunks.length).toBeGreaterThan(0)
   expect(f.hunks[0]).toMatchObject({
     fromStart: expect.any(Number),

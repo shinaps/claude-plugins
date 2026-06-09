@@ -1,4 +1,4 @@
-// 上部の Linear 風タブナビ (v4.12.0)。
+// 上部の Linear 風タブナビ。
 //   - Activity: AI Review Report (overall サマリ + group インデックス)
 //   - Guide   : panel ベースの stacked-group レビュー UI (主要ワークフロー)
 //   - Diff    : raw unified diff をそのまま表示 (グループ化無し、git diff の生コピー)

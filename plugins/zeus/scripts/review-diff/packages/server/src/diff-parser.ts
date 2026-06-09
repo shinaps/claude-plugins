@@ -45,13 +45,13 @@ type AnyFile = {
 }
 
 // =====================================================================
-// v4.7.0 新 API: FileChange
+// FileChange API
 // =====================================================================
 
 // panel-renderer / coverage-validator / validateRangeSymmetry が必要とする情報集合。
 // panel-renderer 自体は hunks を使わず asIs/toBe の raw source + ranges から jsdiff で
 // 改めて LCS を取るが、validateRangeSymmetry が「不変行が hunks マッピング後 toBe のどの行に
-// なるか」を逆算するために hunks を持たせる必要がある (v4.12.0)。
+// なるか」を逆算するために hunks を持たせる必要がある。
 export type FileChange = {
   path: string
   oldPath?: string

@@ -1,4 +1,4 @@
-// shared 型定義 (v4.12.0 stacked PR 風 group ベース承認モデル)。client/server/cli が import する。
+// shared 型定義 (stacked PR 風 group ベース承認モデル)。client/server/cli が import する。
 // 設計判断:
 //   - panel 単位の Reviewed 概念を廃止し、group 単位の Approve / Request Changes に統合
 //   - 全体の Approve/Reject ボタンは廃止、Submit Review 1 つに統一
@@ -71,7 +71,7 @@ export type SummaryJson = {
 }
 
 // =====================================================================
-// Comment / Result (v4.12.0 stacked group モデル)
+// Comment / Result (stacked group モデル)
 // =====================================================================
 
 // group 単位の Approve / Request Changes 状態。
@@ -79,7 +79,7 @@ export type SummaryJson = {
 // 全 group decision 確定時のみ active 化する仕様のため)。
 export type GroupDecision = 'approved' | 'request-changes'
 
-// Comment shape (v4.12.0): scope は group か line の 2 択。overall は廃止。
+// Comment shape: scope は group か line の 2 択。overall は廃止。
 //   - scope: { type: 'group', groupId } → group ヘッダのコメント欄に書かれた本文
 //   - scope: { type: 'line', ... }      → panel 内の行 (または範囲) コメント
 //     file を併記する理由は、grep で `jq '.comments[] | select(.scope.file=="x.ts")'` を
@@ -99,7 +99,7 @@ export type Comment = {
       }
 }
 
-// v4.12.0: decision は 'submit' / 'timeout' / 'regen-group' の 3 値。
+// decision は 'submit' / 'timeout' / 'regen-group' の 3 値。
 //   全体の Approve / Reject は廃止し、合否は groupDecisions の分布から SKILL.md が判定する
 //   (全 approved → 全 commit / 全 RC → reject ルート / mixed → 先頭から approved を commit、
 //    最初の RC で break、残り un-staged)。
@@ -120,12 +120,12 @@ export type ResultJson = {
       asIs?: { file: string; ranges: DisplayRange[] }
       toBe?: { file: string; ranges: DisplayRange[] }
     }>
-    // v4.14.0: ユーザーが inline textarea に書いた自由文 (任意)。
+    // ユーザーが inline textarea に書いた自由文 (任意)。
     // SKILL.md 側で AI への指示として活用する: 「foo() の caller も見たい」「呼び出しチェーン全部」など。
     // 空文字や未入力なら省略 (= 旧挙動の「range +5〜10 行拡張だけ」と同等)。
     note?: string
   }
-  // v4.14.0: Submit 時に SubmitBar の textarea で書いた全体コメント (任意)。
+  // Submit 時に SubmitBar の textarea で書いた全体コメント (任意)。
   // SKILL.md 側で commit メッセージ生成や次アクション判断の参考にする。空文字なら省略。
   submitNote?: string
   // sessionStorage に残っていた未保存 draft 本文。key: `draft:${panelId}:${side}:${num}[:${end}]`
@@ -133,7 +133,7 @@ export type ResultJson = {
   lineCommentDrafts?: Record<string, string>
 }
 
-// v4.12.0: SKILL.md (bash) が CLI 再起動間で状態を中継するための JSON shape。
+// SKILL.md (bash) が CLI 再起動間で状態を中継するための JSON shape。
 //   CLI の readRestoreState が defensive に読み込む。client/server 両方から参照できるよう
 //   shared に export しておく (旧版は cli.ts ローカル型だった)。
 export type RestoreState = {
@@ -170,8 +170,7 @@ export type SourcesUnavailable =
 
 export type RenderedPanel = Panel & {
   // cross-file の異言語ペア (例: .js → .ts) を split 表示で左右別言語ハイライトするため別持ち。
-  // v4.8.0 で unified mode 廃止、split 一本化したが「将来の zoom-in view 等で別言語別表示」を
-  // するなら同じフィールド構造が再利用できるので残す。
+  // 「将来の zoom-in view 等で別言語別表示」をするなら同じフィールド構造が再利用できる。
   asIsLanguage?: string
   toBeLanguage?: string
   segments: RenderedSegment[]
@@ -182,7 +181,6 @@ export type RenderedPanel = Panel & {
 
 // CLI が summary.groups[i] を 1:1 で変換した中間表現。
 // groupId は cli.ts 側で `g${index}` を生成して載せる (W-1: title 重複でも衝突しない安定 ID)。
-// v4.8.0 で Channels notification 経路が消えたので、旧 groupTitle (notification 属性用) は廃止。
 export type RenderedGroup = {
   groupId: string
   title: string
@@ -195,16 +193,16 @@ export type ClientPayload = {
   summary: SummaryJson
   prMeta: PrMeta | null
   groups: RenderedGroup[]
-  // 全 panel の panelId を flatten (nav scroll-spy 用)。Reviewed 集計は v4.12.0 で廃止。
+  // 全 panel の panelId を flatten (nav scroll-spy 用)。Reviewed 集計は廃止済み。
   allPanels: string[]
   // staged モードなら true。PR モードで gh CLI 経由で base/head blob が取れたら true。
   expandable: boolean
-  // v4.12.0 (refinement): Diff タブ用の「GitHub 風 file-by-file 差分」レンダー済み panel 集合。
+  // Diff タブ用の「GitHub 風 file-by-file 差分」レンダー済み panel 集合。
   // 各要素は「1 ファイル = 1 panel (full file range)」で、Guide タブの AI グルーピングを介さず
   // 「すべての変更ファイルを順に俯瞰する」用途。Panel コンポーネントを再利用するので shiki ハイライト
   // と split-side-by-side、行コメント機能はそのまま使える。
   rawPanels: RenderedPanel[]
-  // v4.12.0: context+ の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
+  // context+ の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
   // restore.json を pre-filter して ClientPayload に注入する。初回起動では全て undefined。
   //   - initialGroupDecisions  : group ごとの Approve / Request Changes 状態を復元
   //   - initialGroupComments   : group コメント欄の textarea 値を復元
@@ -214,7 +212,7 @@ export type ClientPayload = {
   initialGroupComments?: Record<string, string>
   initialComments?: Comment[]
   initialLineCommentDrafts?: Record<string, string>
-  // v4.12.0 (refinement): panel 読了マーカ (左 nav の dot click でトグルする視覚アシスト)。
+  // panel 読了マーカ (左 nav の dot click でトグルする視覚アシスト)。
   // group decision の真の評価軸とは別軸の「どこまで読んだか」追跡。regen-group で復元する。
   initialReviewedPanels?: string[]
 }

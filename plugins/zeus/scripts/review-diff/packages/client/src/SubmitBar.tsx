@@ -1,6 +1,6 @@
 // 右下 floating Submit Review バー。
 //
-// 設計判断 (v4.14.0):
+// 設計判断:
 //   - **未判定がある時は 2 ボタン (Reject / Approve)**: 未判定のまま submit すると「動作確認 OK で
 //     commit ゼロ」になるので、ユーザーが「approve として送ったのか reject として送ったのか」を
 //     SKILL.md 側に伝えるために意思を明示させる。

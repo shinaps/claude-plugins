@@ -1,4 +1,4 @@
-// v4.7.0 panel model 用の行コメント入力フォーム。
+// panel model 用の行コメント入力フォーム。
 //
 // 旧 DiffTable 内 NewCommentForm との違い:
 //   - sessionStorage に draft を退避する (panelId + side + number で key 生成)

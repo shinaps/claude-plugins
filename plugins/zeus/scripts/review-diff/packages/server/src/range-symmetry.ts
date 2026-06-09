@@ -4,7 +4,7 @@
 // 背景:
 //   panel-renderer は asIs/toBe ranges を slice してから jsdiff の LCS で再構築するため、
 //   asIs と toBe の不変行が論理的に対応していないと、本来 unchanged な行が「deletion / addition」として
-//   赤緑に表示される事故が起きる (v4.11.0 以前は SKILL.md で「両側実測必須」と注意喚起のみ)。
+//   赤緑に表示される事故が起きる。
 //   このバリデータは AI 出力の summary.json をゲートで弾くことで、UI 上の嘘ハイライトを根本防止する。
 //
 // アルゴリズム:

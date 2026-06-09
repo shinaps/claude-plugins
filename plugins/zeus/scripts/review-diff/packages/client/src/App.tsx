@@ -1,4 +1,4 @@
-// アプリのトップレベル (v4.12.0 stacked PR 風 group ベース承認モデル)。
+// アプリのトップレベル (stacked PR 風 group ベース承認モデル)。
 //
 // 設計判断:
 //   - groups[].panels[] を素直に並べる単一スクロール (Linear Guide タブ風)
@@ -89,7 +89,7 @@ export function App({ payload }: Props) {
     return m
   }, [payload.initialComments])
 
-  // v4.12.0 group decision state。
+  // group decision state。
   // panels.length === 0 の group は自動 approved 扱い (W-6): UI で decision 不要、
   // Submit active 条件もこれで満たす。restore が来てもこれより自動 approved を優先する。
   const [groupDecisions, setGroupDecisions] = useState<Record<string, GroupDecision | null>>(() => {
@@ -263,7 +263,7 @@ export function App({ payload }: Props) {
     setScrollTarget(panelId)
   }
 
-  // v4.12.0 (refinement) グループ間ナビゲーション: 左 nav の prev/next 矢印から呼ばれる。
+  // グループ間ナビゲーション: 左 nav の prev/next 矢印から呼ばれる。
   // index ベースで scrollIntoView を呼ぶ。groupsState の長さでクランプ済み前提だが防御的に。
   const onJumpToGroupIndex = useCallback((targetIndex: number) => {
     if (targetIndex < 0 || targetIndex >= groupsState.length) return
@@ -358,11 +358,11 @@ export function App({ payload }: Props) {
     }
   }
 
-  // v4.12.0 context+: 現状 state (group decisions + コメント + line comment drafts) を回収し、
+  // context+: 現状 state (group decisions + コメント + line comment drafts) を回収し、
   // decision='regen-group' で POST /result に送ってから window.close()。
   // SKILL.md 側がこれを受けて summary.json の panels[] を再生成 + restore JSON を Write して
   // Skill 再起動するループに繋がる。
-  // v4.14.0 note: 「どの context を追加してほしいか」の自由文。SKILL.md 側で AI への指示として活用。
+  // note: 「どの context を追加してほしいか」の自由文。SKILL.md 側で AI への指示として活用。
   const onRequestContext = useCallback(
     async (groupId: string, note?: string) => {
       if (regenPending || submitted) return
@@ -422,7 +422,7 @@ export function App({ payload }: Props) {
 
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
-    // パフォーマンス最適化 (v4.12.0): ドラッグ中だけ body に is-resizing-nav class を当て、
+    // パフォーマンス最適化: ドラッグ中だけ body に is-resizing-nav class を当て、
      // CSS 側で .group-section / .group-nav-wrapper に will-change: grid-template-columns を付与。
      // これにより Chrome が grid 再計算を独立 layer に隔離し、reflow コストが下がる。
      // ドラッグ終了時に class を外して will-change を消す (常時付けると memory コストが上がる)。
@@ -430,7 +430,7 @@ export function App({ payload }: Props) {
     resizer.classList.add('dragging')
     try { resizer.setPointerCapture(pointerId) } catch { /* noop */ }
 
-    // パフォーマンス最適化 (v4.12.0): drag 開始時の section.left を 1 度だけキャッシュ。
+    // パフォーマンス最適化: drag 開始時の section.left を 1 度だけキャッシュ。
     // ドラッグ中に getBoundingClientRect() を呼ぶと「直前の setProperty 後のスタイル更新」を
     // 完了させるための forced sync layout が rAF callback 内で発生し、frame budget を食い潰す。
     // 座標は drag 中変わらないので start でキャッシュすれば flush は純粋に style write だけになる。
@@ -444,7 +444,7 @@ export function App({ payload }: Props) {
       const next = pendingClientX - cachedSectionLeft
       const clamped = Math.max(NAV_WIDTH_MIN, Math.min(NAV_WIDTH_MAX, next))
       const rounded = Math.round(clamped)
-      // パフォーマンス最適化 (v4.12.0): 同じ px 値なら setProperty を skip (style recalc を起こさない)。
+      // パフォーマンス最適化: 同じ px 値なら setProperty を skip (style recalc を起こさない)。
       // 1px 未満の微動でも cascade が走るのを防ぐ。
       if (rounded === lastWrittenPx) return
       lastWrittenPx = rounded
@@ -580,7 +580,7 @@ export function App({ payload }: Props) {
   // Guide タブの AI グルーピングを介さず、git diff の出力ファイル順にすべて並べる。
   // PanelBlock は Guide タブと完全同一実装 (lazyHighlight + intrinsic-size + sticky header)。
   //
-  // v4.12.0 (refinement): 左 sticky nav にファイル一覧 (intent + +N/-M 差分カウント) を配置。
+  // 左 sticky nav にファイル一覧 (intent + +N/-M 差分カウント) を配置。
   // GitHub PR の Files Changed タブと同じ感覚で「全ファイル俯瞰 + クリックで該当ファイルへジャンプ」できる。
   // 差分カウントは payload.rawPanels の segments を walk して addition/deletion 行数を集計。
   const jumpToRawPanel = useCallback((panelId: string) => {

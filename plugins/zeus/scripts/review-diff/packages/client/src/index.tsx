@@ -79,7 +79,7 @@ try {
 // ログする。出力例: target=SPAN(.text-token) td-closest=Yes data-side=right data-line=42
 window.addEventListener('pointerdown', (e) => {
   const t = e.target as HTMLElement | null
-  // v4.7.1: <table>/<td> → <div class="cell-code"/.cell-ln> grid 化に伴いセレクタ更新。
+  // <div class="cell-code"/.cell-ln> grid 構造に対応したセレクタ (旧 <table>/<td> ではない)。
   // [data-side][data-line-number] で gutter / code どちらの cell でも当たる。
   const codeCell = t?.closest?.('.cell-code[data-side]') as HTMLElement | null
   const cell = t?.closest?.('[data-side][data-line-number]') as HTMLElement | null

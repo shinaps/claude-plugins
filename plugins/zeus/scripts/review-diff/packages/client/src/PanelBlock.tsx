@@ -1,4 +1,4 @@
-// 1 Panel をラップする最小コンテナ (v4.12.0)。
+// 1 Panel をラップする最小コンテナ。
 // 役割:
 //   - viewport 近接時のみ shiki ハイライトを有効化する lazy 制御 (IntersectionObserver)
 //   - data-panel-id 属性を持って GroupNav の scroll-spy / jump がここを anchor にする
@@ -7,9 +7,8 @@
 //   - defaultCollapsed=true を受けたら初期 collapsed 状態で開く (Show diff ボタンで個別 expand)
 //     Approve 済み group の panels / 巨大 file (raw diff の build artifact 等) に使う
 //
-// v4.12.0 改修:
-//   panel ごとの Reviewed チェックは廃止 (group 単位 Approve/Request Changes に統合)。
-//   Guide / Diff 両タブで同一の lazy highlight 戦略を使う。
+// panel ごとの Reviewed チェックは廃止 (group 単位 Approve/Request Changes に統合)。
+// Guide / Diff 両タブで同一の lazy highlight 戦略を使う。
 
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
@@ -57,12 +56,12 @@ export function PanelBlock(props: PanelBlockProps) {
   const [userOverride, setUserOverride] = useState<'expand' | 'collapse' | null>(null)
   const isCollapsed = userOverride === 'collapse' || (userOverride === null && defaultCollapsed === true)
 
-  // v4.12.0 (refinement): collapse / expand のクリック時に View Transitions API で crossfade。
+  // collapse / expand のクリック時に View Transitions API で crossfade。
   // 非対応ブラウザ (Firefox 一部バージョンなど) では即時 state 更新フォールバック。
   // flushSync で state 更新を同期 commit して、startViewTransition の前後で snapshot が
   // 正しく撮られるようにする (concurrent rendering を待たない)。
   //
-  // パフォーマンス + UX (v4.12.0 refinement):
+  // パフォーマンス + UX:
   // collapse 時にスティッキー header が見えていた viewport 位置を保持する scroll anchoring。
   // 「スクロールして body 途中で sticky になっていた状態で Hide」を押すと、ナイーブには
   // panel-block が大きく縮小して下のコンテンツが viewport の上半分に移動してしまう。

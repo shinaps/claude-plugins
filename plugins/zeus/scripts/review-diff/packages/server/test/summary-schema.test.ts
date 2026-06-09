@@ -24,13 +24,13 @@ const validBase = {
   ],
 }
 
-test('1. v4.7.0 valid schema passes and returns summary', () => {
+test('1. valid schema passes and returns summary', () => {
   const { summary } = validateSummarySchema(validBase)
   expect(summary.groups[0].panels[0].panelId).toBe('mypanel')
   expect(summary.mode).toBe('staged')
 })
 
-test('2. legacy v4.6 schema (groups[].files) is rejected with migration message', () => {
+test('2. legacy schema (groups[].files) is rejected with migration message', () => {
   const legacy = {
     mode: 'staged',
     pr: null,
@@ -43,7 +43,7 @@ test('2. legacy v4.6 schema (groups[].files) is rejected with migration message'
   try {
     validateSummarySchema(legacy)
   } catch (e) {
-    expect((e as Error).message).toContain('legacy v4.6')
+    expect((e as Error).message).toContain('legacy')
     expect((e as Error).message).toContain('SKILL.md Phase 4')
   }
 })

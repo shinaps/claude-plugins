@@ -162,7 +162,7 @@ authenticated rate limit は 5000 req/hour なので通常のレビューで枯�
 - 「ここをレビューしてほしい」「ここはリスク高」のような **人間に向けた注釈テキストは書かない**。
   そういう情報はコード自体で語れていなければならない。
 
-#### group の並び順は「読書順 = レビュー順」 (v4.12.0 重要)
+#### group の並び順は「読書順 = レビュー順」 (重要)
 
 groups[] は **「人間が読む順番」** で並べる。intent ベースの topic 分類 (型刷新 / 実装 / テスト 等) ではなく、
 **読みやすさ** を優先して並べる:
@@ -173,7 +173,7 @@ groups[] は **「人間が読む順番」** で並べる。intent ベースの 
 panel 内も同様、「最初に読むべき panel」を group の先頭に置く。
 レビュアーが上から順に読むだけで設計意図がメンタルモデルに組み上がるよう、順序自体を語りに使う。
 
-#### 同一変更行排他原則 (v4.12.0 重要)
+#### 同一変更行排他原則 (重要)
 
 stacked PR 風で **group 単位 commit** するため、同じ git 変更行を複数 group が touch すると
 commit-per-group が破綻する。CLI が `validatePanelExclusivity` で検出して fail させる。
@@ -191,7 +191,7 @@ Panel exclusivity validation failed. The same changed line is claimed by multipl
 ```
 → 該当行を「どちらの group のテーマに属するか」判断して、片方の panel ranges から外す。
 
-#### asIs / toBe ranges の対称性 (v4.12.0 重要)
+#### asIs / toBe ranges の対称性 (重要)
 
 panel.asIs.ranges と panel.toBe.ranges に含まれる **不変行 (= 変更されなかった行)** は、
 git diff の hunk から逆算した行マッピングで「両側に対応行が含まれている」状態にしなければならない。
@@ -211,7 +211,7 @@ CLI が `validateRangeSymmetry` で検出して fail させる。
 2. **その同じ論理ブロックが toBe で何行〜何行になっているか** を、変更後ファイルを Read で再度実測
 3. 変更行 (deletion/addition) は panel ごとに分け、context 行は両側ペアになるよう調整
 
-#### groups[] の配列順は絶対に変えない (v4.12.0 重要)
+#### groups[] の配列順は絶対に変えない (重要)
 
 regen-group 後の再生成で `groups[]` の配列順を変えると `g${i}` キーが意味を失い、
 restore.json の `groupDecisions` / `groupComments` 復元が破綻する。
@@ -350,7 +350,7 @@ UI には 2 つの主要タブがある (評価軸は **Guide タブの group de
 - **Guide タブ**: AI が summary.json で指定した group / panel をそのままナラティブ順で表示。Approve / Request Changes と group コメント / 行コメントを付ける本番の評価面
 - **Diff タブ**: GitHub 風に「1 ファイル = 1 panel (file 全体表示)」で全変更ファイルを順に俯瞰するための補助面。grouping を介さない素の差分確認用で、行コメントは付けられるが decision には影響しない (CLI 内部で `rawPanels` として別系統で構築される)
 
-#### Comment / Result shape (v4.12.0)
+#### Comment / Result shape
 
 `comments[]` の各要素は scope union 構造:
 - `{ "body": "...", "scope": { "type": "group", "groupId": "g0" } }` — group コメント
@@ -375,9 +375,9 @@ ResultJson 全体:
   "regenGroup": {            // decision='regen-group' の時のみ
     "groupId": "g2",
     "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ],
-    "note": "foo() の caller も見たい"   // v4.14.0: 任意。ユーザーが inline textarea で書いた自由文
+    "note": "foo() の caller も見たい"   // 任意。ユーザーが inline textarea で書いた自由文
   },
-  "submitNote": "commit メッセージにはこの観点を含めて",  // v4.14.0: decision='submit' 時に SubmitBar textarea で書いた全体コメント (任意)
+  "submitNote": "commit メッセージにはこの観点を含めて",  // decision='submit' 時に SubmitBar textarea で書いた全体コメント (任意)
   "lineCommentDrafts": {      // regen-group の時に restore で活きる、それ以外は無視可
     "draft:p1:asis:42": "draft body..."
   }
@@ -392,7 +392,7 @@ ResultJson 全体:
 - 行コメントの side は **`asIs` / `toBe`** (camelCase)
 - 行コメントの `file` は panel の対応する側 (`asIs.file` または `toBe.file`) を自動で入れる
 
-### Phase 6: 結果分岐 (v4.12.0)
+### Phase 6: 結果分岐
 
 stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WORK_DIR}/result.json` にも自動保存されている。
 
@@ -503,7 +503,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
 3. **work-dir はクリーンアップしない** (summary.json / diff.patch は再利用、restore.json を作る)。
 4. **summary.json を Read → 該当 group の panels[] を再生成** して Write:
    - `currentRanges` を参考に、各 panel の `asIs.ranges` / `toBe.ranges` を **±5〜10 行拡張**
-   - **v4.14.0 `note` (自由文) が来ていれば、それを最優先指針として panel 構成を決める**:
+   - **`note` (自由文) が来ていれば、それを最優先指針として panel 構成を決める**:
      - 例: 「foo() の caller も見たい」→ caller を含む別 file の関数領域を panel として追加
      - 例: 「呼び出しチェーン全部」→ AI がコードを追跡して関連 panel を group に挿入
      - 例: 「テストも見せて」→ 対応する test file を新規 panel として追加
@@ -512,7 +512,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
    - **`groups[]` の配列順は絶対に変えない** (group の挿入・削除・入れ替え禁止)
    - 他 group の panels は触らない (cross-group 影響を作らない)
    - panelId は安定 ID (intent 除外 hash) を保持するため、asIs/toBe の file を変えない限り変わらない
-5. **`restore.json` を Write** で書き出す (v4.12.0 shape):
+5. **`restore.json` を Write** で書き出す:
    ```json
    {
      "groupDecisions": { "g0": "approved", "g1": "approved" },  // 該当 group (g2) の decision はクリア

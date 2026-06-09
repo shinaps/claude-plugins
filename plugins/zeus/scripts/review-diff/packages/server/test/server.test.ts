@@ -2,9 +2,8 @@
 // listen 不要なものは createTestApp + app.fetch() で書く (高速、ポート衝突無し)。
 // 実 port (port 0) + serve() の経路は startServer 経由の e2e を 1 件残す。
 //
-// v4.8.0: Channels endpoint テスト (/feedback, /events/browser, /events/channel, /channel/inbox,
-// cross-token negative, SSE e2e) は Channels インフラ削除に伴い全削除。代わりに POST /result
-// で decision='regen-group' を受け取れることを確認する e2e を 1 件追加。
+// POST /result で decision='regen-group' を受け取れることを確認する e2e を 1 件含む。
+// (Channels インフラ (/feedback, /events/*, /channel/inbox) は廃止済みなので関連テストは無い。)
 
 import { test, expect } from 'vitest'
 import { createTestApp, startServer } from '@zeus/review-diff-server'
@@ -103,7 +102,7 @@ test('POST /result with valid token + Origin resolves waitResult (e2e via serve)
   expect(result.groupDecisions).toEqual({ g0: 'approved' })
 })
 
-// v4.8.0: POST /result で decision='regen-group' を素通しで受け取れることを確認する。
+// POST /result で decision='regen-group' を素通しで受け取れることを確認する。
 // server 側は decision の値に依らず ResultJson を resolve するだけなので、shape の
 // passthrough と CLI 側で分岐できることを担保するためのテスト。
 test('POST /result with decision=regen-group passes through to waitResult', async () => {

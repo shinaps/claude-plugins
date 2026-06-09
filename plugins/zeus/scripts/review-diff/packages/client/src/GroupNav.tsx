@@ -1,11 +1,11 @@
-// 1 グループの左 sticky ペイン (v4.12.0 stacked group モデル)。
+// 1 グループの左 sticky ペイン (stacked group モデル)。
 //
-// v4.12.0 改修:
-//   - Reviewed progress meter を廃止 (panel 単位 Reviewed 概念ごと撤廃)
+// 構成方針:
+//   - Reviewed progress meter は廃止 (panel 単位 Reviewed 概念ごと撤廃)
 //   - 代わりに group ヘッダ右隅に decision バッジ (APPROVED / CHANGES / NO PANELS) を表示
-//   - panel list の下に「decision section」を新設: group コメント textarea + Approve / Request Changes
+//   - panel list の下に「decision section」を配置: group コメント textarea + Approve / Request Changes
 //     ボタンを colocate。ユーザーは「左で評価 / 右で読む」レイアウトで decision を完結できる
-//   - context+ ボタンは維持 (close-relaunch ループの起点として regen-group を発火)
+//   - context+ ボタンは close-relaunch ループの起点として regen-group を発火
 //
 // 構成 (上から):
 //   1. eyebrow: GROUP の小さなラベル + 右上に display number "01/04" + decision バッジ
@@ -31,23 +31,23 @@ type Props = {
   description: string
   panels: RenderedPanel[]
   onJumpToPanel: (panelId: string) => void
-  // v4.8.0 context+ (close-relaunch): regen 中は全 group の context+ ボタンを止める。
-  // v4.14.0 note: 任意の自由文。「どの context を追加してほしいか」を AI に伝える。
+  // context+ (close-relaunch): regen 中は全 group の context+ ボタンを止める。
+  // note: 任意の自由文。「どの context を追加してほしいか」を AI に伝える。
   regenPending: boolean
   onRequestContext: (groupId: string, note?: string) => void
-  // v4.12.0 group decision + comment
+  // group decision + comment
   decision: GroupDecision | null
   comment: string
   onDecisionChange: (groupId: string, next: GroupDecision | null) => void
   onCommentChange: (groupId: string, body: string) => void
   // regen 中など、Approve/RC ボタンも操作不可にしたい時 true
   submitDisabled: boolean
-  // v4.12.0 (later): panel ごとの「読了マーカ」。group decision とは別軸の視覚アシスト。
+  // panel ごとの「読了マーカ」。group decision とは別軸の視覚アシスト。
   // 左 nav の dot indicator を click で toggle して、ユーザーが「どこまで読んだか」を追えるようにする。
   // ResultJson には載せない (内部 UI state のみ、regen-group では restore 対象)。
   reviewedPanels: Set<string>
   onToggleReviewed: (panelId: string) => void
-  // v4.12.0 (refinement): グループ間ナビゲーション。eyebrow の数字横に prev/next 矢印を出して
+  // グループ間ナビゲーション。eyebrow の数字横に prev/next 矢印を出して
   // 「次の group へスクロール」をワンクリックでできるようにする。先頭/末尾 group では片側 disabled。
   onJumpToGroupIndex: (targetIndex: number) => void
 }
@@ -121,7 +121,7 @@ export function GroupNav({
             <span className="text-sm mx-[3px] text-text-dim opacity-60">/</span>
             <span className="text-sm text-text-dim">{tot}</span>
           </span>
-          {/* v4.12.0 (refinement) グループ間ナビゲーション。
+          {/* グループ間ナビゲーション。
               eyebrow 直後に prev/next 矢印を置いて scroll を 1 click でやれるようにする。
               先頭/末尾の group では片側を disabled (cursor not-allowed + opacity 落とし)。 */}
           <div className="inline-flex gap-0.5 ml-auto items-center" role="group" aria-label="Jump between groups">
@@ -166,10 +166,10 @@ export function GroupNav({
         ) : null}
       </header>
 
-      {/* v4.8.0: context+ は close-relaunch ループの起点。クリックで現状 state を回収して
+      {/* context+ は close-relaunch ループの起点。クリックで現状 state を回収して
           CLI を終了させ、SKILL.md 側で summary.json を再生成してから Skill を再起動する。
           regenPending=true 中は他 group も含め全ての context+ を disable する。
-          v4.14.0: クリックで inline textarea が開き、「どの context を追加してほしいか」を自由文で
+          クリックで inline textarea が開き、「どの context を追加してほしいか」を自由文で
           AI に伝えられる (空文字なら旧挙動 = range +5〜10 行拡張だけ)。 */}
       <div className="mb-4" role="group" aria-label="Request more context">
         {!ctxExpanded ? (
@@ -258,7 +258,7 @@ export function GroupNav({
         </nav>
       ) : null}
 
-      {/* v4.12.0 decision section: panels=0 の group は disable + no-panels 表示
+      {/* decision section: panels=0 の group は disable + no-panels 表示
           (ユーザーは何を見ずに decide するのかわからないので、自動 approved 扱いを App 側で行う) */}
       {/* group-decision-section BEM の `margin-top: auto` は flex column 親 (.group-nav) で必要だったが、
           ここでは utility `mt-auto` で代替する。残りは utility 化。 */}

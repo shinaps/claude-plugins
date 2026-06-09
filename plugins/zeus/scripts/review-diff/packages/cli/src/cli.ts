@@ -1,19 +1,18 @@
-// CLI エントリ (v4.8.0 panel model)。
+// CLI エントリ (panel model)。
 //
 // 呼ばれ方:  node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]
 //
-// v4.8.0 で Channels インフラを全廃したので、ACTIVE_DIR / sessionId / browserToken /
-// channelToken / SIGINT cleanup hook は消滅した。代わりに --restore-state を追加し、
-// SKILL.md が close-relaunch ループで前回の Reviewed + line comments + 未保存 draft を
-// 注入できるようにしてある。--restore-state を知らない旧 SKILL.md からの fallback 互換も
-// parseArgs の strict:false で吸収する。
+// Channels インフラ (ACTIVE_DIR / sessionId / browserToken / channelToken / SIGINT cleanup hook) は
+// 存在しない。代わりに --restore-state を持ち、SKILL.md が close-relaunch ループで前回の
+// Reviewed + line comments + 未保存 draft を注入できるようにしてある。--restore-state を
+// 知らない SKILL.md からの fallback 互換も parseArgs の strict:false で吸収する。
 //
 // stdout / stderr 分離方針 (継続):
 //   呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
 //   情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
 //
-// v4.8.0 pipeline:
-//   1. validateSummarySchema (zod + legacy 検出): legacy v4.6 は migration メッセージ付きで exit 1
+// pipeline:
+//   1. validateSummarySchema (zod + legacy 検出): legacy schema は migration メッセージ付きで exit 1
 //   2. parseDiff → FileChange[] (asIs/toBe 別軸の changed lines)
 //   3. collectAllPanelPaths: panel が言及する全 file (asIs.file + toBe.file) + rename oldPath を union
 //   4. collectStagedSources / collectPrSources: 上記 paths の before/after 原文を取得
@@ -65,7 +64,7 @@ const TIMEOUT_MS = 9 * 60 * 1000 // Bash ツールが 10 分で打ち切るた�
 const PR_FETCH_CONCURRENCY = 8
 
 async function main(): Promise<void> {
-  // v4.12.0: subcommand dispatcher。argv[2] が 'extract-group-patch' なら部分 patch 生成モードに分岐。
+  // subcommand dispatcher。argv[2] が 'extract-group-patch' なら部分 patch 生成モードに分岐。
   // SKILL.md (bash) が `node dist/cli.js extract-group-patch --summary <...> --diff <...> --group g0`
   // のように呼ぶ。stdout に unified diff (--unidiff-zero 互換) を吐く。
   if (process.argv[2] === 'extract-group-patch') {
@@ -81,7 +80,7 @@ async function main(): Promise<void> {
       summary: { type: 'string' },
       diff: { type: 'string' },
       'pr-meta': { type: 'string' },
-      // v4.8.0: regen-group の close-relaunch で、SKILL.md が書き出した restore JSON
+      // regen-group の close-relaunch で、SKILL.md が書き出した restore JSON
       // (groupDecisions / groupComments / comments / lineCommentDrafts) を再起動後の CLI に渡すパス。
       // 初回起動 (regen ループの外) では未指定で OK。
       'restore-state': { type: 'string' },
@@ -95,7 +94,7 @@ async function main(): Promise<void> {
   }
 
   // 1. summary.json: parse → zod 検証 → legacy detection。
-  //    legacy v4.6 schema は SchemaError + migration メッセージで exit 1。
+  //    legacy schema は SchemaError + migration メッセージで exit 1。
   let rawSummary: unknown
   try {
     rawSummary = JSON.parse(readFileSync(values.summary as string, 'utf8'))
@@ -194,7 +193,7 @@ async function main(): Promise<void> {
     panels: g.panels.map(p => renderPanel(p, sources, summary.mode)),
   }))
 
-  // 7. restore state を読む (v4.12.0 close-relaunch)。
+  // 7. restore state を読む (close-relaunch)。
   //    restore.json は SKILL.md が前回 CLI 終了時に書き出すもので、shared RestoreState 型:
   //      { groupDecisions, groupComments, comments, lineCommentDrafts }
   //    CLI 側で comments を line scope と group scope に pre-split して ClientPayload に注入する
@@ -209,7 +208,7 @@ async function main(): Promise<void> {
   }
 
   // 8. HTML 生成 + サーバ起動
-  // v4.12.0 (refinement): Diff タブ用の「ファイル単位 panel」を別途構築する。
+  // Diff タブ用の「ファイル単位 panel」を別途構築する。
   // Guide タブが AI 指定の細粒度 panel を見せるのに対し、Diff タブはグルーピング無しの
   // 「git diff を file 順に俯瞰する」用途で、各 file の全行を 1 panel に詰める。
   // binary / rename-only / EOL-only は実用上見せても意味がないので skip。
@@ -279,7 +278,7 @@ async function main(): Promise<void> {
 
 // restore.json は SKILL が書き出す中間 JSON (shared RestoreState 型)。存在 / parse / shape 全てに defensive。
 // 1 つでも欠ければ「初回起動」と同じ扱い (initial* を undefined のまま) でフォールバック。
-// 旧 reviewedPanels field は v4.12.0 で廃止 (clean break)。残っていても無視する。
+// 旧 reviewedPanels field は廃止済み (clean break)。残っていても無視する。
 function readRestoreState(path: string | undefined): RestoreState | undefined {
   if (!path) return undefined
   try {
@@ -328,7 +327,7 @@ function splitRestoreComments(comments: Comment[]): {
   const lineComments: Comment[] = []
   const groupCommentsFromComments: Record<string, string> = {}
   for (const c of comments) {
-    // restore.json が破損していたり、旧 v4.11.0 以前の `scope: { type: 'overall' }` が
+    // restore.json が破損していたり、旧 `scope: { type: 'overall' }` が
     // 残っている可能性に備え、shape をここで検証する。typo や undefined は静かに skip。
     if (!c || typeof c !== 'object') continue
     if (typeof c.body !== 'string') continue
@@ -353,7 +352,7 @@ function splitRestoreComments(comments: Comment[]): {
   return { lineComments, groupCommentsFromComments }
 }
 
-// v4.12.0 extract-group-patch subcommand: 指定 group の panels が claim する変更行だけを含む
+// extract-group-patch subcommand: 指定 group の panels が claim する変更行だけを含む
 // unified diff (--unidiff-zero 互換) を stdout に吐く。SKILL.md (bash) が `git apply --cached
 // --unidiff-zero --recount` で linear-stack の各 commit を構築するのに使う。
 async function extractGroupPatchCommand(): Promise<void> {
@@ -427,7 +426,7 @@ function gitShow(ref: string): string {
 }
 
 // PR モード: gh api 経由で base/head SHA の blob を取得して sources Map を作る。
-// 経路自体は v4.6 から変更なし (収集対象 path だけが allPanelPaths に変わる)。
+// 収集対象 path は allPanelPaths (panel が言及する全 file の union)。
 function canFetchPrSources(prMeta: PrMeta): boolean {
   return Boolean(prMeta.baseRefOid && prMeta.headRefOid && prMeta.headRepository?.nameWithOwner)
 }

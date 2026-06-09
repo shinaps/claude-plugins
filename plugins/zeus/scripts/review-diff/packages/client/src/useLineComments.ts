@@ -1,4 +1,4 @@
-// 行コメント (line comment) 機能の state + ハンドラ (v4.7.0 panel model)。
+// 行コメント (line comment) 機能の state + ハンドラ (panel model)。
 //
 // LineTarget は panelId をアンカーにし、side は 'asIs' | 'toBe' を使う。
 // handler signature: onOpenLineForm(panelId, target) / onAddLineComment(panelId, target, body)。
@@ -31,7 +31,7 @@ export type LineCommentHandlers = {
   onDeleteLineComment: (key: string, index: number) => void
 }
 
-// v4.8.0: regen-group → close-relaunch → restore の経路で、前回起動時の line comments を
+// regen-group → close-relaunch → restore の経路で、前回起動時の line comments を
 // 引き継いで Map に seed できるよう initial を受け取る。CommentForm 側の draft は sessionStorage
 // 経由で別途復元される (App.tsx mount 時に payload.initialLineCommentDrafts を sessionStorage に
 // 書き戻す)。

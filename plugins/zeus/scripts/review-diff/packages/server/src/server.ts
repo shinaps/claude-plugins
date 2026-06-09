@@ -6,10 +6,9 @@
 //   4. POST /result では Origin ヘッダも検証 (CSRF 対策)
 // 加えて token 検証失敗が 20 回貯まったらプロセスごと落として brute force 試行を断つ。
 //
-// v4.8.0 で Channels インフラ (/feedback, /events/*, /channel/inbox) を全廃した。
-// context+ は close-relaunch + state restore モデルに変更され、ブラウザは POST /result に
-// decision='regen-group' を送って window.close() するだけになった。SSE / event bus / 別 token
-// (browserToken / channelToken) も不要になり、middleware と endpoint がシンプルになった。
+// context+ は close-relaunch + state restore モデルで動く。ブラウザは POST /result に
+// decision='regen-group' を送って window.close() するだけ。SSE / event bus / 別 token
+// (browserToken / channelToken) のような Channels インフラは存在しない (廃止済み)。
 //
 // なぜ Hono か:
 //   - middleware を順序付きで宣言できるためセキュリティ層の責務が一目で読める
@@ -146,7 +145,7 @@ export function createApp(opts: CreateAppOptions): Hono {
 
   // POST /result → JSON 受信 → 200 を返し切ってから resolve (ブラウザに描画余地を残す)
   //
-  // v4.8.0: decision='regen-group' もここで受け取る。CLI 側は decision を見ずに
+  // decision='regen-group' もここで受け取る。CLI 側は decision を見ずに
   // ResultJson をそのまま resolve するので、SKILL.md が JSON.parse で分岐する設計。
   // approve / reject と同じ close-relaunch ルートで動くので endpoint 追加不要。
   app.post('/result', async (c) => {
@@ -233,7 +232,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
           fetch: app.fetch,
           port: 0,
           hostname: '127.0.0.1',
-          // v4.8.0 で SSE 経路を消したので keep-alive を切る必要はもう無い。
+          // SSE 経路が無いので keep-alive を切る必要は無い。
           // 既定値 (Node の default) のままで OK。
         },
         (info) => {
