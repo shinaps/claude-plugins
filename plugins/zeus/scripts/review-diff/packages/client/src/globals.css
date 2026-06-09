@@ -242,6 +242,444 @@
     outline-offset: 1px;
   }
 
+  /*
+   * editor-link-trigger: v5 で追加した gutter 右端のエディタ起動アイコン。
+   *   - toBe + addition 行のみに描画され、hover で fade-in する
+   *   - opacity / transition は line-comment-trigger と同じ理由でここに置く (Tailwind v4 cascade 制約)
+   *   - panel-side-tobe .code-row-addition:hover .cell-ln-addition .editor-link-trigger で scope を絞り、
+   *     LineTrigger (+) と並んで出ても誤クリックしにくいよう、addition 行に限定
+   */
+  .editor-link-trigger {
+    opacity: 0;
+    transition: opacity 100ms ease;
+  }
+  .panel-side-tobe .code-row-addition:hover .cell-ln-addition .editor-link-trigger { opacity: 0.85; }
+  .editor-link-trigger:hover { opacity: 1; }
+  .editor-link-trigger:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 1px;
+  }
+
+  /*
+   * Pre-flight checks: Activity タブの「起動前にローカル script を pass させた結果」表示。
+   *   - chip 形式、status 別 (passed / failed / skipped) で色変え
+   *   - failed のときは赤、passed は緑、skipped は中間色
+   */
+  .preflight-results { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.25rem 0; }
+  .preflight-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+  }
+  .preflight-chip-passed { color: var(--color-add-fg); border-color: rgba(74,222,128,0.4); }
+  .preflight-chip-failed { color: var(--color-del-fg); border-color: rgba(248,113,113,0.5); }
+  .preflight-chip-skipped { color: var(--color-text-muted); }
+
+  /*
+   * Conversation セクション (Activity タブ、frontend-design 刷新版)
+   *
+   * 構成 (GitHub PR Conversation + Linear thread をベースにした落ち着いた timeline 風):
+   *   .conversation-list                    — flex column wrapper
+   *   .conversation-list-toggle             — Show / Hide resolved の切替ボタン
+   *   .conversation-empty                   — threads === 0 の placeholder
+   *   .conversation-card                    — 1 thread = 1 article、状態は data-state で表現
+   *     .conversation-card-head             — chevron + anchor chip + status pill + meta 列
+   *     .conversation-card-toggle           — 左端の展開トグル (chevron-only)
+   *     .conversation-card-anchor           — FileCode/CircleDot + 行/グループ chip
+   *     .conversation-card-meta             — 右側の status pill + msg count + time
+   *     .conversation-card-title            — first message の 1 行抜粋
+   *   .conversation-snippet                 — line scope thread のコード snippet
+   *     .conversation-snippet-row[data-row-type=addition|deletion|context|empty]
+   *   .conversation-thread                  — expand 時の messages timeline
+   *     .conversation-msg[data-author=user|agent]
+   *       .conversation-avatar              — 24px circular badge (Y / C)
+   *       .conversation-msg-body            — message body の wrap
+   *
+   * Tailwind v4 cascade 制約に従い、状態 / hover / transition は ここに置く。
+   * tsx 側には static utility (層・サイズ・余白) のみ書く。
+   */
+
+  .conversation-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .conversation-empty {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+  }
+  .conversation-list-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    margin-top: 4px;
+    background: transparent;
+    border: 1px solid var(--color-border-soft);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .conversation-list-toggle:hover {
+    color: var(--color-text);
+    border-color: var(--color-border);
+    background: var(--color-surface-2);
+  }
+  .conversation-list-toggle:focus-visible {
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 2px;
+  }
+  .conversation-list-toggle-count {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--color-surface-3);
+    color: var(--color-text);
+    font-size: 10.5px;
+  }
+  /* 全体サマリ (= unresolved 数 / All resolved) */
+  .conversation-list-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 4px 0;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    color: var(--color-warn);
+  }
+  .conversation-list-summary-clear { color: var(--color-add-fg); }
+
+  /* Resolve / Reopen ボタン (Card head 右側、Status pill の隣) */
+  .conversation-card-resolve {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--color-border-soft);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .conversation-card-resolve:hover {
+    color: var(--color-text);
+    border-color: var(--color-border);
+    background: var(--color-surface-2);
+  }
+  .conversation-card-resolve:focus-visible {
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 1px;
+  }
+  .conversation-card-resolve-on {
+    color: var(--color-add-fg);
+    border-color: color-mix(in oklab, var(--color-add-fg) 30%, transparent);
+    background: color-mix(in oklab, var(--color-add-bg) 50%, transparent);
+  }
+
+  /* === Card === */
+
+  .conversation-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    column-gap: 8px;
+    row-gap: 8px;
+    padding: 12px 14px 14px 10px;
+    border: 1px solid var(--color-border-soft);
+    border-radius: 10px;
+    background:
+      linear-gradient(180deg, color-mix(in oklab, var(--color-surface) 92%, transparent), var(--color-surface-2));
+    transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  }
+  .conversation-card:hover {
+    border-color: var(--color-border);
+  }
+  .conversation-card:focus-within {
+    box-shadow: 0 0 0 1px var(--color-accent-soft);
+  }
+  .conversation-card[data-state="active"] {
+    border-left: 1px solid var(--color-accent-soft);
+  }
+  .conversation-card[data-state="resolved"] {
+    opacity: 0.78;
+  }
+  .conversation-card[data-state="outdated"] {
+    border-left: 2px solid var(--color-warn);
+  }
+
+  .conversation-card-head {
+    grid-column: 1 / span 2;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+  }
+  .conversation-card-toggle {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border-soft);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .conversation-card-toggle:hover {
+    color: var(--color-text);
+    border-color: var(--color-border);
+    background: var(--color-surface-2);
+  }
+  .conversation-card-toggle:focus-visible {
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 1px;
+  }
+  .conversation-card-chevron {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2;
+  }
+  .conversation-card-anchor {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: var(--color-text-muted);
+  }
+  .conversation-card-anchor-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conversation-card-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--color-text-dim);
+    font-size: 11px;
+  }
+  .conversation-card-meta-msg {
+    font-family: var(--font-mono);
+    color: var(--color-text-muted);
+  }
+  .conversation-card-meta-time {
+    font-family: var(--font-mono);
+  }
+
+  .conversation-card-title {
+    grid-column: 2 / span 1;
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--color-text);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* === Status pill === */
+
+  .conversation-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border-soft);
+  }
+  .conversation-pill-active {
+    color: var(--color-accent);
+    border-color: color-mix(in oklab, var(--color-accent) 25%, transparent);
+  }
+  .conversation-pill-resolved {
+    color: var(--color-add-fg);
+    border-color: color-mix(in oklab, var(--color-add-fg) 25%, transparent);
+  }
+  .conversation-pill-outdated {
+    color: var(--color-warn);
+    border-color: color-mix(in oklab, var(--color-warn) 25%, transparent);
+  }
+
+  /* === Code snippet (line scope) === */
+
+  .conversation-snippet {
+    grid-column: 2 / span 1;
+    border: 1px solid var(--color-border-soft);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--color-surface);
+  }
+  .conversation-snippet-rail {
+    display: flex;
+    flex-direction: column;
+  }
+  .conversation-snippet-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .conversation-snippet-row[data-muted="1"] {
+    opacity: 0.65;
+  }
+  .conversation-snippet-num {
+    padding: 4px 8px;
+    text-align: right;
+    color: var(--color-text-dim);
+    border-right: 1px solid var(--color-border-soft);
+    background: color-mix(in oklab, var(--color-surface-2) 60%, transparent);
+    user-select: none;
+  }
+  .conversation-snippet-code {
+    padding: 4px 12px;
+    color: var(--color-text);
+    white-space: pre;
+    overflow-x: auto;
+    overflow-wrap: normal;
+  }
+  .conversation-snippet-row[data-row-type="addition"] {
+    background: color-mix(in oklab, var(--color-add-bg) 70%, transparent);
+  }
+  .conversation-snippet-row[data-row-type="addition"] .conversation-snippet-code {
+    color: var(--color-add-fg);
+  }
+  .conversation-snippet-row[data-row-type="deletion"] {
+    background: color-mix(in oklab, var(--color-del-bg) 70%, transparent);
+  }
+  .conversation-snippet-row[data-row-type="deletion"] .conversation-snippet-code {
+    color: var(--color-del-fg);
+  }
+  .conversation-snippet-row[data-highlight="1"] {
+    box-shadow: inset 2px 0 0 0 var(--color-accent);
+  }
+
+  /* === Thread timeline === */
+
+  .conversation-thread {
+    grid-column: 2 / span 1;
+    position: relative;
+    margin: 4px 0 0 0;
+    padding: 8px 0 4px 0;
+    list-style: none;
+    border-top: 1px dashed var(--color-border-soft);
+  }
+  .conversation-thread::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 28px;
+    bottom: 16px;
+    width: 1px;
+    background: var(--color-border-soft);
+  }
+  .conversation-msg {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    column-gap: 10px;
+    padding: 8px 0;
+  }
+  .conversation-avatar {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    z-index: 1;
+  }
+  .conversation-msg[data-author="agent"] .conversation-avatar {
+    background: var(--color-accent);
+    color: var(--color-surface);
+    box-shadow: 0 0 0 3px var(--color-surface);
+  }
+  .conversation-msg[data-author="user"] .conversation-avatar {
+    background: var(--color-surface-3);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 0 0 3px var(--color-surface);
+  }
+  .conversation-msg-body {
+    min-width: 0;
+  }
+  .conversation-msg-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    color: var(--color-text-muted);
+    font-size: 11.5px;
+  }
+  .conversation-msg-author {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+  .conversation-msg-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--color-surface-2);
+    color: var(--color-accent);
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .conversation-msg-time {
+    margin-left: auto;
+    color: var(--color-text-dim);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+  .conversation-msg-text {
+    margin: 0;
+    color: var(--color-text);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   /* drag-cursor-indicator: portal で document.body に出るカーソル追従インジケータ。
      pointer-events: none で drag 経路を阻害しない。
      寸法 / box-shadow / border-radius / opacity は hover 時の .line-comment-trigger と完全に揃える。
@@ -266,17 +704,21 @@
     user-select: none;
   }
 
-  /* comment-row: width が dynamic --nav-width calc を含む。
-     panel-side-inner (width: max-content) の素直な子だと thread が数万 px まで膨らむ UX 破綻があるため、
-     sticky left:0 で viewport 幅 (panel-side 表示幅) に明示固定する。 */
+  /* v5: comment-row は sticky left:0 で panel-side の visible 左端に固定。
+     width は panel-side 要素自身に Panel.tsx の ResizeObserver が書き出す --ps-width を読む。
+     fallback は viewport calc (ResizeObserver 起動前の 1 frame で使われる)。
+     viewport calc は panel-side 実 clientWidth より +16px ほどズレるので、ResizeObserver の値が
+     正解。これで sticky parent (.panel-side-inner) からはみ出さず、scrollLeft = max でも
+     containing block 右端制約に押されず動かない。 */
   .comment-row {
     position: sticky;
     left: 0;
     z-index: 2;
-    width: calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px);
+    width: var(--ps-width, calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px));
     background: var(--color-surface-2);
     border-top: 1px solid var(--color-border-soft);
     border-bottom: 1px solid var(--color-border-soft);
+    overflow: hidden;
   }
 
   /* comment-bubble: state class (.is-editing) と :hover/.focus-within で actions を出す pseudo selector が必要 */
@@ -299,10 +741,11 @@
     padding: 56px 0;
     border-top: 1px solid var(--color-border-soft);
     position: relative;
-    /* content-visibility: auto で viewport 外 section の layout / paint をスキップ。
-       contain-intrinsic-size 1200px は初回 placeholder ヒント (実測後はブラウザが値を覚える)。 */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 1200px;
+    /* v5: content-visibility: auto は撤去した。
+       理由: 暗黙の contain: layout paint style が子孫 .comment-row の position: sticky の
+       containing block を redirect し、CommentRow がコードの横スクロールに追従してしまうバグの原因
+       (debug-validated.md 参照)。perf 回帰のリスクはあるが、視覚バグの方が優先度高。
+       将来 perf 問題が出たら IntersectionObserver で個別 section を hide する設計に切り替える。 */
   }
   .group-section:first-of-type { border-top: none; padding-top: 32px; }
 
@@ -416,10 +859,9 @@
     content-visibility: hidden;
   }
 
-  /* panel-block content-visibility (utility 化困難 + scroll-margin-top で anchor jump 整列) */
+  /* v5: content-visibility: auto は撤去 (.group-section と同じ理由、debug-validated.md 参照)。
+     scroll-margin-top はそのまま (anchor jump 用)。 */
   .panel-block {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 500px;
     scroll-margin-top: 72px;
   }
 

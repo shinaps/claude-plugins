@@ -1,32 +1,24 @@
-// CLI エントリ (panel model)。
+// CLI エントリ (panel model + v5: thread comments, editor link, script gate)。
 //
-// 呼ばれ方:  node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]
+// 呼ばれ方:
+//   - 通常レビュー: node "$CLI" --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]
+//                  [--config <path>] [--script-results <path>]
+//   - 部分 patch:   node "$CLI" extract-group-patch --summary <...> --diff <...> --group <gid>
+//   - スクリプトゲート: node "$CLI" run-scripts --config <...> --changed-files <...> --out <...>
+//   - outdated 判定:  node "$CLI" mark-outdated --restore-state <...> --before-sha <sha> --after-sha <sha> --changed-files <...>
 //
-// Channels インフラ (ACTIVE_DIR / sessionId / browserToken / channelToken / SIGINT cleanup hook) は
-// 存在しない。代わりに --restore-state を持ち、SKILL.md が close-relaunch ループで前回の
-// Reviewed + line comments + 未保存 draft を注入できるようにしてある。--restore-state を
-// 知らない SKILL.md からの fallback 互換も parseArgs の strict:false で吸収する。
+// stdout / stderr 分離方針: 呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
+// 情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
 //
-// stdout / stderr 分離方針 (継続):
-//   呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
-//   情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
-//
-// pipeline:
-//   1. validateSummarySchema (zod + legacy 検出): legacy schema は migration メッセージ付きで exit 1
-//   2. parseDiff → FileChange[] (asIs/toBe 別軸の changed lines)
-//   3. collectAllPanelPaths: panel が言及する全 file (asIs.file + toBe.file) + rename oldPath を union
-//   4. collectStagedSources / collectPrSources: 上記 paths の before/after 原文を取得
-//   5. validateCoverage: panel が diff の changed lines を網羅しているか厳格検証 (miss → exit 1)
-//   6. renderPanel: 各 panel を side-by-side RenderedPanel に展開
-//   7. (任意) --restore-state を読んで ClientPayload.initial* に注入
-//   8. buildHtml: ClientPayload を inline した HTML 生成
-//   9. startServer: Hub サーバ起動
-//  10. waitResult (タイムアウト 9 分) → 結果を stdout に 1 行 JSON で吐く
+// PR mode は v5 で gh pr diff + lazy gh api blob 方式を完全に捨てて、
+// 「SKILL.md が事前に gh pr checkout してから CLI を起動する」前提に切り替えた。
+// CLI 側は staged モードと同じく git show :path (after) / git show <baseSha>:path (before) で
+// sources を構築する。期待される base SHA は --base-sha フラグで渡される。
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { parseArgs } from 'node:util'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import type {
   ResultJson,
   PrMeta,
@@ -35,10 +27,15 @@ import type {
   RenderedGroup,
   RenderedPanel,
   Comment,
-  RestoreState,
+  RestoreStateV1,
+  RestoreStateV2,
   GroupDecision,
+  ThreadMessage,
+  ThreadSnapshot,
+  ScriptResultsPayload,
+  ReviewKind,
 } from '@zeus/review-diff-shared'
-import { countLines } from '@zeus/review-diff-shared'
+import { countLines, threadKey } from '@zeus/review-diff-shared'
 import {
   parseDiff,
   validateSummarySchema,
@@ -55,54 +52,52 @@ import {
 } from '@zeus/review-diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
+import { loadReviewDiffConfig } from './config.js'
+import { runScriptsCommand } from './script-runner.js'
+import { markOutdatedCommand } from './outdated.js'
 
-// ブラウザから 5 秒ごとに /heartbeat が打たれる前提で、最終 ping から N ms 経過したら「タブが閉じられた」と
-// 判断して CLI も自発的に終了する。Skill ツール側は run_in_background で起動して TaskOutput で
-// 待ち合わせるモデルに移行したので、絶対値タイムアウト (旧 9 分制限) は撤廃した。
-// 15 秒 = 5s 間隔の heartbeat を 3 回連続で取りこぼした猶予幅 (ネットワーク詰まり / GC pause を吸収)。
 const HEARTBEAT_GRACE_MS = 15 * 1000
-// 初回 ping が来るまでの猶予 (ブラウザ open + bundle ロード + 初回 fetch まで)。
-// この期間内は heartbeat 未受信でも終了しない。
 const HEARTBEAT_BOOT_GRACE_MS = 30 * 1000
 const HEARTBEAT_POLL_INTERVAL_MS = 3 * 1000
 
-// gh api への並列度上限。GitHub の rate limit (authenticated 5000 req/hour) に余裕を残しつつ、
-// N ファイル × 2 (base/head) の blob 取得を現実的な時間で終わらせるための値。
-// 大きすぎると rate limit で 403 が増え、小さすぎると待ち時間が伸びる。経験則で 8。
-const PR_FETCH_CONCURRENCY = 8
-
 async function main(): Promise<void> {
-  // subcommand dispatcher。argv[2] が 'extract-group-patch' なら部分 patch 生成モードに分岐。
-  // SKILL.md (bash) が `node dist/cli.js extract-group-patch --summary <...> --diff <...> --group g0`
-  // のように呼ぶ。stdout に unified diff (--unidiff-zero 互換) を吐く。
+  // subcommand dispatcher
   if (process.argv[2] === 'extract-group-patch') {
     await extractGroupPatchCommand()
     return
   }
+  if (process.argv[2] === 'run-scripts') {
+    const code = await runScriptsCommand()
+    process.exit(code)
+  }
+  if (process.argv[2] === 'mark-outdated') {
+    const code = await markOutdatedCommand()
+    process.exit(code)
+  }
 
-  // parseArgs の strictOption は default true だが、unknown flag を渡された時に process が
-  // 即落ちすると forward compatibility が失われる。SKILL.md と CLI のバージョンがズレた時に
-  // 余計な flag を skip できるように strict:false に倒す (validation は handler 側で行う)。
   const { values } = parseArgs({
     options: {
       summary: { type: 'string' },
       diff: { type: 'string' },
       'pr-meta': { type: 'string' },
-      // regen-group の close-relaunch で、SKILL.md が書き出した restore JSON
-      // (groupDecisions / groupComments / comments / lineCommentDrafts) を再起動後の CLI に渡すパス。
-      // 初回起動 (regen ループの外) では未指定で OK。
       'restore-state': { type: 'string' },
+      // v5: 設定ファイル (editor + scripts)
+      config: { type: 'string' },
+      // v5: Phase 4.5 で実行したスクリプト結果 JSON。Activity タブの Pre-flight チップ表示に使う。
+      'script-results': { type: 'string' },
+      // v5 PR mode: SKILL.md が gh pr checkout する際に取得する base ref の SHA。
+      // 渡されなければ HEAD~1 を仮の base として扱う (= staged モードと同じ挙動)。
+      'base-sha': { type: 'string' },
     },
     strict: false,
   })
 
   if (!values.summary || !values.diff) {
-    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>]\n')
+    process.stderr.write('Usage: cli --summary <path> --diff <path> [--pr-meta <path>] [--restore-state <path>] [--config <path>] [--script-results <path>] [--base-sha <sha>]\n')
     process.exit(1)
   }
 
-  // 1. summary.json: parse → zod 検証 → legacy detection。
-  //    legacy schema は SchemaError + migration メッセージで exit 1。
+  // 1. summary.json: parse → zod 検証 → legacy detection
   let rawSummary: unknown
   try {
     rawSummary = JSON.parse(readFileSync(values.summary as string, 'utf8'))
@@ -134,28 +129,25 @@ async function main(): Promise<void> {
   // 2. diff parse → FileChange[]
   const changes = parseDiff(diffText)
 
-  // 3. 全 panel が言及する path を union (asIs.file ∪ toBe.file ∪ rename oldPath)。
-  //    rename + 内容変更の panel が asIs.file = oldPath で書かれている時、その oldPath も
-  //    sources 取得対象に入れる必要があるため、changes.oldPath も合流する。
+  // 3. 全 panel が言及する path を union
   const allPanelPaths = collectAllPanelPaths(summary, changes.map(c => c.oldPath).filter(Boolean) as string[])
 
   // 4. sources 取得
-  let expandable = false
+  //    v5 では staged も pr も同じ「working tree + git show <baseSha>:path」経路で読む。
+  //    staged モード: after = `:path` (index)、before = `HEAD:path`
+  //    pr モード:    after = `:path` または HEAD:path、before = `<baseSha>:path`
   let sources: SourcesMap = new Map()
+  let expandable = false
+  const baseSha = (values['base-sha'] as string | undefined)?.trim() || null
   if (summary.mode === 'staged' && !prMeta) {
     sources = collectStagedSources(allPanelPaths)
     expandable = true
-  } else if (summary.mode === 'pr' && prMeta && canFetchPrSources(prMeta)) {
-    const fetched = await collectPrSources(allPanelPaths, prMeta)
-    if (fetched.size > 0) {
-      sources = fetched
-      expandable = true
-    } else {
-      process.stderr.write('[review-diff] PR source fetch failed entirely; expand will be disabled\n')
-    }
+  } else if (summary.mode === 'pr' && prMeta) {
+    sources = collectPrSourcesFromWorktree(allPanelPaths, baseSha)
+    expandable = true
   }
 
-  // 5. coverage 厳格検証。miss があれば stderr に詳細出して exit 1 (AC-3)。
+  // 5. coverage 厳格検証
   const allPanels: Panel[] = summary.groups.flatMap(g => g.panels)
   const cov = validateCoverage({ changes, panels: allPanels })
   if (cov.warnings.length > 0) {
@@ -166,16 +158,12 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // 5.5. asIs/toBe range の対称性検証。
-  //   sources を渡して MAX_TAIL fallback を不要にする (W-1: ファイル行数を上限に使う)。
   const sym = validateRangeSymmetry({ changes, panels: allPanels, sources })
   if (!sym.ok) {
     process.stderr.write(formatRangeSymmetryViolations(sym) + '\n')
     process.exit(1)
   }
 
-  // 5.6. panel exclusivity 検証 (同一変更行を 2 group が claim していないか)。
-  //   linear-stack の commit-per-group を破綻させないため必須。
   const excl = validatePanelExclusivity({
     changes,
     groups: summary.groups.map((g, i) => ({
@@ -190,10 +178,6 @@ async function main(): Promise<void> {
   }
 
   // 6. 各 panel を side-by-side に展開
-  //
-  // W-1: groupId は title に依存せず index ベースの `g${i}` で生成する。同じ title の group が
-  //   複数あっても key 衝突しない (App.tsx の React key と SKILL.md の regen-group 識別の両方で必要)。
-  // I-4: renderPanel に summary.mode を渡し、staged / pr で sourcesUnavailable kind を分岐させる。
   const renderedGroups: RenderedGroup[] = summary.groups.map((g, i) => ({
     groupId: `g${i}`,
     title: g.title,
@@ -201,25 +185,37 @@ async function main(): Promise<void> {
     panels: g.panels.map(p => renderPanel(p, sources, summary.mode)),
   }))
 
-  // 7. restore state を読む (close-relaunch)。
-  //    restore.json は SKILL.md が前回 CLI 終了時に書き出すもので、shared RestoreState 型:
-  //      { groupDecisions, groupComments, comments, lineCommentDrafts }
-  //    CLI 側で comments を line scope と group scope に pre-split して ClientPayload に注入する
-  //    (client 側の二重 seed を防止、C-4)。
+  // 7. restore state を読む (v2 + v1 auto migrate)
   const restore = readRestoreState(values['restore-state'] as string | undefined)
-  const { lineComments, groupCommentsFromComments } = splitRestoreComments(restore?.comments ?? [])
-  // restore.groupComments を base に、comments scope='group' から再構築した groupCommentsFromComments を
-  // 上書き merge (comments 側が後勝ち = 直前 UI の最新状態を優先)。
-  const initialGroupComments: Record<string, string> = {
-    ...(restore?.groupComments ?? {}),
-    ...groupCommentsFromComments,
+  // restore.threads が現在の真実。v1 comments[] を migrate する場合は restoreThreads に統合済み。
+  const restoreThreads = restore?.threads ?? {}
+  // v5: スレッド表示は payload.initialThreads (= window.__reviewDiffThreads) に一本化したので、
+  // initialComments への擬似 seed は廃止する (= 旧 client で「最後の message が saved comment として
+  // 重複表示される」UX バグの根本原因だった)。
+
+  // 8. config (editor + scripts) を読む
+  let editorPreset: ReturnType<typeof loadReviewDiffConfig>['editorPreset'] = null
+  try {
+    const loaded = loadReviewDiffConfig(values.config as string | undefined)
+    editorPreset = loaded.editorPreset
+  } catch (e) {
+    process.stderr.write(`[review-diff] config load failed (ignored): ${(e as Error).message}\n`)
+  }
+  const editorAvailable = editorPreset !== null
+
+  // 9. script results を読む (Pre-flight チップ表示用)
+  let scriptResults: ScriptResultsPayload | undefined
+  const scriptResultsPath = values['script-results'] as string | undefined
+  if (scriptResultsPath) {
+    try {
+      const raw = JSON.parse(readFileSync(scriptResultsPath, 'utf8')) as ScriptResultsPayload
+      scriptResults = raw
+    } catch (e) {
+      process.stderr.write(`[review-diff] script-results read failed (ignored): ${(e as Error).message}\n`)
+    }
   }
 
-  // 8. HTML 生成 + サーバ起動
-  // Diff タブ用の「ファイル単位 panel」を別途構築する。
-  // Guide タブが AI 指定の細粒度 panel を見せるのに対し、Diff タブはグルーピング無しの
-  // 「git diff を file 順に俯瞰する」用途で、各 file の全行を 1 panel に詰める。
-  // binary / rename-only / EOL-only は実用上見せても意味がないので skip。
+  // 10. Diff タブ用 rawPanels
   const rawPanels: RenderedPanel[] = []
   for (const c of changes) {
     if (!c.hasContentChange) continue
@@ -230,8 +226,6 @@ async function main(): Promise<void> {
     const afterSrc = sources.get(toBeFile)?.after ?? ''
     const beforeLines = countLines(beforeSrc)
     const afterLines = countLines(afterSrc)
-    // panel.intent には file path をそのまま入れる (PanelHeader が太字でレンダーする)。
-    // raw panel の panelId は file path から決定的に派生させ、line comment の永続化先を Guide 側と分ける。
     const panelId = `raw-${toBeFile}`.replace(/[^A-Za-z0-9_-]/g, '_')
     const panel: Panel = {
       panelId,
@@ -242,6 +236,7 @@ async function main(): Promise<void> {
     rawPanels.push(renderPanel(panel, sources, summary.mode))
   }
 
+  // 11. HTML 生成
   const html = buildHtml({
     schemaVersion: 1,
     summary,
@@ -251,9 +246,13 @@ async function main(): Promise<void> {
     expandable,
     rawPanels,
     initialGroupDecisions: restore?.groupDecisions,
-    initialGroupComments: Object.keys(initialGroupComments).length > 0 ? initialGroupComments : undefined,
-    initialComments: lineComments.length > 0 ? lineComments : undefined,
+    initialGroupComments: restore?.groupComments,
+    initialComments: undefined,
     initialLineCommentDrafts: restore?.lineCommentDrafts,
+    initialThreads: Object.keys(restoreThreads).length > 0 ? restoreThreads : undefined,
+    initialReviewKind: restore?.reviewKind,
+    scriptResults,
+    editorAvailable,
   })
 
   const { startServer } = await import('@zeus/review-diff-server')
@@ -261,23 +260,25 @@ async function main(): Promise<void> {
     html,
     sources,
     expandable,
+    editorPreset,
   })
 
   process.stderr.write(`[review-diff] URL: ${started.url}\n`)
   process.stderr.write(`[review-diff] waiting for decision (tab close → auto exit via heartbeat)...\n`)
   openUrl(started.url)
 
-  // タブ close 検知: ブラウザは setInterval で /heartbeat を打っている。
-  // 最終 ping から HEARTBEAT_GRACE_MS 経過したらタブが閉じられたと判断して timeout 扱いで終了する。
-  // 起動直後は HEARTBEAT_BOOT_GRACE_MS の間「まだ初回 ping 来ていないだけ」扱いで猶予する。
   const startedAt = Date.now()
-  const timeoutResult: ResultJson = { decision: 'timeout', groupDecisions: {}, comments: [] }
+  const timeoutResult: ResultJson = {
+    decision: 'timeout',
+    reviewKind: 'comment',
+    groupDecisions: {},
+    threads: {},
+  }
   const heartbeatLoss = new Promise<ResultJson>((resolve) => {
     const interval = setInterval(() => {
       const last = started.getLastHeartbeat()
       const now = Date.now()
       if (last === null) {
-        // 初回 ping 未着でも boot grace 期間内なら待つ
         if (now - startedAt < HEARTBEAT_BOOT_GRACE_MS) return
         process.stderr.write(`[review-diff] no initial heartbeat within ${HEARTBEAT_BOOT_GRACE_MS}ms — exiting\n`)
         clearInterval(interval)
@@ -290,7 +291,6 @@ async function main(): Promise<void> {
         resolve(timeoutResult)
       }
     }, HEARTBEAT_POLL_INTERVAL_MS)
-    // unref で「heartbeat 監視だけ残った」状態でも process が exit できるようにする (実害は無いが念のため)
     interval.unref?.()
   })
 
@@ -310,85 +310,134 @@ async function main(): Promise<void> {
   setTimeout(() => process.exit(0), 100)
 }
 
-// restore.json は SKILL が書き出す中間 JSON (shared RestoreState 型)。存在 / parse / shape 全てに defensive。
-// 1 つでも欠ければ「初回起動」と同じ扱い (initial* を undefined のまま) でフォールバック。
-// 旧 reviewedPanels field は廃止済み (clean break)。残っていても無視する。
-function readRestoreState(path: string | undefined): RestoreState | undefined {
+// readRestoreState: v2 をそのまま読む + v1 (comments[]) を auto migrate して v2 に変換する。
+// 不明な field / 部分破損は黙って無視する (旧来の defensive 仕様維持)。
+function readRestoreState(path: string | undefined): RestoreStateV2 | undefined {
   if (!path) return undefined
+  let raw: unknown
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown
-    if (!raw || typeof raw !== 'object') return undefined
-    const r = raw as RestoreState
-    // 部分的に取れるだけでも seed する。型不正な field だけ落とす。
-    const out: RestoreState = {}
-    if (r.groupDecisions && typeof r.groupDecisions === 'object' && !Array.isArray(r.groupDecisions)) {
-      // value が 'approved' | 'request-changes' のもののみ採用
-      const filtered: Record<string, GroupDecision> = {}
-      for (const [k, v] of Object.entries(r.groupDecisions)) {
-        if (v === 'approved' || v === 'request-changes') filtered[k] = v
-      }
-      if (Object.keys(filtered).length > 0) out.groupDecisions = filtered
-    }
-    if (r.groupComments && typeof r.groupComments === 'object' && !Array.isArray(r.groupComments)) {
-      const filtered: Record<string, string> = {}
-      for (const [k, v] of Object.entries(r.groupComments)) {
-        if (typeof v === 'string') filtered[k] = v
-      }
-      if (Object.keys(filtered).length > 0) out.groupComments = filtered
-    }
-    if (Array.isArray(r.comments)) {
-      // shape の細かい検証は client 側で行うので、ここは Array であれば素通し。
-      out.comments = r.comments as Comment[]
-    }
-    if (r.lineCommentDrafts && typeof r.lineCommentDrafts === 'object') {
-      out.lineCommentDrafts = r.lineCommentDrafts as Record<string, string>
-    }
-    return out
+    raw = JSON.parse(readFileSync(path, 'utf8'))
   } catch (e) {
     process.stderr.write(`[review-diff] restore-state read failed (ignored): ${e instanceof Error ? e.message : String(e)}\n`)
     return undefined
   }
-}
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Partial<RestoreStateV2> & Partial<RestoreStateV1>
 
-// restore.json の comments[] を line scope と group scope に分ける。
-// 設計判断: client 側が二重 seed しないよう、CLI 側で pre-split して
-// initialComments (= line scope のみ) と initialGroupComments (= group scope の Record) に
-// 分けて payload に乗せる (C-4)。
-function splitRestoreComments(comments: Comment[]): {
-  lineComments: Comment[]
-  groupCommentsFromComments: Record<string, string>
-} {
-  const lineComments: Comment[] = []
-  const groupCommentsFromComments: Record<string, string> = {}
-  for (const c of comments) {
-    // restore.json が破損していたり、旧 `scope: { type: 'overall' }` が
-    // 残っている可能性に備え、shape をここで検証する。typo や undefined は静かに skip。
-    if (!c || typeof c !== 'object') continue
-    if (typeof c.body !== 'string') continue
-    if (!c.scope || typeof c.scope !== 'object') continue
-    if (c.scope.type === 'line') {
-      // line scope の内部 shape (panelId/side/file/line) も検証する。
-      // 破損 restore.json を素通しすると、useLineComments の seed で undefined/NaN が混入し
-      // 結果として「壊れた restore で不正コメントが新規生成される」副作用を生む。
-      const s = c.scope
-      if (typeof s.panelId !== 'string' || s.panelId === '') continue
-      if (s.side !== 'asIs' && s.side !== 'toBe') continue
-      if (typeof s.file !== 'string') continue
-      if (typeof s.line !== 'number' || !Number.isFinite(s.line)) continue
-      if (s.endLine != null && (typeof s.endLine !== 'number' || !Number.isFinite(s.endLine))) continue
-      lineComments.push(c)
-    } else if (c.scope.type === 'group') {
-      if (typeof c.scope.groupId !== 'string' || c.scope.groupId === '') continue
-      // 同一 groupId が複数あったら後勝ち (UI 上は 1 textarea しかないため自然な扱い)。
-      groupCommentsFromComments[c.scope.groupId] = c.body
+  const out: RestoreStateV2 = { schemaVersion: 2 }
+
+  if (r.groupDecisions && typeof r.groupDecisions === 'object' && !Array.isArray(r.groupDecisions)) {
+    const filtered: Record<string, GroupDecision> = {}
+    for (const [k, v] of Object.entries(r.groupDecisions)) {
+      if (v === 'approved' || v === 'request-changes') filtered[k] = v
+    }
+    if (Object.keys(filtered).length > 0) out.groupDecisions = filtered
+  }
+  if (r.groupComments && typeof r.groupComments === 'object' && !Array.isArray(r.groupComments)) {
+    const filtered: Record<string, string> = {}
+    for (const [k, v] of Object.entries(r.groupComments)) {
+      if (typeof v === 'string') filtered[k] = v
+    }
+    if (Object.keys(filtered).length > 0) out.groupComments = filtered
+  }
+  if (r.lineCommentDrafts && typeof r.lineCommentDrafts === 'object') {
+    out.lineCommentDrafts = r.lineCommentDrafts as Record<string, string>
+  }
+  if (r.reviewKind === 'approve' || r.reviewKind === 'request-changes' || r.reviewKind === 'comment') {
+    out.reviewKind = r.reviewKind as ReviewKind
+  }
+
+  // threads field の取り込み (v2)
+  const threads: Record<string, ThreadSnapshot> = {}
+  if (r.threads && typeof r.threads === 'object' && !Array.isArray(r.threads)) {
+    for (const [k, v] of Object.entries(r.threads)) {
+      const snap = parseThreadSnapshot(v)
+      if (snap) threads[k] = snap
     }
   }
-  return { lineComments, groupCommentsFromComments }
+
+  // v1 互換: schemaVersion 未指定 + comments[] が来た場合は migrate する
+  const wantsMigration = (r.schemaVersion == null || r.schemaVersion === 1) && Array.isArray(r.comments)
+  if (wantsMigration && Array.isArray(r.comments)) {
+    for (const c of r.comments) {
+      const migrated = migrateCommentToThread(c)
+      if (!migrated) continue
+      const k = threadKey(migrated.scope)
+      // v2 threads に同じキーがある場合は v2 を優先 (v1 を上書きしない)
+      if (!threads[k]) threads[k] = migrated
+    }
+  }
+
+  if (Object.keys(threads).length > 0) out.threads = threads
+  return out
 }
 
-// extract-group-patch subcommand: 指定 group の panels が claim する変更行だけを含む
-// unified diff (--unidiff-zero 互換) を stdout に吐く。SKILL.md (bash) が `git apply --cached
-// --unidiff-zero --recount` で linear-stack の各 commit を構築するのに使う。
+function parseThreadSnapshot(v: unknown): ThreadSnapshot | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Partial<ThreadSnapshot>
+  if (!o.scope || typeof o.scope !== 'object') return null
+  if (!Array.isArray(o.messages)) return null
+  const messages: ThreadMessage[] = []
+  for (const m of o.messages) {
+    if (!m || typeof m !== 'object') continue
+    const mm = m as Partial<ThreadMessage>
+    if (typeof mm.id !== 'string' || typeof mm.body !== 'string') continue
+    if (mm.author !== 'user' && mm.author !== 'agent') continue
+    if (typeof mm.ts !== 'number') continue
+    messages.push({
+      id: mm.id,
+      author: mm.author,
+      body: mm.body,
+      ts: mm.ts,
+      agentAction: mm.agentAction,
+    })
+  }
+  const scope = o.scope as ThreadSnapshot['scope']
+  return {
+    scope,
+    messages,
+    resolved: o.resolved === true,
+    outdated: o.outdated === true,
+    outdatedOverride: o.outdatedOverride === 'force' || o.outdatedOverride === 'keep' ? o.outdatedOverride : undefined,
+  }
+}
+
+function migrateCommentToThread(c: unknown): ThreadSnapshot | null {
+  if (!c || typeof c !== 'object') return null
+  const cc = c as Comment
+  if (typeof cc.body !== 'string') return null
+  if (!cc.scope || typeof cc.scope !== 'object') return null
+  if (cc.scope.type === 'line') {
+    const s = cc.scope
+    if (typeof s.panelId !== 'string' || s.panelId === '') return null
+    if (s.side !== 'asIs' && s.side !== 'toBe') return null
+    if (typeof s.file !== 'string') return null
+    if (typeof s.line !== 'number') return null
+    return {
+      scope: { type: 'line', panelId: s.panelId, side: s.side, file: s.file, line: s.line, ...(s.endLine != null ? { endLine: s.endLine } : {}) },
+      messages: [{ id: cryptoRandomId(), author: 'user', body: cc.body, ts: Date.now() }],
+      resolved: false,
+      outdated: false,
+    }
+  }
+  if (cc.scope.type === 'group') {
+    if (typeof cc.scope.groupId !== 'string' || cc.scope.groupId === '') return null
+    return {
+      scope: { type: 'group', groupId: cc.scope.groupId },
+      messages: [{ id: cryptoRandomId(), author: 'user', body: cc.body, ts: Date.now() }],
+      resolved: false,
+      outdated: false,
+    }
+  }
+  return null
+}
+
+function cryptoRandomId(): string {
+  // Node 20+ では globalThis.crypto.randomUUID が標準提供される
+  return globalThis.crypto.randomUUID()
+}
+
+// extract-group-patch subcommand
 async function extractGroupPatchCommand(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -421,12 +470,6 @@ async function extractGroupPatchCommand(): Promise<void> {
   process.exit(0)
 }
 
-// 全 panel が言及する file path を集約。asIs.file + toBe.file + rename oldPath を union。
-//   - asIs.file: deletion 軸のレンダリングに必要 (rename の場合は oldPath とほぼ同義)
-//   - toBe.file: addition 軸のレンダリングに必要
-//   - changeOldPaths: rename 時の oldPath。AI が asIs.file = newPath と書いてしまった場合でも
-//                     before 原文を取得しておく必要があるため (coverage-validator が rename サジェスト
-//                     を出すケースで sources を表示できるように)
 function collectAllPanelPaths(summary: SummaryJson, changeOldPaths: string[]): string[] {
   const set = new Set<string>()
   for (const g of summary.groups) {
@@ -439,10 +482,6 @@ function collectAllPanelPaths(summary: SummaryJson, changeOldPaths: string[]): s
   return [...set]
 }
 
-// staged モード: 各ファイルの「現在 index にある内容 (after)」と「HEAD の内容 (before)」を
-// git show で取得する。新規ファイル → HEAD 側が無い、削除ファイル → index 側が無い、
-// などのケースで git show が非 0 終了するが、その側を空文字列にしてもう一方だけ展開できれば
-// 十分なので例外にせず空文字列でフォールバックする。
 function collectStagedSources(paths: string[]): SourcesMap {
   const out: SourcesMap = new Map()
   for (const path of paths) {
@@ -453,71 +492,24 @@ function collectStagedSources(paths: string[]): SourcesMap {
   return out
 }
 
+// v5 PR mode: SKILL.md が gh pr checkout 済みの想定。
+//   after  = `:path` (index = HEAD と等価、PR ブランチの head)
+//   before = `<baseSha>:path` if baseSha given else `HEAD~1:path`
+function collectPrSourcesFromWorktree(paths: string[], baseSha: string | null): SourcesMap {
+  const out: SourcesMap = new Map()
+  const baseRef = baseSha ?? 'HEAD~1'
+  for (const path of paths) {
+    const after = gitShow(`HEAD:${path}`)
+    const before = gitShow(`${baseRef}:${path}`)
+    out.set(path, { before, after })
+  }
+  return out
+}
+
 function gitShow(ref: string): string {
   const r = spawnSync('git', ['show', ref], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 })
   if (r.status !== 0) return ''
   return r.stdout
-}
-
-// PR モード: gh api 経由で base/head SHA の blob を取得して sources Map を作る。
-// 収集対象 path は allPanelPaths (panel が言及する全 file の union)。
-function canFetchPrSources(prMeta: PrMeta): boolean {
-  return Boolean(prMeta.baseRefOid && prMeta.headRefOid && prMeta.headRepository?.nameWithOwner)
-}
-
-async function collectPrSources(paths: string[], prMeta: PrMeta): Promise<SourcesMap> {
-  const repo = prMeta.headRepository!.nameWithOwner
-  const baseSha = prMeta.baseRefOid!
-  const headSha = prMeta.headRefOid!
-  const t0 = Date.now()
-  process.stderr.write(
-    `[review-diff] fetching ${paths.length} files from ${repo} (PR #${prMeta.number}) via gh api...\n`,
-  )
-
-  const out: SourcesMap = new Map()
-  for (let i = 0; i < paths.length; i += PR_FETCH_CONCURRENCY) {
-    const chunk = paths.slice(i, i + PR_FETCH_CONCURRENCY)
-    const results = await Promise.all(
-      chunk.map(async (path) => {
-        const [before, after] = await Promise.all([
-          fetchPrBlob(repo, baseSha, path),
-          fetchPrBlob(repo, headSha, path),
-        ])
-        return { path, before, after }
-      }),
-    )
-    for (const r of results) {
-      if (r.before === '' && r.after === '') continue
-      out.set(r.path, { before: r.before, after: r.after })
-    }
-  }
-
-  const ms = Date.now() - t0
-  process.stderr.write(`[review-diff] PR source fetch done in ${(ms / 1000).toFixed(1)}s (${out.size}/${paths.length} files)\n`)
-  return out
-}
-
-function fetchPrBlob(repoNameWithOwner: string, sha: string, path: string): Promise<string> {
-  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
-  const args = [
-    'api',
-    '-H',
-    'Accept: application/vnd.github.raw',
-    `/repos/${repoNameWithOwner}/contents/${encodedPath}?ref=${sha}`,
-  ]
-  return new Promise((resolve) => {
-    const child = spawn('gh', args, { stdio: ['ignore', 'pipe', 'ignore'] })
-    const chunks: Buffer[] = []
-    child.stdout.on('data', (d: Buffer) => chunks.push(d))
-    child.on('error', () => resolve(''))
-    child.on('close', (code) => {
-      if (code !== 0) {
-        resolve('')
-        return
-      }
-      resolve(Buffer.concat(chunks).toString('utf8'))
-    })
-  })
 }
 
 main().catch((e: unknown) => {

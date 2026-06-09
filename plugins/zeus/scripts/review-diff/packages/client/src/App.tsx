@@ -21,6 +21,7 @@ import type {
   PrMeta,
   RenderedPanel,
   ResultJson,
+  ReviewKind,
 } from '@zeus/review-diff-shared'
 import { TabBar } from './TabBar'
 import { GroupSection } from './GroupSection'
@@ -197,6 +198,19 @@ export function App({ payload }: Props) {
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState<null | 'submit' | 'regen'>(null)
   const [toast, setToast] = useState<string | null>(null)
+
+  // v5: EditorLinkTrigger から Toast を呼ぶための window グローバルチャネルを設定。
+  // prop drilling (App → ChunkNavigator → PanelBlock → Panel → SideRow → EditorLinkTrigger) を避ける。
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.__reviewDiffShowToast = (msg: string) => {
+      setToast(msg)
+      setTimeout(() => setToast(null), 2000)
+    }
+    return () => {
+      if (typeof window !== 'undefined') delete window.__reviewDiffShowToast
+    }
+  }, [])
   // 連打防止 + ボタン disable 用フラグ
   const [regenPending, setRegenPending] = useState(false)
 
@@ -327,10 +341,13 @@ export function App({ payload }: Props) {
   // fillMode は SubmitBar の「Approve & Submit」「Reject & Submit」用。
   // 未判定 group をどちらかに補完して意思を明示する。指定なしなら未判定はそのまま (null 落とし) で送る。
   // note は SubmitBar の textarea で書いた全体コメント (任意)。SKILL.md 側で commit メッセージ生成等に活用。
-  async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string }) {
+  // v5: reviewKind ('approve' | 'request-changes' | 'comment') を必須引数として受け取る。
+  //     'comment' のときは decision='comment-reply' に切り替え、Claude が thread に返信する経路に乗る。
+  async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) {
     if (submitted) return
     const fillMode = opts?.fillMode
     const note = opts?.note?.trim() || undefined
+    const reviewKind: ReviewKind = opts?.reviewKind ?? 'approve'
     const decisions: Record<string, GroupDecision> = {}
     for (const g of groupsState) {
       const cur = groupDecisions[g.groupId] ?? null
@@ -339,8 +356,12 @@ export function App({ payload }: Props) {
     }
     const cs = collectComments()
     const body: ResultJson = {
-      decision: 'submit',
+      decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
+      reviewKind,
       groupDecisions: decisions,
+      // v5: threads は ClientPayload の initialThreads を そのまま echo back する (UI 編集は本セッションで未実装、
+      // 後続セッションで useThreads → ThreadRow が完成したら本物の thread state を載せる)。
+      threads: payload.initialThreads ?? {},
       comments: cs,
       ...(note ? { submitNote: note } : {}),
     }
@@ -387,7 +408,10 @@ export function App({ payload }: Props) {
       const trimmedNote = note?.trim() || undefined
       const body: ResultJson = {
         decision: 'regen-group',
+        // regen-group は review 全体の決定ではないので reviewKind は 'comment' (= 未確定) で埋める
+        reviewKind: 'comment',
         groupDecisions: decisions,
+        threads: payload.initialThreads ?? {},
         comments: collectComments(),
         regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
@@ -521,6 +545,8 @@ export function App({ payload }: Props) {
         setTab('guide')
         if (firstPanelId) jumpToPanel(firstPanelId)
       }}
+      scriptResults={payload.scriptResults}
+      threads={payload.initialThreads}
     />
   )
 

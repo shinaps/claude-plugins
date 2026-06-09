@@ -21,11 +21,35 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus } from 'lucide-react'
+import { Plus, SquareArrowOutUpRight } from 'lucide-react'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
-import { parseLineCommentKey } from './state'
+import { parseLineCommentKey, lineCommentKey } from './state'
+import { getToken } from './state'
 import type { LineCommentHandlers } from './useLineComments'
+
+// v5: window 経由で editorAvailable と editor-open Toast コールバックを受け渡す。
+// prop drilling を避けるための簡易チャネル (App → Panel が深いため)。
+//   - __reviewDiffEditorAvailable : boolean、設定された editor preset があれば true
+//   - __reviewDiffShowToast       : (msg: string) => void、Toast 表示
+//   - __reviewDiffThreads         : 永続化済みスレッド (payload.initialThreads)、user/agent message を全表示
+//
+// CR-3: editor command 自体は server 側のみで保持される。クライアントは boolean だけ知る。
+import type { ThreadSnapshot } from '@zeus/review-diff-shared'
+declare global {
+  interface Window {
+    __reviewDiffEditorAvailable?: boolean
+    __reviewDiffShowToast?: (msg: string) => void
+    __reviewDiffThreads?: Record<string, ThreadSnapshot>
+  }
+}
+
+// v5: line scope の lineCommentKey から threadKey (= "line:<panelId>:<side>:<line>[:<endLine>]") を作る。
+// payload.initialThreads の key と一致する形式。
+function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number, endLine?: number): string {
+  const range = endLine != null && endLine !== line ? `${line}:${endLine}` : `${line}`
+  return `line:${panelId}:${side}:${range}`
+}
 import { PanelHeader } from './PanelHeader'
 import { CommentForm } from './CommentForm'
 import { createShiki } from './shiki-bundle'
@@ -181,6 +205,40 @@ export const Panel = memo(function Panel({
       })
     }
   }, [panel.segments])
+
+  // v5: panel-side の実 clientWidth を CSS variable --ps-width に書き出し、
+  // .comment-row が `width: var(--ps-width)` で参照する。
+  //
+  // 背景: 旧実装の `.comment-row` width は `calc((100vw - --nav-width - 48px) / 2 - 1px)` の
+  // viewport ベースで、実際の panel-side clientWidth と +16px ほどズレていた (= .group-section の
+  // gap 32px が viewport calc に含まれていない等のため)。これにより comment-row が sticky parent
+  // (.panel-side-inner) の右端からはみ出し、scrollLeft = max 付近で「containing block 右端を超えない」
+  // sticky 制約に押されて 16px シフトしていた (= ユーザー指摘の「右端で少し動く」ジッター)。
+  //
+  // 解決: ResizeObserver で .panel-side 自身の clientWidth を観測し、要素 inline style として
+  // CSS variable をセットする。viewport / nav width / scrollbar gutter / grid gap などの影響を
+  // 全て吸収できる (実 clientWidth は計算誤差ゼロ)。
+  useLayoutEffect(() => {
+    const container = panelContainerRef.current
+    if (!container) return
+    const sides = container.querySelectorAll<HTMLElement>('.panel-side')
+    const update = (el: HTMLElement) => {
+      const w = el.clientWidth
+      const prev = el.style.getPropertyValue('--ps-width')
+      const next = `${w}px`
+      // 同値 skip (App.tsx L460-477 と同じパターン、不要な reflow を抑止)
+      if (prev === next) return
+      el.style.setProperty('--ps-width', next)
+    }
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) update(entry.target as HTMLElement)
+    })
+    sides.forEach((el) => {
+      update(el)
+      ro.observe(el)
+    })
+    return () => ro.disconnect()
+  }, [])
 
   // 左右スクロール同期: per-side が独立 overflow-x:auto なので、片側を横スクロールすると
   // 反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」= 1 panel 内では
@@ -469,6 +527,20 @@ export const Panel = memo(function Panel({
         map.set(mapKey, arr)
       }
     }
+    // v5: 永続化された thread (= 前回 submit + Claude 応答) の anchor も含めて CommentRow を render する
+    const threads = typeof window !== 'undefined' ? window.__reviewDiffThreads : undefined
+    if (threads) {
+      for (const snap of Object.values(threads)) {
+        if (snap.scope.type !== 'line') continue
+        if (snap.scope.panelId !== panel.panelId) continue
+        const lk = lineCommentKey(snap.scope.panelId, snap.scope.side, snap.scope.line, snap.scope.endLine)
+        const anchor = snap.scope.endLine ?? snap.scope.line
+        const mapKey = `${snap.scope.side}\x1f${anchor}`
+        const arr = map.get(mapKey) ?? []
+        if (!arr.includes(lk)) arr.push(lk)
+        map.set(mapKey, arr)
+      }
+    }
     return map
   }, [handlers.lineComments, handlers.activeForm, panel.panelId])
 
@@ -674,6 +746,19 @@ function SideRow({
               onOpenLineForm={handlers.onOpenLineForm}
             />
           ) : null}
+          {/* v5: editor link trigger. toBe + addition 行のみ表示。
+              editorAvailable は window 経由 (CR-3: command 自体は server 側のみ)。
+              hover 時に gutter 右端に lucide-react の SquareArrowOutUpRight アイコンが
+              fade-in する (CSS は globals.css 側に置く: Tailwind v4 cascade で opacity utility が
+              :hover ルールに勝ってしまうため tsx 側に opacity-* を書かない)。 */}
+          {cell.line != null && side === 'toBe' && cell.type === 'addition'
+            && getEditorTarget(panel, side)
+            && (typeof window !== 'undefined' && window.__reviewDiffEditorAvailable) ? (
+              <EditorLinkTrigger
+                file={getEditorTarget(panel, side) as string}
+                line={cell.line}
+              />
+          ) : null}
         </div>
         <div
           className={`cell-code cell-code-${sideClass} cell-code-${cell.type}`}
@@ -705,6 +790,65 @@ function sortAnchorKeys(keys: string[]): string[] {
     if (ra !== rb) return ra - rb
     return pa.number - pb.number
   })
+}
+
+// v5: panel から開く対象ファイル名を解決する。toBe 側は panel.toBe.file、asIs 側は panel.asIs.file。
+function getEditorTarget(panel: RenderedPanel, side: Side): string | null {
+  if (side === 'toBe') return panel.toBe?.file ?? null
+  return panel.asIs?.file ?? null
+}
+
+// EditorLinkTrigger: 行右隣の余白に hover で出るリンクアイコン。click で:
+//   1. clipboard に `file:line` をコピー (フォールバック保証)
+//   2. POST /editor-open で server 経由で deep-link 起動 (editor preset 必須)
+//   3. Toast 表示 (window.__reviewDiffShowToast)
+//
+// 配置: 行番号と重ならないよう、cell-ln の **外側右** (right-[-18px]) に押し出し、code 行の左頭に被せる。
+// クリック競合対策: pointerdown/pointerup を stopPropagation して、gutter の drag-select / line-form
+// 開始イベントに到達させない (= クリックでコメントフォームが開く問題の修正)。
+// hover/focus-visible の opacity / transition は globals.css 側に書く (Tailwind v4 cascade 制約)。
+function EditorLinkTrigger({ file, line }: { file: string; line: number }) {
+  async function onClick(e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation()
+    const fileLine = `${file}:${line}`
+    const toast = typeof window !== 'undefined' ? window.__reviewDiffShowToast : undefined
+    // W-3 fix: clipboard 成否で Toast 文面を変える (失敗時に "Copied" を出すと虚偽通知になる)
+    let copied = false
+    try {
+      await navigator.clipboard.writeText(fileLine)
+      copied = true
+    } catch {
+      /* clipboard 拒否時 (https 必須 / permission policy 等) は copied=false のまま */
+    }
+    toast?.(copied ? `Copied ${fileLine}` : `Opening ${fileLine}`)
+    try {
+      await fetch(`/editor-open?token=${encodeURIComponent(getToken())}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: file, line }),
+      })
+    } catch {
+      /* server が落ちていたり editor preset 未設定でも、clipboard コピーで人間が手動 cd できる */
+    }
+  }
+  // pointerdown/up: gutter pointerProps の drag-select 開始ハンドラに到達させない。
+  function stop(e: React.PointerEvent<HTMLButtonElement>) {
+    e.stopPropagation()
+  }
+  return (
+    <button
+      type="button"
+      className="editor-link-trigger absolute right-[-18px] top-1/2 -translate-y-1/2 w-4 h-4 p-0 inline-flex items-center justify-center border-0 rounded-[4px] bg-surface text-text cursor-pointer z-[3] shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
+      aria-label="Open file in editor"
+      title="Open in editor (copies file:line to clipboard)"
+      tabIndex={0}
+      onPointerDown={stop}
+      onPointerUp={stop}
+      onClick={onClick}
+    >
+      <SquareArrowOutUpRight className="w-3 h-3" strokeWidth={2.5} aria-hidden="true" />
+    </button>
+  )
 }
 
 function LineTrigger({
@@ -751,19 +895,45 @@ function CommentRow({
   const savedList = handlers.lineComments.get(lineKey)
   const hasSaved = !!savedList && savedList.length > 0
   const formOpen = handlers.activeForm === lineKey
-  if (!hasSaved && !formOpen) return null
+  // v5: 永続化された thread (= 前回 submit + Claude 応答) を取得して全 message を時系列で表示する
+  const threadKey = lineKeyToThreadKey(panel.panelId, parsed.side, parsed.number, parsed.endNumber)
+  const persistedThread = (typeof window !== 'undefined' ? window.__reviewDiffThreads : undefined)?.[threadKey]
+  const persistedMessages = persistedThread?.messages ?? []
+  const hasPersisted = persistedMessages.length > 0
+  if (!hasSaved && !formOpen && !hasPersisted) return null
 
   const label =
     parsed.endNumber != null && parsed.endNumber !== parsed.number
       ? `行 ${parsed.number}-${parsed.endNumber}`
       : `行 ${parsed.number}`
 
+  // word-wrap (overflow-wrap: anywhere) で panel 幅を超える長文 message を強制改行する。
+  // 親の comment-row は width calc で固定 (CSS)、その中の messages を breakable に。
+  // overflow-hidden + min-w-0 + max-w-full で「panel-side の overflow-x: auto に flex item が
+  // 横スクロールを生まないよう」固定する (CommentForm の textarea や長文 message が起点だった)。
   const thread = (
     <div
-      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-[13px] leading-[1.5]"
+      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-[13px] leading-[1.5] min-w-0 max-w-full overflow-hidden"
       data-side={sideToAttr(parsed.side)}
     >
       <div className="font-mono text-[11px] text-text-dim tracking-[0.04em] uppercase">{label}</div>
+      {/* v5: persistedMessages を user / agent 別バブルで時系列順に表示 */}
+      {persistedMessages.map((msg) => (
+        <div
+          key={msg.id}
+          className={
+            msg.author === 'agent'
+              ? 'thread-message thread-message-agent border-l-[3px] border-accent bg-surface-2 rounded-r-md px-3 py-2 min-w-0 max-w-full [overflow-wrap:anywhere] [word-break:break-word]'
+              : 'thread-message thread-message-user border-l-[3px] border-border bg-surface rounded-r-md px-3 py-2 min-w-0 max-w-full [overflow-wrap:anywhere] [word-break:break-word]'
+          }
+        >
+          <div className="text-[10px] uppercase tracking-wider text-text-dim mb-1">
+            {msg.author === 'agent' ? 'Claude' : 'You'}
+          </div>
+          <div className="whitespace-pre-wrap">{msg.body}</div>
+        </div>
+      ))}
+      {/* 本セッションで追加された saved comments (= 次の submit に乗る draft) */}
       {savedList?.map((body, i) => (
         <SavedComment
           key={`${lineKey}-${i}`}
@@ -793,15 +963,21 @@ function CommentRow({
           onCancel={handlers.onCloseLineForm}
         />
       ) : null}
+      {/* v5: 既存スレッドがあるが入力欄が閉じている場合、Reply ボタンを 1 つ置く (= 自然に返信を続けられる) */}
+      {hasPersisted && !formOpen ? (
+        <button
+          type="button"
+          className="self-start mt-1 px-2.5 py-1 text-[11.5px] text-text-muted border border-border rounded-md hover:bg-surface-2 cursor-pointer"
+          onClick={() => handlers.onOpenLineForm(panel.panelId, { side: parsed.side, number: parsed.number, endNumber: parsed.endNumber })}
+        >
+          Reply
+        </button>
+      ) : null}
     </div>
   )
 
-  // comment row は該当 side の scroll container 内 (SideRow の兄弟) として出される。
-  // 親の panel-side が overflow-x:auto なので、コメントは side 幅 (panel の左 or 右半分) に
-  // フィットして表示される。横スクロールはコード行と共有。
-  //
-  // comment-row BEM 維持: width calc が `(100vw - var(--nav-width) - 48px) / 2 - 1px` で
-  // dynamic CSS var を含む。utility 化すると arbitrary value がきわめて読みにくくなる。
+  // v5: comment-row は CSS で position: sticky left: 0 で panel-side の visible 左端に固定。
+  // (= globals.css の .comment-row、panel-block / group-section の content-visibility 撤去とセット)
   return (
     <div className="comment-row" data-comment-side={sideToAttr(parsed.side)}>
       <div className="p-0">{thread}</div>

@@ -1,6 +1,7 @@
 import type { Side, DisplayRange } from './types'
 
 export * from './types'
+export { threadKey } from './state'
 
 // ファイル末尾の \n で空行が 1 行多く数えられるのを避けるため、最後が \n なら 1 減らす。
 // (git show / GitHub Contents API の raw / source.after / source.before すべてが

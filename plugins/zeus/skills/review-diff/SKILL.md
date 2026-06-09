@@ -117,7 +117,7 @@ fi
 [ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
 ```
 
-### Phase 3: diff 取得
+### Phase 3: diff 取得 (v5 で PR mode を gh pr checkout 方式に変更)
 
 **staged モード**:
 
@@ -125,21 +125,69 @@ fi
 git diff --cached --no-color > "$WORK_DIR/diff.patch"
 ```
 
-**pr モード**:
+**pr モード (v5: checkout 方式)**:
+
+v5 では `gh pr diff` + lazy `gh api blob` 経路を廃止し、ローカル worktree に PR head ref を引いてから
+`git show <baseSha>:path` でソースを読む方式に切り替えた。エディタリンクの実ファイル指定が効くようにし、
+unchanged 行展開が rate limit を消費せず即時実行できるメリットがある。
 
 ```bash
-gh pr diff "$PR" --color=never --patch > "$WORK_DIR/diff.patch"
+# (1) PR メタ取得 (forked 検出 + base SHA 確定用)
 gh pr view "$PR" \
   --json number,title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,headRepository,additions,deletions,changedFiles \
   > "$WORK_DIR/pr-meta.json"
+
+# (2) forked repo PR 検出 (Q25 で scope 外)
+BASE_OWNER=$(git remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#p')
+HEAD_NWO=$(jq -r '.headRepository.nameWithOwner // ""' "$WORK_DIR/pr-meta.json")
+HEAD_OWNER=$(echo "$HEAD_NWO" | cut -d/ -f1)
+if [ -n "$BASE_OWNER" ] && [ -n "$HEAD_OWNER" ] && [ "$BASE_OWNER" != "$HEAD_OWNER" ]; then
+  echo "[review-diff] PR #$PR is from forked repo ($HEAD_NWO). v5.0.0 does not support forked PRs yet." >&2
+  exit 1
+fi
+
+# (3) dirty precheck (working tree clean 必須、stash は使わない)
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "[review-diff] working tree is dirty. PR mode requires clean state — commit/stash and re-run." >&2
+  exit 1
+fi
+
+# (4) 元ブランチ記録 (detached HEAD は弾く、復帰先が無いため)
+HEAD_BEFORE_CHECKOUT=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ "$HEAD_BEFORE_CHECKOUT" = "HEAD" ]; then
+  echo "[review-diff] detached HEAD detected; cannot safely restore after checkout." >&2
+  exit 1
+fi
+echo "$HEAD_BEFORE_CHECKOUT" > "$WORK_DIR/head-before-checkout"
+
+# (5) 同名 local branch SHA 確認 (W-1: -f で未 push 作業を上書きする事故を防ぐ)
+HEAD_REF_NAME=$(jq -r '.headRefName' "$WORK_DIR/pr-meta.json")
+if git show-ref --verify --quiet "refs/heads/${HEAD_REF_NAME}"; then
+  LOCAL_SHA=$(git rev-parse "${HEAD_REF_NAME}")
+  REMOTE_SHA=$(jq -r '.headRefOid' "$WORK_DIR/pr-meta.json")
+  if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+    echo "[review-diff] local branch '${HEAD_REF_NAME}' SHA does not match PR head (local=$LOCAL_SHA, remote=$REMOTE_SHA)." >&2
+    echo "[review-diff] aborting to avoid overwriting unpushed work. Please review the local branch first." >&2
+    exit 2  # exit 2 = main agent に「ユーザー確認」を促すシグナル
+  fi
+fi
+
+# (6) PR を checkout (同名ブランチがあれば SHA 一致確認済みなので -f で問題ない)
+gh pr checkout "$PR" -f || exit 1
+
+# (7) trap で復帰保証 (異常終了 / Ctrl-C 含む)
+trap 'git switch "$HEAD_BEFORE_CHECKOUT" 2>/dev/null || true' EXIT
+
+# (8) diff を生成 (checkout 後の worktree から)。base SHA は pr-meta.json の baseRefOid を使う
+#     (HEAD_REF_NAME^ だと複数 commit PR の最終 commit しか取れないため、PR base 全体との diff を取る)
+BASE_SHA=$(jq -r '.baseRefOid' "$WORK_DIR/pr-meta.json")
+git diff "$BASE_SHA...HEAD" --no-color > "$WORK_DIR/diff.patch"
 ```
 
-`baseRefOid` / `headRefOid` / `headRepository` は **PR モードでの unchanged 行 lazy 展開** に必要。
-CLI は `gh api` 経由で base/head SHA の blob を取得して `/source` エンドポイントから返す。
-これらフィールドが無い場合は従来通り「Expand unavailable」表示にフォールバックする。
-
-**注意 (GitHub rate limit)**: 1 ファイルあたり 2 回 (`base` + `head`) の `gh api` 呼び出しが走る。
-authenticated rate limit は 5000 req/hour なので通常のレビューで枯渇する心配は無い。
+**復帰タイミング**:
+- trap EXIT で bash 終了時に元ブランチへ自動復帰
+- regen-group / comment-reply で Skill 再起動するときは `$WORK_DIR/head-before-checkout` を保存しているので、再起動側で読み戻して維持できる
+- 最終 cleanup (commit 完走 / reject / timeout) で work-dir 削除と同時に `git switch <HEAD_BEFORE_CHECKOUT>` で復帰
 
 ### Phase 4: サマリ JSON 生成 (Write ツール強制)
 
@@ -322,6 +370,45 @@ UI は summary.json の `groups[]` 順 / 各 group 内の `panels[]` 順 を **�
 
 pr モードの `pr` フィールドは現状 CLI からは参照されない (CLI は `--pr-meta` フラグから直接読む archival 用途)。`null` でも `pr-meta.json` の内容をそのまま入れても挙動は変わらないが、後で `summary.json` だけ見て文脈を復元できるよう、PR モードでは入れておくことを推奨。
 
+### Phase 4.5: スクリプトゲート (v5 新設、起動前ゲート)
+
+リポルートに `.claude/zeus/review-diff.config.json` があり `scripts[]` を設定している場合、
+review-diff CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
+test / typecheck などの「コミット前に通したい」検査を起動条件として強制する仕組み。
+
+```bash
+CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+if [ -f "$CONFIG_FILE" ]; then
+  # 変更ファイル一覧を生成 (staged モードと PR モードで取得方法が違う)
+  if [ "$MODE" = "staged" ]; then
+    git diff --cached --name-only > "$WORK_DIR/changed-files.txt"
+  else
+    # PR mode: pr-meta.json の baseRefOid を使って PR base 全体との diff を取る
+    BASE_SHA=$(jq -r '.baseRefOid' "$WORK_DIR/pr-meta.json")
+    git diff "$BASE_SHA...HEAD" --name-only > "$WORK_DIR/changed-files.txt"
+  fi
+  # スクリプト実行 (CLI 内部で picomatch + spawn 並列、結果を script-results.json に書く)
+  node "$CLI" run-scripts \
+    --config "$CONFIG_FILE" \
+    --changed-files "$WORK_DIR/changed-files.txt" \
+    --out "$WORK_DIR/script-results.json" 2>"$WORK_DIR/script-stderr.log"
+  GATE_EXIT=$?
+  if [ "$GATE_EXIT" -ne 0 ]; then
+    echo "[review-diff] Pre-flight script gate failed. UI not opened." >&2
+    cat "$WORK_DIR/script-stderr.log" >&2
+    exit 1
+  fi
+fi
+```
+
+ゲートの設計意図:
+- スクリプトが pass しない状態でレビュー画面を開いても、結局その指摘を消費してから本筋のレビューに入る二度手間になる
+- 失敗したら **stderr にスクリプト名 / exit code / tail を出して exit 1** (メインエージェントが読んで修正方針を立てる)
+- 修正 → re-stage → スキル再起動でループが自然に回る
+- 設定 `scripts[]` の各エントリは `{ name, command, matchFiles, timeoutMs? }`。`matchFiles` (glob) が staged diff の変更ファイルにヒットしたものだけ実行
+
+設定例: `plugins/zeus/skills/review-diff/example.review-diff.config.json` を参照。
+
 ### Phase 5: CLI 起動 (background mode + TaskOutput 待ち)
 
 CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskOutput で待つ**。
@@ -329,16 +416,29 @@ CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskO
 タブを閉じれば CLI 側 heartbeat 検知で数秒以内に自発 exit するので zombie process も出ない。
 
 ```bash
+# v5 で追加された optional 引数:
+#   --config <path>          : review-diff.config.json (editor / scripts の設定)
+#   --script-results <path>  : Phase 4.5 のスクリプトゲート結果 (Activity タブ Pre-flight チップ用)
+#   --base-sha <sha>         : PR モードで base ref の SHA を渡す (なければ HEAD~1)
+CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+CONFIG_ARG=""
+[ -f "$CONFIG_FILE" ] && CONFIG_ARG="--config $CONFIG_FILE"
+SCRIPT_RESULTS_ARG=""
+[ -f "$WORK_DIR/script-results.json" ] && SCRIPT_RESULTS_ARG="--script-results $WORK_DIR/script-results.json"
+
 # 通常起動 (初回 or rejectループ)
-if [ -n "$PR_META" ]; then
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json"
+if [ "$MODE" = "pr" ]; then
+  BASE_SHA=$(jq -r '.baseRefOid // ""' "$WORK_DIR/pr-meta.json")
+  BASE_SHA_ARG=""
+  [ -n "$BASE_SHA" ] && BASE_SHA_ARG="--base-sha $BASE_SHA"
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json" $BASE_SHA_ARG $CONFIG_ARG $SCRIPT_RESULTS_ARG
 else
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch"
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" $CONFIG_ARG $SCRIPT_RESULTS_ARG
 fi
 
-# regen-group 後の再起動の場合は --restore-state を追加
-# (Phase 6 の regen-group 分岐から自動的にここに戻ってくる)
-node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json"
+# regen-group / comment-reply 後の再起動の場合は --restore-state を追加
+# (Phase 6 の regen-group / comment-reply 分岐から自動的にここに戻ってくる)
+node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json" $CONFIG_ARG $SCRIPT_RESULTS_ARG
 ```
 
 **起動手順 (メインがやること)**:
@@ -548,6 +648,38 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
 実装メモ:
 - regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
   Phase 2 の `WORK_DIR` 決定ロジックで「直近の review-diff の work-dir に restore.json があれば再利用」する分岐を入れる。
+
+#### decision = 'comment-reply' (v5 新規)
+
+ブラウザの SubmitBar で **Comment** ボタンを押すと `decision: 'comment-reply'` が返る。
+Claude が全 open スレッドに自動返信して再起動するルート。close-relaunch + state restore モデル。
+
+手順:
+
+1. `result.json` から `threads` を取得 (各スレッドの `messages[]` には最新の user message が含まれる)
+2. **work-dir は維持** (summary.json / diff.patch を再利用)
+3. **Claude が各スレッドの最新 user message を読んで応答内容を判定**:
+   - 質問 → answer (回答メッセージを agent message として thread に append)
+   - 指示 / 修正要求 → suggest (diff サンプル提示) または apply (実ファイルを Edit/Write で書き換え)
+   - context+ 相当の要望 → expand (関連 panel を summary.json に追加)
+4. **`restore.json` を Write** で書き出す:
+   - `threads`: 各 thread.messages に agent message を追記したもの (agentAction で対応種別を記録)
+   - `groupDecisions` / `groupComments` / `lineCommentDrafts`: result.json からそのままコピー
+   - `reviewKind: 'comment'` を載せる
+5. **apply の場合のみ、`mark-outdated` subcommand で outdated 自動判定**:
+   ```bash
+   # apply 前後の HEAD SHA と変更ファイル一覧を渡して、interval 交叉で outdated を立てる
+   AFTER_SHA=$(git rev-parse HEAD)
+   git diff "$BEFORE_SHA..$AFTER_SHA" --name-only > "$WORK_DIR/apply-changed-files.txt"
+   node "$CLI" mark-outdated \
+     --restore-state "$WORK_DIR/restore.json" \
+     --before-sha "$BEFORE_SHA" \
+     --after-sha "$AFTER_SHA" \
+     --changed-files "$WORK_DIR/apply-changed-files.txt"
+   ```
+6. **`Skill('zeus:review-diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
+   - Activity タブの Conversation セクションに agent 返信が反映される
+   - outdated になったスレッドは Activity タブで折りたたみ表示される
 
 #### timeout
 

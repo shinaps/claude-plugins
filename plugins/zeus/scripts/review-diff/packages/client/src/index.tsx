@@ -103,6 +103,14 @@ if (!root) throw new Error('#root not found')
 
 const payload = getPayload()
 
+// v5: editor-link 機能の世界変数を設定。Panel.tsx 内 EditorLinkTrigger が参照する。
+// editorAvailable=false なら EditorLinkTrigger は render されない (CR-3: command 漏らさず boolean だけ伝搬)。
+if (typeof window !== 'undefined') {
+  window.__reviewDiffEditorAvailable = payload.editorAvailable === true
+  // v5: 永続化済みスレッドを Panel CommentRow / ActivityView Conversation で参照できるよう公開
+  window.__reviewDiffThreads = payload.initialThreads ?? {}
+}
+
 // タブが閉じられたら CLI 側で「heartbeat 途絶 → 自発 exit」が走る前提なので、起動時に開始する。
 // dev サーバ (HMR) 経由ではトークン無しで起動するので startHeartbeat が no-op になる安全策あり。
 startHeartbeat()

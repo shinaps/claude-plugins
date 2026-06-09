@@ -16,11 +16,13 @@
 //   - compress() を使うと gzip / Accept-Encoding 判定を自前で書かなくて済む
 
 import { randomBytes } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import * as path from 'node:path'
 import { Hono } from 'hono'
 import { compress } from 'hono/compress'
 import type { MiddlewareHandler } from 'hono'
 import { serve, type ServerType } from '@hono/node-server'
-import type { ResultJson } from '@zeus/review-diff-shared'
+import type { EditorPreset, ResultJson } from '@zeus/review-diff-shared'
 
 const SECURITY_HEADERS: Record<string, string> = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -55,11 +57,15 @@ export type CreateAppOptions = {
   // CLI は最終 ping から一定時間 (gracePeriod) 経過したら「タブ close された」と判断して終了する。
   // 渡されない場合は heartbeat 機能無効 (テスト互換用)。
   onHeartbeat?: () => void
+  // v5: editor preset を server 側のみで保持する。クライアントには editorAvailable: boolean だけ
+  // を払い出し、command 文字列はサーバを抜けない (CR-3)。null の場合は /editor-open は 503 で返す。
+  editorPreset?: EditorPreset | null
 }
 
 export function createApp(opts: CreateAppOptions): Hono {
   const { html, getPort, token, onResult, onHeartbeat } = opts
   const sources: SourcesMap = opts.sources ?? new Map()
+  const editorPreset: EditorPreset | null = opts.editorPreset ?? null
   const onBruteForce = opts.onBruteForce ?? (() => setTimeout(() => process.exit(1), 50))
 
   let failCount = 0
@@ -177,7 +183,56 @@ export function createApp(opts: CreateAppOptions): Hono {
     return c.json({ ok: true })
   })
 
+  // POST /editor-open → editor preset の CLI command で対象ファイルを開く (v5 機能 2)。
+  //   - editorPreset が null の場合は 503 を返してクライアントは Toast のみ
+  //   - body: { path: string, line: number }
+  //   - shell escape を厳格に行い、cwd を明示し、relative path は cwd 基準で resolve
+  //   - 子プロセスを detached + unref で完全に切り離す (CLI exit 後も editor は生きる)
+  app.post('/editor-open', async (c) => {
+    const buf = await readBodyWithLimit(c.req.raw, 4 * 1024)
+    if (buf === null) return c.text('payload too large', 413)
+    let payload: { path?: unknown; line?: unknown }
+    try {
+      payload = JSON.parse(buf.toString('utf8')) as { path?: unknown; line?: unknown }
+    } catch {
+      return c.text('bad json', 400)
+    }
+    if (typeof payload.path !== 'string' || !Number.isFinite(payload.line as number)) {
+      return c.text('bad payload', 400)
+    }
+    const lineNum = Math.max(1, Math.floor(payload.line as number))
+    if (!editorPreset) {
+      // editor 未設定: クライアントは Toast の clipboard コピーだけで完結する
+      return c.json({ ok: false, reason: 'editor not configured' }, 503)
+    }
+    const absPath = path.resolve(process.cwd(), payload.path)
+    const escapedPath = shellEscape(absPath)
+    const cmd = editorPreset.command
+      .replaceAll('{path}', escapedPath)
+      .replaceAll('{line}', String(lineNum))
+    try {
+      const child = spawn('sh', ['-c', cmd], {
+        stdio: 'ignore',
+        detached: true,
+        cwd: process.cwd(),
+        env: process.env,
+      })
+      child.unref()
+    } catch (e) {
+      process.stderr.write(`[review-diff] editor open failed: ${cmd}: ${(e as Error).message}\n`)
+      return c.json({ ok: false, reason: 'spawn failed' }, 500)
+    }
+    return c.json({ ok: true })
+  })
+
   return app
+}
+
+// shellEscape: POSIX 標準パターン (closing quote + escaped quote + opening quote)。
+// 任意のバイト列を単一引用符で囲み、内側の `'` を `'\''` に置換することで bash / dash / zsh で
+// 安全な引数になる。`$`, `;`, `&&`, `|`, space, newline すべて含めて 1 トークンとして扱われる。
+function shellEscape(s: string): string {
+  return `'${s.replaceAll(`'`, `'\\''`)}'`
 }
 
 async function readBodyWithLimit(req: Request, max: number): Promise<Buffer | null> {
@@ -206,6 +261,8 @@ export type StartServerOptions = {
   // 現状はクライアントペイロード経由で expandable を伝えるため、server 自体は値を保持しない。
   // 将来 server 側で expandable に応じた挙動分岐が必要になれば opts に追加する。
   expandable?: boolean
+  // v5: editor preset (server 側でのみ保持、CR-3)
+  editorPreset?: EditorPreset | null
 }
 export type StartedServer = {
   url: string
@@ -218,7 +275,7 @@ export type StartedServer = {
 }
 
 export async function startServer(opts: StartServerOptions): Promise<StartedServer> {
-  const { html, sources } = opts
+  const { html, sources, editorPreset } = opts
   const token = randomBytes(32).toString('hex')
 
   let resolveResult!: (r: ResultJson) => void
@@ -243,6 +300,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     onHeartbeat: () => {
       lastHeartbeatAt = Date.now()
     },
+    editorPreset,
   })
 
   await new Promise<void>((resolve, reject) => {

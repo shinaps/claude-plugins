@@ -14,8 +14,15 @@
 // 入力は App.tsx から「現状 state を素直に渡す」だけ。ActivityView 自身は state を持たず純粋に表示する。
 
 import type { FC, ReactNode } from 'react'
-import { useMemo } from 'react'
-import type { GroupDecision, RenderedPanel } from '@zeus/review-diff-shared'
+import { useMemo, useState } from 'react'
+import type { GroupDecision, RenderedPanel, ScriptResult, ScriptResultsPayload, ThreadMessage, ThreadSnapshot, AgentAction } from '@zeus/review-diff-shared'
+import {
+  Check, X, MinusCircle,
+  ChevronDown, ChevronUp,
+  MessageSquare, Lightbulb, FileEdit, Expand,
+  FileCode, MessagesSquare,
+  CircleDot, CheckCircle2, AlertTriangle,
+} from 'lucide-react'
 import {
   computeDiffStats,
   groupFiles,
@@ -43,6 +50,10 @@ export type ActivityViewProps = {
   approvedCount: number
   rcCount: number
   onJumpToGroup: (groupId: string, firstPanelId: string | undefined) => void
+  // v5: Phase 4.5 のスクリプトゲート結果。Pre-flight checks セクションに表示。
+  scriptResults?: ScriptResultsPayload
+  // v5: スレッド全集合。Conversation セクションに集約表示 (active / resolved / outdated を分類)。
+  threads?: Record<string, ThreadSnapshot>
 }
 
 // 段別 bar segment の色サイクル。purple → green → amber → red → cool gray の順で
@@ -77,6 +88,8 @@ export const ActivityView: FC<ActivityViewProps> = ({
   approvedCount,
   rcCount,
   onJumpToGroup,
+  scriptResults,
+  threads,
 }) => {
   // diff 規模は同じ payload では不変 → mount 時 1 回計算 (rawPanels 参照は安定)。
   const stats = useMemo(() => computeDiffStats(rawPanels), [rawPanels])
@@ -118,12 +131,10 @@ export const ActivityView: FC<ActivityViewProps> = ({
             rcCount={rcCount}
           />
 
-          {stats.byLanguage.length > 0 ? (
-            <BreakdownSection label="Languages" buckets={stats.byLanguage} />
-          ) : null}
-
-          {stats.byLayer.length > 0 ? (
-            <BreakdownSection label="Layers" buckets={stats.byLayer} />
+          {scriptResults && scriptResults.results.length > 0 ? (
+            <Section label="Pre-flight checks">
+              <PreflightChecks results={scriptResults.results} />
+            </Section>
           ) : null}
 
           {overallHtml ? (
@@ -143,6 +154,12 @@ export const ActivityView: FC<ActivityViewProps> = ({
                 groupDecisions={groupDecisions}
                 onJumpToGroup={onJumpToGroup}
               />
+            </Section>
+          ) : null}
+
+          {threads && Object.keys(threads).length > 0 ? (
+            <Section label={`Conversation · ${Object.keys(threads).length}`}>
+              <ConversationList threads={threads} groups={groups} rawPanels={rawPanels} />
             </Section>
           ) : null}
         </div>
@@ -419,4 +436,408 @@ const FileChip: FC<{ info: GroupFileInfo }> = ({ info }) => {
       <span>{info.display}</span>
     </span>
   )
+}
+
+// === Pre-flight checks (v5) =====================================================
+// Phase 4.5 で実行されたローカル script の結果をチップ形式で並べる。
+//   - passed: ✓ icon + 緑系
+//   - failed: ✗ icon + 赤系 (この状態では本来 UI が開かないので、表示されるのは復旧後のみ)
+//   - skipped: − icon + neutral
+
+const PreflightChecks: FC<{ results: ReadonlyArray<ScriptResult> }> = ({ results }) => (
+  <div className="preflight-results">
+    {results.map((r) => {
+      const Icon = r.status === 'passed' ? Check : r.status === 'failed' ? X : MinusCircle
+      const klass = r.status === 'passed'
+        ? 'preflight-chip preflight-chip-passed'
+        : r.status === 'failed'
+          ? 'preflight-chip preflight-chip-failed'
+          : 'preflight-chip preflight-chip-skipped'
+      const duration = r.durationMs > 0 ? formatDuration(r.durationMs) : (r.reason ?? '')
+      return (
+        <span key={r.name} className={klass} title={r.reason ?? r.status}>
+          <Icon className="w-3 h-3" aria-hidden strokeWidth={2.5} />
+          <span>{r.name}</span>
+          {duration ? <span className="opacity-70">({duration})</span> : null}
+        </span>
+      )
+    })}
+  </div>
+)
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+// === Conversation (v5, frontend-design 刷新版) ==================================
+// GitHub PR の Conversation タブ + Linear の comment thread を参考にした落ち着いた読み物感の
+// timeline 風カード。avatar (YOU / Claude の 円形 badge) + 縦線 + speech bubble、line scope なら
+// 該当コード snippet も上部に表示する。
+//
+// 構成: card head (anchor chip + status badge + expand toggle) → snippet (line scope) →
+//       title (= first message excerpt) → expand 時に thread timeline。
+
+type ThreadVariant = 'active' | 'resolved' | 'outdated'
+
+const ConversationList: FC<{
+  threads: Record<string, ThreadSnapshot>
+  groups: ReadonlyArray<ActivityGroup>
+  rawPanels: ReadonlyArray<RenderedPanel>
+}> = ({ threads, groups, rawPanels }) => {
+  // v5: resolve / reopen の local override state。
+  // 完全な永続化 (submit 経由で restore.json に書き戻し) は useThreads 本格実装 (R-1) で対応。
+  // 現状は close-relaunch を超えると消えるが、Activity タブ内では即座に反映される。
+  const [resolveOverrides, setResolveOverrides] = useState<Record<string, boolean>>({})
+  const effectiveResolved = (key: string, snap: ThreadSnapshot) =>
+    Object.prototype.hasOwnProperty.call(resolveOverrides, key) ? resolveOverrides[key] : snap.resolved
+  const toggleResolved = (key: string, current: boolean) =>
+    setResolveOverrides(prev => ({ ...prev, [key]: !current }))
+
+  const entries = useMemo(() => Object.entries(threads), [threads])
+  const active = entries.filter(([k, t]) => !effectiveResolved(k, t) && !t.outdated)
+  const inactive = entries.filter(([k, t]) => effectiveResolved(k, t) || t.outdated)
+  const [showInactive, setShowInactive] = useState(false)
+  const unresolvedCount = active.length
+
+  if (active.length === 0 && inactive.length === 0) {
+    return (
+      <div className="conversation-empty">
+        <MessagesSquare className="w-4 h-4" strokeWidth={1.8} aria-hidden />
+        <span>No threads yet — drop a comment on any line to start one.</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="conversation-list">
+      {unresolvedCount > 0 ? (
+        <p className="conversation-list-summary">
+          <CircleDot className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
+          <span>{unresolvedCount} unresolved {unresolvedCount === 1 ? 'thread' : 'threads'}</span>
+        </p>
+      ) : (
+        <p className="conversation-list-summary conversation-list-summary-clear">
+          <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
+          <span>All threads resolved</span>
+        </p>
+      )}
+      {active.map(([key, snap]) => (
+        <ConversationCard
+          key={key}
+          threadKey={key}
+          snap={snap}
+          variant="active"
+          groups={groups}
+          rawPanels={rawPanels}
+          resolved={effectiveResolved(key, snap)}
+          onToggleResolved={() => toggleResolved(key, effectiveResolved(key, snap))}
+        />
+      ))}
+      {inactive.length > 0 ? (
+        <button
+          type="button"
+          className="conversation-list-toggle"
+          aria-expanded={showInactive}
+          onClick={() => setShowInactive(s => !s)}
+        >
+          {showInactive ? <ChevronUp className="w-3.5 h-3.5" aria-hidden /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden />}
+          <span>
+            {showInactive ? 'Hide' : 'Show'} resolved &amp; outdated
+            <span className="conversation-list-toggle-count">{inactive.length}</span>
+          </span>
+        </button>
+      ) : null}
+      {showInactive ? inactive.map(([key, snap]) => {
+        const isResolved = effectiveResolved(key, snap)
+        const variant: ThreadVariant = snap.outdated ? 'outdated' : 'resolved'
+        return (
+          <ConversationCard
+            key={key}
+            threadKey={key}
+            snap={snap}
+            variant={variant}
+            groups={groups}
+            rawPanels={rawPanels}
+            resolved={isResolved}
+            onToggleResolved={() => toggleResolved(key, isResolved)}
+          />
+        )
+      }) : null}
+    </div>
+  )
+}
+
+const ConversationCard: FC<{
+  threadKey: string
+  snap: ThreadSnapshot
+  variant: ThreadVariant
+  groups: ReadonlyArray<ActivityGroup>
+  rawPanels: ReadonlyArray<RenderedPanel>
+  resolved: boolean
+  onToggleResolved: () => void
+}> = ({ threadKey, snap, variant, groups, rawPanels, resolved, onToggleResolved }) => {
+  const [expanded, setExpanded] = useState(variant === 'active')
+  const sectionId = `conversation-card-${threadKey.replace(/[^A-Za-z0-9_-]/g, '_')}`
+
+  const lastMessage = snap.messages[snap.messages.length - 1]
+  const firstMessage = snap.messages[0]
+  const title = firstMessage?.body.split('\n')[0]?.slice(0, 110) ?? '(empty thread)'
+
+  const snippet = useMemo(
+    () => snap.scope.type === 'line' ? extractLineSnippet(snap.scope, groups, rawPanels) : null,
+    [snap.scope, groups, rawPanels],
+  )
+
+  const anchorLabel = snap.scope.type === 'line'
+    ? renderLineAnchor(snap.scope.file, snap.scope.line, snap.scope.endLine)
+    : `Group · ${snap.scope.groupId}`
+
+  return (
+    <article
+      className="conversation-card"
+      data-thread-key={threadKey}
+      data-state={variant}
+    >
+      <header className="conversation-card-head">
+        <button
+          type="button"
+          className="conversation-card-toggle"
+          aria-expanded={expanded}
+          aria-controls={sectionId}
+          onClick={() => setExpanded(e => !e)}
+        >
+          {expanded
+            ? <ChevronUp className="conversation-card-chevron" aria-hidden />
+            : <ChevronDown className="conversation-card-chevron" aria-hidden />}
+          <span className="sr-only">{expanded ? 'Collapse thread' : 'Expand thread'}</span>
+        </button>
+        <div className="conversation-card-anchor">
+          {snap.scope.type === 'line'
+            ? <FileCode className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />
+            : <CircleDot className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />}
+          <span className="conversation-card-anchor-label">{anchorLabel}</span>
+        </div>
+        <div className="conversation-card-meta">
+          <StatusPill variant={variant} />
+          <span className="conversation-card-meta-msg">
+            {snap.messages.length} {snap.messages.length === 1 ? 'msg' : 'msgs'}
+          </span>
+          {lastMessage ? (
+            <time className="conversation-card-meta-time" title={new Date(lastMessage.ts).toString()}>
+              {relativeTime(lastMessage.ts)}
+            </time>
+          ) : null}
+          {/* v5: outdated は spec で自動判定のみ。手動 resolve / reopen は user 操作で切替可能 */}
+          {!snap.outdated ? (
+            <button
+              type="button"
+              className={`conversation-card-resolve ${resolved ? 'conversation-card-resolve-on' : ''}`}
+              onClick={onToggleResolved}
+              aria-pressed={resolved}
+              title={resolved ? 'Reopen thread' : 'Mark thread as resolved'}
+            >
+              {resolved
+                ? <CircleDot className="w-3 h-3" strokeWidth={2} aria-hidden />
+                : <CheckCircle2 className="w-3 h-3" strokeWidth={2} aria-hidden />}
+              <span>{resolved ? 'Reopen' : 'Resolve'}</span>
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      {snippet ? <ConversationSnippet snippet={snippet} /> : null}
+
+      {/* collapse 時の preview として title (= first message excerpt) を出し、expand 時は
+          timeline と重複するため非表示にする。 */}
+      {!expanded ? <p className="conversation-card-title">{title}</p> : null}
+
+      {expanded ? (
+        <ol
+          id={sectionId}
+          role="region"
+          aria-label="Thread messages"
+          className="conversation-thread"
+        >
+          {snap.messages.map((msg) => (
+            <ConversationMessage key={msg.id} msg={msg} />
+          ))}
+        </ol>
+      ) : null}
+    </article>
+  )
+}
+
+// === supporting subcomponents ===================================================
+
+const StatusPill: FC<{ variant: ThreadVariant }> = ({ variant }) => {
+  if (variant === 'active') {
+    return (
+      <span className="conversation-pill conversation-pill-active">
+        <CircleDot className="w-3 h-3" strokeWidth={2} aria-hidden />
+        <span>Open</span>
+      </span>
+    )
+  }
+  if (variant === 'resolved') {
+    return (
+      <span className="conversation-pill conversation-pill-resolved">
+        <CheckCircle2 className="w-3 h-3" strokeWidth={2} aria-hidden />
+        <span>Resolved</span>
+      </span>
+    )
+  }
+  return (
+    <span className="conversation-pill conversation-pill-outdated">
+      <AlertTriangle className="w-3 h-3" strokeWidth={2} aria-hidden />
+      <span>Outdated</span>
+    </span>
+  )
+}
+
+const ConversationSnippet: FC<{ snippet: LineSnippet }> = ({ snippet }) => (
+  <div className="conversation-snippet" data-line-type={snippet.target.type}>
+    <div className="conversation-snippet-rail">
+      {snippet.before ? <SnippetLine line={snippet.before} muted /> : null}
+      <SnippetLine line={snippet.target} highlight />
+      {snippet.after ? <SnippetLine line={snippet.after} muted /> : null}
+    </div>
+  </div>
+)
+
+const SnippetLine: FC<{ line: SnippetRow; muted?: boolean; highlight?: boolean }> = ({ line, muted, highlight }) => (
+  <div
+    className="conversation-snippet-row"
+    data-row-type={line.type}
+    data-muted={muted ? '1' : undefined}
+    data-highlight={highlight ? '1' : undefined}
+  >
+    <span className="conversation-snippet-num">{line.line ?? ''}</span>
+    <code className="conversation-snippet-code">{line.raw || ' '}</code>
+  </div>
+)
+
+const ConversationMessage: FC<{ msg: ThreadMessage }> = ({ msg }) => {
+  const Icon = msg.agentAction ? AGENT_ACTION_ICON[msg.agentAction.kind] : null
+  const actionLabel = msg.agentAction ? AGENT_ACTION_LABEL[msg.agentAction.kind] : null
+  return (
+    <li className="conversation-msg" data-author={msg.author}>
+      <span className="conversation-avatar" aria-hidden>
+        {msg.author === 'agent' ? 'C' : 'Y'}
+      </span>
+      <div className="conversation-msg-body">
+        <header className="conversation-msg-head">
+          <span className="conversation-msg-author">{msg.author === 'agent' ? 'Claude' : 'You'}</span>
+          {Icon && actionLabel ? (
+            <span className="conversation-msg-action">
+              <Icon className="w-3 h-3" strokeWidth={2} aria-hidden />
+              <span>{actionLabel}</span>
+            </span>
+          ) : null}
+          <time className="conversation-msg-time" title={new Date(msg.ts).toString()}>
+            {relativeTime(msg.ts)}
+          </time>
+        </header>
+        <p className="conversation-msg-text">{msg.body}</p>
+      </div>
+    </li>
+  )
+}
+
+// === pure helpers ===============================================================
+
+const AGENT_ACTION_ICON: Record<AgentAction['kind'], typeof MessageSquare> = {
+  answer: MessageSquare,
+  suggest: Lightbulb,
+  apply: FileEdit,
+  expand: Expand,
+}
+const AGENT_ACTION_LABEL: Record<AgentAction['kind'], string> = {
+  answer: 'Answered',
+  suggest: 'Suggested',
+  apply: 'Applied',
+  expand: 'Expanded',
+}
+
+function relativeTime(ts: number): string {
+  const diff = Math.max(0, (Date.now() - ts) / 1000)
+  if (diff < 45) return 'just now'
+  if (diff < 90) return '1 min ago'
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
+  if (diff < 5400) return '1 hr ago'
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`
+  if (diff < 86400 * 2) return 'yesterday'
+  return `${Math.floor(diff / 86400)} d ago`
+}
+
+function basenameOf(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i >= 0 ? path.slice(i + 1) : path
+}
+
+function renderLineAnchor(file: string, line: number, endLine?: number): string {
+  const base = basenameOf(file)
+  return endLine != null && endLine !== line
+    ? `${base}:${line}-${endLine}`
+    : `${base}:${line}`
+}
+
+type SnippetRow = { type: 'context' | 'deletion' | 'addition' | 'empty'; line?: number; raw: string }
+type LineSnippet = {
+  side: 'asIs' | 'toBe'
+  file: string
+  before?: SnippetRow
+  target: SnippetRow
+  after?: SnippetRow
+}
+
+// thread.scope (= line scope) を起点に、groups[].panels[] と rawPanels から rendered row を
+// 線形に探して該当 line のコードを 1〜3 行抽出する。
+function extractLineSnippet(
+  scope: Extract<ThreadSnapshot['scope'], { type: 'line' }>,
+  groups: ReadonlyArray<ActivityGroup>,
+  rawPanels: ReadonlyArray<RenderedPanel>,
+): LineSnippet | null {
+  // 1st pass: groups[].panels から panelId 一致を探す
+  let panel: RenderedPanel | undefined
+  for (const g of groups) {
+    panel = g.panels.find(p => p.panelId === scope.panelId)
+    if (panel) break
+  }
+  // 2nd pass: rawPanels から探す (Diff タブ系)
+  if (!panel) panel = rawPanels.find(p => p.panelId === scope.panelId)
+  // 3rd pass: file path 一致で rawPanels を fallback (panelId が変わった場合の保険)
+  if (!panel) {
+    const isToBe = scope.side === 'toBe'
+    panel = rawPanels.find(p => isToBe ? p.toBe?.file === scope.file : p.asIs?.file === scope.file)
+  }
+  if (!panel) return null
+
+  // panel.segments[].rows から該当 line の row を探す
+  const allRows: Array<{ type: SnippetRow['type']; line?: number; raw: string; idx: number }> = []
+  let idx = 0
+  for (const seg of panel.segments) {
+    for (const row of seg.rows) {
+      const cell = scope.side === 'asIs' ? row.asIs : row.toBe
+      allRows.push({
+        type: cell.type === 'empty' ? 'empty' : cell.type,
+        line: cell.line,
+        raw: cell.raw,
+        idx,
+      })
+      idx++
+    }
+  }
+  // 対象 line (endLine 範囲があれば中央) の row を見つける
+  const targetLine = scope.endLine != null ? Math.floor((scope.line + scope.endLine) / 2) : scope.line
+  const targetIdx = allRows.findIndex(r => r.line === targetLine)
+  if (targetIdx === -1) return null
+  const target = allRows[targetIdx]
+  return {
+    side: scope.side,
+    file: scope.file,
+    before: allRows[targetIdx - 1],
+    target: { type: target.type, line: target.line, raw: target.raw },
+    after: allRows[targetIdx + 1],
+  }
 }

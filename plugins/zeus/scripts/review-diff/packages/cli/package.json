@@ -15,11 +15,13 @@
     "diff": "^7.0.0",
     "dompurify": "^3.2.0",
     "marked": "^15.0.0",
+    "picomatch": "^4.0.4",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/diff": "^7.0.0",
     "@types/node": "^20.0.0",
+    "@types/picomatch": "^3.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"
   }

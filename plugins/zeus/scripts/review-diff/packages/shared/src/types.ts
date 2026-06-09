@@ -1,12 +1,14 @@
-// shared 型定義 (stacked PR 風 group ベース承認モデル)。client/server/cli が import する。
+// shared 型定義 (stacked PR 風 group ベース承認モデル + コメントスレッド v5)。client/server/cli が import する。
 // 設計判断:
 //   - panel 単位の Reviewed 概念を廃止し、group 単位の Approve / Request Changes に統合
-//   - 全体の Approve/Reject ボタンは廃止、Submit Review 1 つに統一
+//   - 全体の Approve/Reject ボタンは廃止、Submit Review 1 つに統一 (v5 で 3 ボタン Approve/RC/Comment へ)
 //   - groupDecisions の分布から SKILL.md 側が「全 approved / 全 RC / mixed」を判定し linear-stack で
 //     commit-per-group を作る (CLI は git 操作しない)
 //   - Comment.scope の 'overall' は廃止し 'group' に統合 (情報密度向上、UI の colocate 設計)
 //   - regen-group / restore.json モデルは維持し、再起動時に groupDecisions / groupComments /
 //     lineCommentDrafts を seed して状態をシームレスに復元する
+//   - v5 でコメントを Thread 構造 (user/agent のメッセージ列) に拡張、SubmitBar に Comment ボタン追加
+//   - v5 で restore.json schema v2 を導入 (旧 v1 comments[] は CLI が auto-migrate)
 // server-only の SourcesMap / FileSource は packages/server/src/server.ts 内で別途定義。
 
 // =====================================================================
@@ -25,8 +27,8 @@ export type PrMeta = {
   author: { login?: string } | string
   baseRefName?: string
   headRefName?: string
-  // baseRefOid / headRefOid / headRepository は PR モードでの unchanged 行 lazy 展開のために
-  // gh CLI 経由で base/head の blob を取得する際に必要。
+  // v5 では gh pr checkout でローカル worktree を用意するため lazy blob 取得は不要だが、
+  // base ref 名と base SHA は changed-files 取得 / git show <baseSha>:path 経路で使う。
   baseRefOid?: string
   headRefOid?: string
   headRepository?: { nameWithOwner: string }
@@ -71,20 +73,23 @@ export type SummaryJson = {
 }
 
 // =====================================================================
-// Comment / Result (stacked group モデル)
+// Comment / Thread (v5 コメントスレッド)
 // =====================================================================
 
 // group 単位の Approve / Request Changes 状態。
-// null は client state のみで使う「未決定」を表し、ResultJson には載らない (Submit ボタンが
-// 全 group decision 確定時のみ active 化する仕様のため)。
+// null は client state のみで使う「未決定」を表し、ResultJson には載らない。
+// v5 では SubmitBar に Comment ボタンが追加されたが、Comment は review 全体の reviewKind 側に
+// 載るのであって、group 単位の decision としては 'comment' は導入しない (FR-1-5)。
 export type GroupDecision = 'approved' | 'request-changes'
 
-// Comment shape: scope は group か line の 2 択。overall は廃止。
-//   - scope: { type: 'group', groupId } → group ヘッダのコメント欄に書かれた本文
-//   - scope: { type: 'line', ... }      → panel 内の行 (または範囲) コメント
-//     file を併記する理由は、grep で `jq '.comments[] | select(.scope.file=="x.ts")'` を
-//     1 段引きできるようにするため + cross-file panel で side だけだとどの file の行か
-//     逆引きが必要になるため。
+// v5 で review 全体の種別。groupDecisions と独立して動く。
+//   - 'approve'         : 全 group を approved 扱いにして linear-stack commit
+//   - 'request-changes' : 修正対応 (commit せず Claude に戻す)
+//   - 'comment'         : commit せず Claude が全 open スレッドに自動返信
+export type ReviewKind = 'approve' | 'request-changes' | 'comment'
+
+// 旧 Comment 型 (v4 互換)。v5 でも restore.json v1 → v2 migration の入力として残す。
+// 新 UI は ThreadSnapshot 経由で読み書きする。
 export type Comment = {
   body: string
   scope:
@@ -99,19 +104,132 @@ export type Comment = {
       }
 }
 
-// decision は 'submit' / 'timeout' / 'regen-group' の 3 値。
-//   全体の Approve / Reject は廃止し、合否は groupDecisions の分布から SKILL.md が判定する
-//   (全 approved → 全 commit / 全 RC → reject ルート / mixed → 先頭から approved を commit、
-//    最初の RC で break、残り un-staged)。
-//   - 'submit'     : ユーザーが Submit Review ボタンを押した (全 group decision 確定済み)
-//   - 'timeout'    : CLI が 9 分タイムアウトで自爆 (groupDecisions は空オブジェクト)
-//   - 'regen-group': context+ ボタン押下、close-relaunch + state restore モデルへ
+// スレッドメッセージの著者。'user' は人間レビュアー、'agent' は Claude。
+export type ThreadMessageAuthor = 'user' | 'agent'
+
+// agent (Claude) がスレッドへの返信時に併記する「対応種別」。
+//   - 'answer'  : 質問への回答のみ (実ファイル変更なし)
+//   - 'suggest' : 修正提案 (本文 + diff サンプル、適用はしていない)
+//   - 'apply'   : 実ファイルを書き換えた (apply 後の outdated 判定対象)
+//   - 'expand'  : panel 範囲拡張 (context+ 相当)
+export type AgentAction =
+  | { kind: 'answer' }
+  | { kind: 'suggest'; diffSample?: string }
+  | { kind: 'apply'; files: { path: string; summary: string }[] }
+  | { kind: 'expand'; addedPanelIds: string[] }
+
+// スレッド内の 1 メッセージ。id は crypto.randomUUID() で生成 (Node 20+ globalThis.crypto 標準)。
+export type ThreadMessage = {
+  id: string
+  author: ThreadMessageAuthor
+  body: string
+  ts: number
+  agentAction?: AgentAction
+}
+
+// スレッドの anchor。新規スレッドは必ず line / group のいずれか。'overall' は v4 で廃止済み。
+export type ThreadScope =
+  | { type: 'group'; groupId: string }
+  | {
+      type: 'line'
+      panelId: string
+      side: Side
+      file: string
+      line: number
+      endLine?: number
+    }
+
+// スレッドの状態。persistence と runtime で同じ形 (immutable、setState で新インスタンス置換)。
+//   - resolved          : GitHub PR 互換の resolve/reopen 状態 (Approve 警告に使う)
+//   - outdated          : apply 後の自動判定 + outdatedOverride 補正で更新される
+//   - outdatedOverride  : 'force' = 強制 true、'keep' = 強制 false、未指定なら自動判定結果を採用
+export type ThreadSnapshot = {
+  scope: ThreadScope
+  messages: ThreadMessage[]
+  resolved: boolean
+  outdated: boolean
+  outdatedOverride?: 'force' | 'keep'
+}
+
+// =====================================================================
+// Script Gate (機能 3)
+// =====================================================================
+
+// 1 スクリプトの実行結果。
+//   - 'passed'   : exit 0
+//   - 'failed'   : exit != 0 or spawn error
+//   - 'skipped'  : matchFiles に一致するファイルがなかった / timeout
+export type ScriptResult = {
+  name: string
+  status: 'passed' | 'failed' | 'skipped'
+  durationMs: number
+  exitCode?: number | null
+  stdoutTail?: string
+  stderrTail?: string
+  reason?: 'no matchFiles hit' | 'timeout' | 'spawn error'
+}
+
+// CLI が script-results.json に書き出すペイロード (CLI 起動時に Read → ClientPayload 注入)。
+export type ScriptResultsPayload = {
+  ranAt: number
+  results: ScriptResult[]
+}
+
+// review-diff.config.json の scripts[] エントリ。
+//   - matchFiles : staged diff の変更ファイルと picomatch で照合、ヒットなしなら skip
+//   - timeoutMs  : SIGTERM 送信までの猶予 (未指定なら DEFAULT_SCRIPT_TIMEOUT_MS = 60000)
+export type ScriptConfig = {
+  name: string
+  command: string
+  matchFiles: string[]
+  timeoutMs?: number
+}
+
+// =====================================================================
+// Editor Preset (機能 2)
+// =====================================================================
+
+export type EditorKind = 'vscode' | 'cursor' | 'idea' | 'zed' | 'sublime' | 'custom'
+
+// EditorPreset は server 側のみで保持される (CR-3: editor command をクライアントに漏らさない)。
+// CLI が config から preset を解決し、startServer({ editorPreset }) で server に注入。
+//   - command   : `{path}` `{line}` プレースホルダ展開後に spawn される shell 文字列
+//   - urlScheme : v5 は一刀構成 (CLI command のみ) で実行時には未使用、type 互換のため残す
+export type EditorPreset = {
+  kind: EditorKind
+  command: string
+  urlScheme: string | null
+}
+
+// review-diff.config.json 全体スキーマ。
+//   - editor は省略可 (省略時はエディタリンク無効化 = ClientPayload.editorAvailable=false)
+//   - scripts は省略可 (省略時はゲートをスキップ)
+export type ReviewDiffConfig = {
+  editor?: { kind: EditorKind; command?: string; urlScheme?: string }
+  scripts?: ScriptConfig[]
+}
+
+// =====================================================================
+// Result / Restore (v5)
+// =====================================================================
+
+// decision は CLI が stdout に吐く ResultJson のトップフィールド。
+//   - 'submit'        : 通常の Approve / Request Changes Submit (linear-stack commit ルートへ)
+//   - 'timeout'       : heartbeat 切れ自爆 (groupDecisions / threads は空でも可)
+//   - 'regen-group'   : context+ 押下、close-relaunch + restore
+//   - 'comment-reply' : v5 新値。reviewKind='comment' Submit 時、Claude が thread に返信して再起動するルート
+export type Decision = 'submit' | 'timeout' | 'regen-group' | 'comment-reply'
+
 export type ResultJson = {
-  decision: 'submit' | 'timeout' | 'regen-group'
+  decision: Decision
+  // v5 で必須化。review 全体の種別。timeout 時は 'comment' を入れて構造を揃える (SKILL.md は decision で判定)。
+  reviewKind: ReviewKind
   // groupId → 'approved' | 'request-changes'。timeout 時のみ空オブジェクト。
   groupDecisions: Record<string, GroupDecision>
-  // group scope と line scope のコメント。overall は廃止 (group に統合)。
-  comments: Comment[]
+  // v5 で必須化 (空オブジェクトでも明示)。threadKey() ベースで thread state を載せる。
+  threads: Record<string, ThreadSnapshot>
+  // 旧形式互換、optional に降格 (v4 readers がいた場合の degradation 用、v5 自身は読まない)。
+  comments?: Comment[]
   regenGroup?: {
     groupId: string
     // 現在その group が見せている panel 範囲。AI が「ここから ±N 行広げる」判断に使う。
@@ -121,27 +239,39 @@ export type ResultJson = {
       toBe?: { file: string; ranges: DisplayRange[] }
     }>
     // ユーザーが inline textarea に書いた自由文 (任意)。
-    // SKILL.md 側で AI への指示として活用する: 「foo() の caller も見たい」「呼び出しチェーン全部」など。
-    // 空文字や未入力なら省略 (= 旧挙動の「range +5〜10 行拡張だけ」と同等)。
     note?: string
   }
   // Submit 時に SubmitBar の textarea で書いた全体コメント (任意)。
-  // SKILL.md 側で commit メッセージ生成や次アクション判断の参考にする。空文字なら省略。
   submitNote?: string
-  // sessionStorage に残っていた未保存 draft 本文。key: `draft:${panelId}:${side}:${num}[:${end}]`
-  // 再起動後に sessionStorage に書き戻して、書きかけが残る UX を担保する。
+  // sessionStorage に残っていた未保存 draft 本文。
   lineCommentDrafts?: Record<string, string>
 }
 
-// SKILL.md (bash) が CLI 再起動間で状態を中継するための JSON shape。
-//   CLI の readRestoreState が defensive に読み込む。client/server 両方から参照できるよう
-//   shared に export しておく (旧版は cli.ts ローカル型だった)。
-export type RestoreState = {
+// SKILL.md (bash) と CLI 間で状態を中継する restore.json v2 形式。
+//   v1 (comments[]) は CLI の readRestoreState() が auto-migrate して threads に変換する。
+export type RestoreStateV2 = {
+  schemaVersion: 2
+  groupDecisions?: Record<string, GroupDecision>
+  groupComments?: Record<string, string>
+  // v5 のスレッド永続化。空でも明示推奨。
+  threads?: Record<string, ThreadSnapshot>
+  lineCommentDrafts?: Record<string, string>
+  reviewKind?: ReviewKind
+}
+
+// 旧 v1 RestoreState (CLI が auto-migrate 入力として読む)。
+//   v4 までは schemaVersion フィールドが無かったので、未指定 = v1 とみなす。
+export type RestoreStateV1 = {
+  schemaVersion?: 1
   groupDecisions?: Record<string, GroupDecision>
   groupComments?: Record<string, string>
   comments?: Comment[]
   lineCommentDrafts?: Record<string, string>
 }
+
+// v5 では CLI 内部で常に v2 構造として扱うため、エイリアスを v2 に向ける。
+// 旧名 RestoreState を import している既存コードのために残す。
+export type RestoreState = RestoreStateV2
 
 // =====================================================================
 // レンダリング中間表現 (CLI → ブラウザ payload)
@@ -160,17 +290,14 @@ export type RenderedSegment = {
 
 // Panel の源データである before/after 原文 (asIs/toBe sources) が取得できなかったことを
 // UI で明示するための discriminated union。null マジック値の代わりにバナー kind を持たせる。
-//   - 'pr-fetch-failed': PR モードで base/head blob 取得失敗 (gh CLI 認証切れ / PR closed 等)
+//   - 'pr-fetch-failed': PR モードで base/head blob 取得失敗
 //   - 'unknown-file'   : panel が言及した file path が working tree / sources Map に存在しない
 //                        (AI が summary.json の file path を typo した可能性)
-// asIs / toBe どちらの side が欠落したかを bool で持つ (両側欠落のケースもある)。
 export type SourcesUnavailable =
   | { kind: 'pr-fetch-failed'; asIs?: boolean; toBe?: boolean }
   | { kind: 'unknown-file'; asIs?: boolean; toBe?: boolean }
 
 export type RenderedPanel = Panel & {
-  // cross-file の異言語ペア (例: .js → .ts) を split 表示で左右別言語ハイライトするため別持ち。
-  // 「将来の zoom-in view 等で別言語別表示」をするなら同じフィールド構造が再利用できる。
   asIsLanguage?: string
   toBeLanguage?: string
   segments: RenderedSegment[]
@@ -193,26 +320,28 @@ export type ClientPayload = {
   summary: SummaryJson
   prMeta: PrMeta | null
   groups: RenderedGroup[]
-  // 全 panel の panelId を flatten (nav scroll-spy 用)。Reviewed 集計は廃止済み。
+  // 全 panel の panelId を flatten (nav scroll-spy 用)。
   allPanels: string[]
-  // staged モードなら true。PR モードで gh CLI 経由で base/head blob が取れたら true。
+  // v5 では PR モードも gh pr checkout でローカル worktree を持つので常に true 寄り。
   expandable: boolean
   // Diff タブ用の「GitHub 風 file-by-file 差分」レンダー済み panel 集合。
-  // 各要素は「1 ファイル = 1 panel (full file range)」で、Guide タブの AI グルーピングを介さず
-  // 「すべての変更ファイルを順に俯瞰する」用途。Panel コンポーネントを再利用するので shiki ハイライト
-  // と split-side-by-side、行コメント機能はそのまま使える。
   rawPanels: RenderedPanel[]
-  // context+ の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
-  // restore.json を pre-filter して ClientPayload に注入する。初回起動では全て undefined。
-  //   - initialGroupDecisions  : group ごとの Approve / Request Changes 状態を復元
-  //   - initialGroupComments   : group コメント欄の textarea 値を復元
-  //   - initialComments        : line scope のコメントのみ (group scope は CLI が pre-filter で抜く)
-  //   - initialLineCommentDrafts: 未保存の line comment draft (sessionStorage 復元用)
+  // context+ / comment-reply の close-relaunch から戻ってきたとき、CLI が --restore-state で読んだ
+  // restore.json (v2) を pre-filter して ClientPayload に注入する。初回起動では全て undefined。
   initialGroupDecisions?: Record<string, GroupDecision>
   initialGroupComments?: Record<string, string>
+  // v4 互換: line scope のみの Comment[] (CLI が v1 restore.json を読んだとき seed として使う)。
   initialComments?: Comment[]
   initialLineCommentDrafts?: Record<string, string>
+  // v5 で新規。restore.json v2 の threads をそのまま seed する。
+  initialThreads?: Record<string, ThreadSnapshot>
+  // v5 で新規。前回 submit 時の reviewKind を seed する (SubmitBar の初期 active ボタン制御)。
+  initialReviewKind?: ReviewKind
+  // v5 で新規。Phase 4.5 (script gate) を通過したときの結果。Activity タブの Pre-flight 表示用。
+  scriptResults?: ScriptResultsPayload
+  // v5 で新規。editor preset が設定されているか (= EditorLinkTrigger を描画するか)。
+  // CR-3: editor command は server 側にしか保持されないので、boolean だけ伝搬する。
+  editorAvailable: boolean
   // panel 読了マーカ (左 nav の dot click でトグルする視覚アシスト)。
-  // group decision の真の評価軸とは別軸の「どこまで読んだか」追跡。regen-group で復元する。
   initialReviewedPanels?: string[]
 }

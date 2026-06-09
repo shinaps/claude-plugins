@@ -1,0 +1,23 @@
+{
+  "editor": {
+    "kind": "cursor"
+  },
+  "scripts": [
+    {
+      "name": "typecheck",
+      "command": "pnpm tsc --noEmit",
+      "matchFiles": ["**/*.ts", "**/*.tsx"],
+      "timeoutMs": 120000
+    },
+    {
+      "name": "test",
+      "command": "pnpm vitest run --changed HEAD",
+      "matchFiles": ["**/*.ts", "**/*.tsx"]
+    },
+    {
+      "name": "lint",
+      "command": "pnpm eslint .",
+      "matchFiles": ["**/*.{ts,tsx,js,jsx}"]
+    }
+  ]
+}
