@@ -16,12 +16,13 @@
 // sources を構築する。期待される base SHA は --base-sha フラグで渡される。
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { spawnSync } from 'node:child_process'
 import type {
   ResultJson,
   PrMeta,
+  ProjectInfo,
   SummaryJson,
   Panel,
   RenderedGroup,
@@ -259,6 +260,7 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     summary,
     prMeta,
+    project: detectProjectInfo(),
     groups: renderedGroups,
     allPanels: allPanels.map(p => p.panelId),
     expandable,
@@ -528,6 +530,27 @@ function gitShow(ref: string): string {
   const r = spawnSync('git', ['show', ref], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 })
   if (r.status !== 0) return ''
   return r.stdout
+}
+
+// 複数プロジェクトのレビュータブを同時に開いたとき識別できるよう、
+// リポジトリ名 (= repo root の directory 名) + 現在ブランチを取得する。
+// レビュー機能そのものには影響しない表示用情報なので、取得失敗は null フォールバックで握りつぶす。
+function detectProjectInfo(): ProjectInfo | null {
+  const top = gitOutput(['rev-parse', '--show-toplevel'])
+  if (!top) return null
+  const branchRaw = gitOutput(['rev-parse', '--abbrev-ref', 'HEAD'])
+  return {
+    name: basename(top),
+    // detached HEAD では --abbrev-ref が文字どおり "HEAD" を返すので branch 無し扱いにする
+    branch: branchRaw && branchRaw !== 'HEAD' ? branchRaw : null,
+  }
+}
+
+function gitOutput(args: string[]): string | null {
+  const r = spawnSync('git', args, { encoding: 'utf8' })
+  if (r.status !== 0) return null
+  const out = r.stdout.trim()
+  return out === '' ? null : out
 }
 
 main().catch((e: unknown) => {

@@ -13,11 +13,14 @@ export type BuildHtmlInput = ClientPayload
 
 export function buildHtml(payload: BuildHtmlInput): string {
   const dataJson = JSON.stringify(payload)
+  // 複数プロジェクトのレビュータブを並行して開いたとき、ブラウザのタブ一覧だけで
+  // どのリポジトリか判別できるよう、プロジェクト名をタイトル先頭に置く。
+  const title = payload.project ? `${payload.project.name} · review-diff` : 'review-diff'
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>review-diff</title>
+<title>${escapeHtml(title)}</title>
 <style>${CSS_STRING}</style>
 </head>
 <body>
@@ -28,6 +31,13 @@ export function buildHtml(payload: BuildHtmlInput): string {
 <script>${CLIENT_JS}</script>
 </body>
 </html>`
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 // </script> がデータ内に現れると script 要素が早期終了するため、確実にエスケープする。
