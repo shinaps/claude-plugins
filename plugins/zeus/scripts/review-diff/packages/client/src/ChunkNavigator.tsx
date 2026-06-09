@@ -99,16 +99,35 @@ export function ChunkNavigator() {
 
   // panel の collapse/expand で chunk row 集合が変わるので、MutationObserver で構造変化を監視。
   // attribute 変更ではなく childList 変更だけ追う (パフォーマンス考慮)。
+  //
+  // v5.0.1: rAF + 50ms debounce を導入。tab 切替時の 22 panel 一斉 attach で childList burst が
+  // 起きると 1 callback で recompute() 内の querySelectorAll + N 個の getBoundingClientRect が
+  // 同期実行され、LoAF 1011 の (anon) 5132ms user-callback の主因になっていた
+  // (debug-validated.md H5)。burst を 1 回にまとめることで <100ms に。
   useEffect(() => {
     const root = document.querySelector('[data-app-root]') ?? document.body
+    let raf = 0
+    let timer = 0
+    const flushRecompute = () => {
+      timer = 0
+      if (dirtyRef.current) recompute()
+    }
     const mo = new MutationObserver(() => {
       dirtyRef.current = true
-      // recompute は次の scroll/click でやる (このタイミングは pending mark のみ)。
-      // ただし「collapse して chunk 数が一気に変わった」を表示に反映するため、軽い再計算は走らせる。
-      recompute()
+      // burst 中は 1 回にまとめる
+      if (raf || timer) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        // rAF + 50ms 待ってから recompute (= burst の最後で 1 回)
+        timer = window.setTimeout(flushRecompute, 50)
+      })
     })
     mo.observe(root, { childList: true, subtree: true })
-    return () => mo.disconnect()
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      if (timer) clearTimeout(timer)
+      mo.disconnect()
+    }
   }, [recompute])
 
   const navigate = useCallback((direction: -1 | 1) => {

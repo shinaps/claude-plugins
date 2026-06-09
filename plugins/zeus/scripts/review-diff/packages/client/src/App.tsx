@@ -690,7 +690,11 @@ export function App({ payload }: Props) {
         submitting={submitted !== null}
       />
       {toast ? (
-        <div className="fixed bottom-20 right-6 bg-surface-2 border border-border rounded-lg px-3.5 py-2.5 text-xs z-50">
+        <div
+          className="fixed top-6 right-6 bg-surface-2 border border-border rounded-lg px-3.5 py-2.5 text-xs z-50 shadow-[0_4px_12px_rgba(0,0,0,0.25)]"
+          role="status"
+          aria-live="polite"
+        >
           {toast}
         </div>
       ) : null}

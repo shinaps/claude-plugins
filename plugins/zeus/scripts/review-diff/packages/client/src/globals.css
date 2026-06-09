@@ -704,20 +704,20 @@
     user-select: none;
   }
 
-  /* v5: comment-row は sticky left:0 で panel-side の visible 左端に固定。
-     width は panel-side 要素自身に Panel.tsx の ResizeObserver が書き出す --ps-width を読む。
-     fallback は viewport calc (ResizeObserver 起動前の 1 frame で使われる)。
-     viewport calc は panel-side 実 clientWidth より +16px ほどズレるので、ResizeObserver の値が
-     正解。これで sticky parent (.panel-side-inner) からはみ出さず、scrollLeft = max でも
-     containing block 右端制約に押されず動かない。 */
+  /* v5.0.1: CommentRow は createPortal で document.body に逃がし、position: fixed で
+     anchor (= 該当 code-row) に追従させる (Panel.tsx CommentRowPortal)。
+     これで .panel-block / .group-section の content-visibility: auto による sticky containing block
+     redirect の影響を受けず、cv:auto を復活できる (= tab 切替 perf 大幅改善)。
+     class 自体は test contract のため残し、visual style は .comment-row-portal に集約。 */
   .comment-row {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-    width: var(--ps-width, calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px));
     background: var(--color-surface-2);
     border-top: 1px solid var(--color-border-soft);
     border-bottom: 1px solid var(--color-border-soft);
+  }
+  /* portal 時の見栄え。position: fixed + left/top/width は Panel.tsx が JS で計算して inline 適用。
+     z-index 100: drag-cursor-indicator (9999) より下、tab-bar sticky (5) より上。
+     SubmitBar (z-40) より上だが、SubmitBar は floating-fixed 右下なので物理的に被らない。 */
+  .comment-row-portal {
     overflow: hidden;
   }
 
@@ -741,11 +741,12 @@
     padding: 56px 0;
     border-top: 1px solid var(--color-border-soft);
     position: relative;
-    /* v5: content-visibility: auto は撤去した。
-       理由: 暗黙の contain: layout paint style が子孫 .comment-row の position: sticky の
-       containing block を redirect し、CommentRow がコードの横スクロールに追従してしまうバグの原因
-       (debug-validated.md 参照)。perf 回帰のリスクはあるが、視覚バグの方が優先度高。
-       将来 perf 問題が出たら IntersectionObserver で個別 section を hide する設計に切り替える。 */
+    /* v5.0.1: content-visibility: auto を復活。tab 切替で 22 panel 全 paint が LoAF 10s の主因
+       (debug-validated.md H2)。v5.0.0 では sticky redirect 回避のために撤去していたが、
+       CommentRow を portal で document.body に逃がす (Panel.tsx CommentRowPortal) ことで
+       containing block redirect の影響を受けない構造になり、復活可能になった。 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1200px;
   }
   .group-section:first-of-type { border-top: none; padding-top: 32px; }
 
@@ -859,10 +860,12 @@
     content-visibility: hidden;
   }
 
-  /* v5: content-visibility: auto は撤去 (.group-section と同じ理由、debug-validated.md 参照)。
-     scroll-margin-top はそのまま (anchor jump 用)。 */
+  /* v5.0.1: content-visibility: auto を復活 (group-section と同じ理由、CommentRow portal 化で
+     containing block redirect が無効化されたため)。scroll-margin-top は anchor jump 用に維持。 */
   .panel-block {
     scroll-margin-top: 72px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px;
   }
 
   /* panel-segment sibling divider (+ combinator selector は utility 化不可) */

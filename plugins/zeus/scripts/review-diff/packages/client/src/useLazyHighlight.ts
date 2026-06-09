@@ -11,17 +11,19 @@
 //   - 一度可視になったら以後は true 固定 (re-observe しない)。
 //     スクロールで一度ハイライトしたファイルを raw に戻すと、戻ってきたときに再 highlight が
 //     走って体感的にチラつき、検索やコメント描画も巻き戻る。一方向 (raw → highlighted) のみ。
-//   - rootMargin は 500px 0px (上下 500px 先読み)。検索 / anchor jump で画面外の file に飛ぶ
-//     ケースでも、ジャンプ着地と同時に highlight 反映が間に合う程度のマージン。
-//   - root は document (= null) で viewport を使う。スクロールコンテナを別途指定するケースが
-//     出てきたら引数で受け取る形に拡張する。
+//   - v5.0.1: rootMargin を 500px → 200px に短縮。500px だと tab reveal 時に 5-8 panel が同時に
+//     intersecting=true になり、22 個分の Shiki commit が同 frame に集中していた (LoAF 1016 の 10s 主因)。
+//     200px なら viewport 高さに応じて 2-3 panel に絞れる。
+//   - v5.0.1: setVisible(true) を startTransition でラップ。tab 切替の urgent commit 群と分離し、
+//     Shiki highlight が一斉に React の concurrent render に乗らないようにする。
+//   - root は document (= null) で viewport を使う。
 
-import { useEffect, useState } from 'react'
+import { startTransition, useEffect, useState } from 'react'
 import type { RefObject } from 'react'
 
 export function useLazyHighlight(
   ref: RefObject<HTMLElement | null>,
-  rootMargin = '500px 0px',
+  rootMargin = '200px 0px',
 ): boolean {
   const [visible, setVisible] = useState(false)
 
@@ -39,7 +41,8 @@ export function useLazyHighlight(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            setVisible(true)
+            // v5.0.1: tab reveal 時の 22 panel 一斉 commit を分離 (startTransition で非緊急化)
+            startTransition(() => setVisible(true))
             io.disconnect()
             break
           }

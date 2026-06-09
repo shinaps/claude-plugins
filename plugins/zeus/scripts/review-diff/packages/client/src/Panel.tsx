@@ -150,8 +150,13 @@ export const Panel = memo(function Panel({
     const container = panelContainerRef.current
     if (!container) return
     let raf = 0
+    // v5.0.1: IntersectionObserver gate を追加。tab reveal 時に 22 panel × per-side × N row の
+    // ResizeObserver が一斉発火して LoAF 1010 の fsl=4745ms を生んでいた (debug-validated.md H1)。
+    // viewport ± 200px 外の panel は sync を完全 skip することで「同 frame に 22 panel 集中」を防ぐ。
+    let isVisible = typeof IntersectionObserver === 'undefined' // SSR / happy-dom 互換 fallback
     const sync = () => {
       raf = 0
+      if (!isVisible) return  // viewport 外 panel は完全スキップ
       const leftRows = container.querySelectorAll<HTMLElement>('.panel-side-asis .code-row')
       const rightRows = container.querySelectorAll<HTMLElement>('.panel-side-tobe .code-row')
       const n = Math.min(leftRows.length, rightRows.length)
@@ -197,9 +202,28 @@ export const Panel = memo(function Panel({
     sync()
     const ro = new ResizeObserver(schedule)
     container.querySelectorAll<HTMLElement>('.code-row').forEach((el) => ro.observe(el))
+    // v5.0.1: viewport ±200px に入った瞬間に isVisible を立てて sync をキック。
+    // tab-hidden 配下では IO は intersecting=false を返すため自然にゲートが効く。
+    // happy-dom (= IntersectionObserver なし) では isVisible 初期値 true なので分岐に入らない。
+    let io: IntersectionObserver | null = null
+    if (typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting && !isVisible) {
+              isVisible = true
+              schedule()
+            }
+          }
+        },
+        { root: null, rootMargin: '200px 0px' },
+      )
+      io.observe(container)
+    }
     return () => {
       if (raf) cancelAnimationFrame(raf)
       ro.disconnect()
+      io?.disconnect()
       container.querySelectorAll<HTMLElement>('.code-row').forEach((el) => {
         el.style.minHeight = ''
       })
@@ -678,6 +702,10 @@ function SideRow({
   commentKeysByAnchor: Map<string, string[]>
   handlers: LineCommentHandlers
 } & RowHandlerProps) {
+  // v5.0.1: CommentRow を createPortal で document.body に出すための anchor ref。
+  // .panel-block / .group-section の content-visibility: auto による sticky containing block
+  // redirect を回避するために portal 化が必要 (debug-validated.md P1 / H2)。
+  const codeRowRef = useRef<HTMLDivElement | null>(null)
   const lang = side === 'asIs' ? (panel.asIsLanguage ?? 'plaintext') : (panel.toBeLanguage ?? 'plaintext')
   const cell = side === 'asIs' ? row.asIs : row.toBe
   const html = useMemo(
@@ -730,6 +758,7 @@ function SideRow({
         変更時はテストが落ちる + 動的合成が壊れるため、ここは BEM 文字列を直接編集してはならない。
       */}
       <div
+        ref={codeRowRef}
         className={`code-row code-row-${sideClass} code-row-${cell.type}${selectedClass}`}
         {...(chunkIdx >= 0 ? { 'data-chunk-idx': String(chunkIdx) } : {})}
       >
@@ -774,6 +803,7 @@ function SideRow({
               lineKey={key}
               panel={panel}
               handlers={handlers}
+              anchorRef={codeRowRef}
             />
           ))
         : null}
@@ -885,11 +915,13 @@ function LineTrigger({
 }
 
 function CommentRow({
-  lineKey, panel, handlers,
+  lineKey, panel, handlers, anchorRef,
 }: {
   lineKey: string
   panel: RenderedPanel
   handlers: LineCommentHandlers
+  // v5.0.1: portal で document.body に出すための anchor (= 該当 code-row) ref。
+  anchorRef: React.RefObject<HTMLDivElement | null>
 }): React.ReactElement | null {
   const parsed = parseLineCommentKey(lineKey)
   const savedList = handlers.lineComments.get(lineKey)
@@ -976,12 +1008,90 @@ function CommentRow({
     </div>
   )
 
-  // v5: comment-row は CSS で position: sticky left: 0 で panel-side の visible 左端に固定。
-  // (= globals.css の .comment-row、panel-block / group-section の content-visibility 撤去とセット)
+  // v5.0.1: portal で document.body に出す。理由:
+  //   .panel-block / .group-section の content-visibility: auto が暗黙の contain: layout paint style を
+  //   発動させ、子孫 .comment-row の position: sticky の containing block を redirect していた。
+  //   sticky を捨てて createPortal + position: fixed に切り替えることで、cv:auto を復活させても
+  //   sticky redirect の影響を受けない構造になる (= tab 切替の paint コスト 14.6s → <1s)。
+  //   既存 drag-cursor-indicator が同じ手法で同根バグを回避済み (Panel.tsx CommentRowPortal の先例)。
   return (
-    <div className="comment-row" data-comment-side={sideToAttr(parsed.side)}>
-      <div className="p-0">{thread}</div>
-    </div>
+    <CommentRowPortal anchorRef={anchorRef} side={parsed.side}>
+      {thread}
+    </CommentRowPortal>
+  )
+}
+
+// CommentRowPortal: anchor (= 該当 code-row) の bounding rect を読んで position: fixed で
+// document.body に出すラッパ。anchor の縦位置と panel-side の visible 左端/幅に追従する。
+//   - scroll (panel-side overflow-x), scroll (window), resize, anchor の ResizeObserver の 4 系統で update
+//   - 更新は rAF batching、scroll perf を確保
+//   - z-index 100: tab-bar sticky (5) より上、drag-cursor-indicator (9999) より下
+function CommentRowPortal({
+  children, anchorRef, side,
+}: {
+  children: React.ReactNode
+  anchorRef: React.RefObject<HTMLDivElement | null>
+  side: Side
+}): React.ReactElement | null {
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current
+    if (!anchor) return
+    let rafId: number | null = null
+
+    const update = () => {
+      const anchorRect = anchor.getBoundingClientRect()
+      // anchor.bottom 起点で出し、left/width は panel-side の visible 範囲に合わせる
+      const panelSide = anchor.closest('.panel-side') as HTMLElement | null
+      const panelRect = panelSide?.getBoundingClientRect()
+      const left = panelRect ? panelRect.left : anchorRect.left
+      const width = panelRect ? panelRect.width : anchorRect.width
+      setPosition({ left, top: anchorRect.bottom, width })
+    }
+    const schedule = () => {
+      if (rafId != null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        update()
+      })
+    }
+
+    update()
+
+    const ro = new ResizeObserver(schedule)
+    ro.observe(anchor)
+    const panelSide = anchor.closest('.panel-side') as HTMLElement | null
+    panelSide?.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+
+    return () => {
+      ro.disconnect()
+      panelSide?.removeEventListener('scroll', schedule)
+      window.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      if (rafId != null) cancelAnimationFrame(rafId)
+    }
+  }, [anchorRef])
+
+  if (!position) return null
+
+  return createPortal(
+    <div
+      className="comment-row comment-row-portal"
+      data-comment-side={sideToAttr(side)}
+      style={{
+        position: 'fixed',
+        left: position.left,
+        top: position.top,
+        width: position.width,
+        zIndex: 100,
+      }}
+    >
+      <div className="p-0">{children}</div>
+    </div>,
+    document.body,
   )
 }
 
