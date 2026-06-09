@@ -282,17 +282,9 @@ export function GroupNav({
           onChange={(e) => onCommentChange(groupId, e.target.value)}
         />
         <div className="flex gap-1.5" role="radiogroup" aria-label="Group decision">
-          {/* btn-decision + btn-approve/btn-rc BEM 維持: .is-selected で approved=緑、rc=赤に色を切り替える
+          {/* v5.0.4: SubmitBar (Comment → Request Changes → Approve) と順序を揃える。
+              btn-decision + btn-approve/btn-rc BEM 維持: .is-selected で approved=緑、rc=赤に色を切り替える
               scope rule が globals.css にあるため。base 見た目は utility。 */}
-          <button
-            type="button"
-            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
-            disabled={!decisionInteractive}
-            aria-pressed={decision === 'approved'}
-            onClick={() => onDecisionChange(groupId, decision === 'approved' ? null : 'approved')}
-          >
-            Approve
-          </button>
           <button
             type="button"
             className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
@@ -301,6 +293,15 @@ export function GroupNav({
             onClick={() => onDecisionChange(groupId, decision === 'request-changes' ? null : 'request-changes')}
           >
             Request changes
+          </button>
+          <button
+            type="button"
+            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
+            disabled={!decisionInteractive}
+            aria-pressed={decision === 'approved'}
+            onClick={() => onDecisionChange(groupId, decision === 'approved' ? null : 'approved')}
+          >
+            Approve
           </button>
         </div>
       </div>
