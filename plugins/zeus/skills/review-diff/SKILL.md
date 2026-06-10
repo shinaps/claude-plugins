@@ -562,44 +562,46 @@ RC=$(jq '[.groupDecisions[] | select(. == "request-changes")] | length' "$WORK_D
 
 ```bash
 # 先頭から走査。最初の RC で break。
+# 変数名に GID を使わないこと: zsh では GID がプロセスのグループ ID を表す特殊変数で、
+# 代入すると "failed to change group ID: operation not permitted" で即失敗する。
 GROUPS_LEN=$(jq '.groups | length' "$WORK_DIR/summary.json")
 COMMIT_COUNT=0
-LAST_GID=""
+LAST_GROUP_ID=""
 for i in $(seq 0 $((GROUPS_LEN - 1))); do
-  GID="g${i}"
-  DECISION=$(jq -r --arg id "$GID" '.groupDecisions[$id] // "missing"' "$WORK_DIR/result.json")
+  GROUP_ID="g${i}"
+  DECISION=$(jq -r --arg id "$GROUP_ID" '.groupDecisions[$id] // "missing"' "$WORK_DIR/result.json")
   if [ "$DECISION" = "request-changes" ]; then
-    echo "[review-diff] stopped at $GID (request-changes)"
-    LAST_GID="$GID"
+    echo "[review-diff] stopped at $GROUP_ID (request-changes)"
+    LAST_GROUP_ID="$GROUP_ID"
     break
   fi
   if [ "$DECISION" != "approved" ]; then
     # missing は許容しない (timeout でも groupDecisions は空、フローには来ない)
-    echo "[review-diff] unexpected decision for $GID: $DECISION"
+    echo "[review-diff] unexpected decision for $GROUP_ID: $DECISION"
     break
   fi
   # 部分 patch 抽出 (--unidiff-zero 互換)
   node "$CLI" extract-group-patch \
     --summary "$WORK_DIR/summary.json" \
     --diff "$WORK_DIR/diff.patch" \
-    --group "$GID" \
-    > "$WORK_DIR/patch.${GID}.diff" 2>/dev/null
+    --group "$GROUP_ID" \
+    > "$WORK_DIR/patch.${GROUP_ID}.diff" 2>/dev/null
   # 空 patch (context-only approved group) は commit skip
-  if [ ! -s "$WORK_DIR/patch.${GID}.diff" ]; then
-    echo "[review-diff] skipped empty group $GID"
+  if [ ! -s "$WORK_DIR/patch.${GROUP_ID}.diff" ]; then
+    echo "[review-diff] skipped empty group $GROUP_ID"
     continue
   fi
   # index を初期化して当該 group のみ stage
   git restore --staged . 2>/dev/null || true
-  if ! git apply --cached --unidiff-zero --recount "$WORK_DIR/patch.${GID}.diff" 2>/dev/null; then
-    echo "[review-diff] FATAL: failed to apply patch for $GID — aborting" >&2
+  if ! git apply --cached --unidiff-zero --recount "$WORK_DIR/patch.${GROUP_ID}.diff" 2>/dev/null; then
+    echo "[review-diff] FATAL: failed to apply patch for $GROUP_ID — aborting" >&2
     git restore --staged .
     # 全 commit を諦め、ユーザーに状況を提示
     break
   fi
   # commit メッセージは AI が group.title + description + 該当 group の comment + panel.intent から生成
   # (semantic prefix を含む 1〜2 行サマリ)
-  git commit -m "$COMMIT_MSG_FOR_${GID}"
+  git commit -m "$COMMIT_MSG_FOR_${GROUP_ID}"
   COMMIT_COUNT=$((COMMIT_COUNT + 1))
 done
 echo "[review-diff] created $COMMIT_COUNT commits"
