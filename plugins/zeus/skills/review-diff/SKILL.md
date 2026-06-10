@@ -688,15 +688,20 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
 
 手順:
 
-1. `result.json` から `threads` を取得 (各スレッドの `messages[]` には最新の user message が含まれる)
+1. `result.json` から `threads` と `comments[]` を取得し、**comments[] の新規コメントを thread 化して threads にマージ** する:
+   - thread のキーは scope から決める: group scope → `group:<groupId>`、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
+   - 既存キーの thread があれば `messages[]` に user message として append、無ければ新規 thread (`resolved: false, outdated: false`) を作る
+   - message の形は `{ id: <uuid>, author: 'user', body, ts: <epoch ms> }`
+   - **group への質問・相談の正規動線**: decision section の textarea に書いて group の **Comment** ボタンで pending としてスレッドに積む (レビュー継続、GitHub の pending review コメントと同じ) → SubmitBar の **Comment** で一括送信。積んだ分は `threads` に user message として既に入っているので、comments[] の thread 化マージは「textarea に書き残したまま submit したケース」のフォールバック
 2. **work-dir は維持** (summary.json / diff.patch を再利用)
-3. **Claude が各スレッドの最新 user message を読んで応答内容を判定**:
+3. **Claude が「最後の message が user である全 open thread」の最新 user message を読んで応答内容を判定**:
    - 質問 → answer (回答メッセージを agent message として thread に append)
    - 指示 / 修正要求 → suggest (diff サンプル提示) または apply (実ファイルを Edit/Write で書き換え)
    - context+ 相当の要望 → expand (関連 panel を summary.json に追加)
 4. **`restore.json` を Write** で書き出す:
-   - `threads`: 各 thread.messages に agent message を追記したもの (agentAction で対応種別を記録)
-   - `groupDecisions` / `groupComments` / `lineCommentDrafts`: result.json からそのままコピー
+   - `threads`: 手順 1 でマージした threads の各 thread.messages に agent message を追記したもの (agentAction で対応種別を記録)
+   - `groupDecisions` / `lineCommentDrafts`: result.json からそのままコピー
+   - `groupComments`: result.json からコピーするが、**手順 1 で thread 化した group のエントリは除去する** (textarea に残ったまま復元すると、次の Comment 送信で同じ本文がもう一度 thread 化されて二重になるため)
    - `reviewKind: 'comment'` を載せる
 5. **apply の場合のみ、`mark-outdated` subcommand で outdated 自動判定**:
    ```bash
@@ -711,6 +716,7 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
    ```
 6. **`Skill('zeus:review-diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
    - Activity タブの Conversation セクションに agent 返信が反映される
+   - group スレッドは Guide タブの該当 group の decision section (textarea の上) にも会話履歴が表示される
    - outdated になったスレッドは Activity タブで折りたたみ表示される
 
 #### timeout
