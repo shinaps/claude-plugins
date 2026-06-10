@@ -449,6 +449,15 @@ function migrateCommentToThread(c: unknown): ThreadSnapshot | null {
       outdated: false,
     }
   }
+  if (cc.scope.type === 'file') {
+    if (typeof cc.scope.file !== 'string' || cc.scope.file === '') return null
+    return {
+      scope: { type: 'file', file: cc.scope.file },
+      messages: [{ id: cryptoRandomId(), author: 'user', body: cc.body, ts: Date.now() }],
+      resolved: false,
+      outdated: false,
+    }
+  }
   return null
 }
 

@@ -11,7 +11,8 @@ import type { RestoreStateV2, ThreadSnapshot } from '@zeus/review-diff-shared'
 //        git diff <before-sha>..<after-sha> -- <file> から changed line interval を抽出
 //        thread.scope.line[..endLine] と交叉すれば outdated = true
 //     3. outdatedOverride='keep' なら強制 false、'force' なら強制 true
-//     4. group scope thread は override 以外で自動判定しない (v5.0.0 の制約)
+//     4. group / file scope thread は override 以外で自動判定しない
+//        (行交叉の概念が無く、ファイルの部分変更で「ファイル全体への指摘」が陳腐化するとは限らないため)
 //     5. restore.json を書き戻す
 //
 // この subcommand は SKILL.md Phase 6 で agent が apply action を選んだ直後に呼ばれる。
@@ -101,7 +102,7 @@ function computeOutdated(
   if (snap.outdatedOverride === 'force') {
     return snap.outdated ? snap : { ...snap, outdated: true }
   }
-  // 自動判定: line scope のみ。group scope は値不変。
+  // 自動判定: line scope のみ。group / file scope は値不変。
   if (snap.scope.type !== 'line') return snap
   const file = snap.scope.file
   if (!changedFiles.has(file)) return snap
