@@ -704,20 +704,21 @@
     user-select: none;
   }
 
-  /* v5.0.1: CommentRow は createPortal で document.body に逃がし、position: fixed で
-     anchor (= 該当 code-row) に追従させる (Panel.tsx CommentRowPortal)。
-     これで .panel-block / .group-section の content-visibility: auto による sticky containing block
-     redirect の影響を受けず、cv:auto を復活できる (= tab 切替 perf 大幅改善)。
-     class 自体は test contract のため残し、visual style は .comment-row-portal に集約。 */
+  /* comment-row: code-row 直後に in-flow で挟まる行コメント。縦はコードと一体でスクロールし、
+     行間に高さを確保する (= 埋め込み表示)。
+     横は transform: translateX(--ps-scroll-x) で panel-side の visible 左端に pinning する
+     (変数は Panel.tsx の横スクロールハンドラが panel-side に同期書き込み)。
+     position: sticky で pinning しない理由: .panel-block / .group-section の content-visibility: auto の
+     暗黙 contain が sticky の containing block を redirect し、コメントが横スクロールに追従して
+     流れてしまうため。transform は containing block に依存せず cv:auto と共存できる。
+     width は panel-side 実 clientWidth (--ps-width、Panel.tsx の ResizeObserver が書く)。
+     fallback の viewport calc は ResizeObserver 起動前の 1 frame 用で、実値より +16px ほど粗い。 */
   .comment-row {
+    width: var(--ps-width, calc((100vw - var(--nav-width, 320px) - 48px) / 2 - 1px));
+    transform: translateX(var(--ps-scroll-x, 0px));
     background: var(--color-surface-2);
     border-top: 1px solid var(--color-border-soft);
     border-bottom: 1px solid var(--color-border-soft);
-  }
-  /* portal 時の見栄え。position: fixed + left/top/width は Panel.tsx が JS で計算して inline 適用。
-     z-index 100: drag-cursor-indicator (9999) より下、tab-bar sticky (5) より上。
-     SubmitBar (z-40) より上だが、SubmitBar は floating-fixed 右下なので物理的に被らない。 */
-  .comment-row-portal {
     overflow: hidden;
   }
 
