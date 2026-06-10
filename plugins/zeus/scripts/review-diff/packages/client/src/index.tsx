@@ -5,7 +5,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.tsx'
-import { getPayload, startHeartbeat } from './state.ts'
+import { getPayload, startHeartbeat } from './lib/state.ts'
 // CSS を entry に import する目的は「production build で dist/globals.css を生成させる」だけ。
 // Vite library mode は entry の依存グラフに含まれる CSS だけを output asset に書き出すため、
 // dev-entry.tsx の import だけでは build 時に CSS が出ない。runtime では cli の <style> inline 配信が

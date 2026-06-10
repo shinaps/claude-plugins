@@ -15,7 +15,7 @@ import { flushSync } from 'react-dom'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from './Panel'
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
-import { useLazyHighlight } from './useLazyHighlight'
+import { useLazyHighlight } from '../lib/useLazyHighlight'
 import type { LineCommentHandlers } from './useLineComments'
 
 export type PanelBlockProps = {

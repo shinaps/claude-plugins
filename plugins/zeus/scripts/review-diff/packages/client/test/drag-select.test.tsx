@@ -12,8 +12,8 @@ import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect, beforeEach } from 'vitest'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
-import { Panel } from '../src/Panel'
-import type { LineCommentHandlers, LineTarget } from '../src/useLineComments'
+import { Panel } from '../src/guide/Panel'
+import type { LineCommentHandlers, LineTarget } from '../src/guide/useLineComments'
 
 function makePanel(panelId = 'p1'): RenderedPanel {
   // context 3 行のシンプルな panel。各 row は両側 context (= 行番号が両側 1..3)。

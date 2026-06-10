@@ -10,7 +10,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import type { Side } from '@zeus/review-diff-shared'
-import { lineCommentKey } from './state'
+import { lineCommentKey } from '../lib/state'
 
 export type LineTarget = {
   side: Side
