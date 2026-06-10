@@ -22,10 +22,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, SquareArrowOutUpRight } from 'lucide-react'
-import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
+import type { RenderedPanel, SideBySideRow, Side, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
-import { parseLineCommentKey, lineCommentKey } from '../lib/state'
-import { getToken } from '../lib/state'
+import { parseLineCommentKey, lineCommentKey, getToken } from '../lib/state'
+import { createShiki } from '../lib/shiki-bundle'
+import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
+import { CommentForm } from './CommentForm'
 import type { LineCommentHandlers } from './useLineComments'
 
 // v5: window 経由で editorAvailable と editor-open Toast コールバックを受け渡す。
@@ -35,7 +37,6 @@ import type { LineCommentHandlers } from './useLineComments'
 //   - __reviewDiffThreads         : 永続化済みスレッド (payload.initialThreads)、user/agent message を全表示
 //
 // CR-3: editor command 自体は server 側のみで保持される。クライアントは boolean だけ知る。
-import type { ThreadSnapshot } from '@zeus/review-diff-shared'
 declare global {
   interface Window {
     __reviewDiffEditorAvailable?: boolean
@@ -50,9 +51,6 @@ function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number
   const range = endLine != null && endLine !== line ? `${line}:${endLine}` : `${line}`
   return `line:${panelId}:${side}:${range}`
 }
-import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
-import { CommentForm } from './CommentForm'
-import { createShiki } from '../lib/shiki-bundle'
 
 const SHIKI = createShiki()
 const CLICK_THRESHOLD_MS = 200

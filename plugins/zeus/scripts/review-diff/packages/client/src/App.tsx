@@ -22,8 +22,9 @@ import type {
   RenderedPanel,
   ResultJson,
   ReviewKind,
+  ThreadMessage,
+  ThreadSnapshot,
 } from '@zeus/review-diff-shared'
-import type { ThreadMessage, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { threadKey } from '@zeus/review-diff-shared'
 import { TabBar } from './chrome/TabBar'
 import { GroupSection } from './guide/GroupSection'
@@ -32,13 +33,13 @@ import { SubmitBar } from './chrome/SubmitBar'
 import { ChunkNavigator } from './chrome/ChunkNavigator'
 import { ActivityView } from './activity/ActivityView'
 import { shouldAutoCollapseFile } from './guide/auto-collapse'
+import { renderMarkdown, escapeHtml } from './lib/markdown'
+import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
+import { useLineComments } from './guide/useLineComments'
 
 // Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
 // 「ちょっとした変更でもファイル全部表示」になりがち。閾値を低めに振って俯瞰時の応答性を確保。
 const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
-import { renderMarkdown, escapeHtml } from './lib/markdown'
-import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
-import { useLineComments } from './guide/useLineComments'
 
 const NAV_WIDTH_MIN = 240
 const NAV_WIDTH_MAX = 480
