@@ -37,13 +37,11 @@ import { renderMarkdown, escapeHtml } from './lib/markdown'
 import { basename } from './lib/path'
 import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
 import { useLineComments } from './guide/useLineComments'
+import { useNavResizer } from './guide/useNavResizer'
 
 // Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
 // 「ちょっとした変更でもファイル全部表示」になりがち。閾値を低めに振って俯瞰時の応答性を確保。
 const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
-
-const NAV_WIDTH_MIN = 240
-const NAV_WIDTH_MAX = 480
 
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
@@ -481,72 +479,7 @@ export function App({ payload }: Props) {
     [groupsState, groupDecisions, groupComments, threads, regenPending, submitted, lineCommentHandlers.lineComments],
   )
 
-  // nav resizer (旧 App から流用、CSS variable 直接書き込み + rAF batch)
-  const onNavResizerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    const resizer = e.currentTarget
-    const pointerId = e.pointerId
-    const container = containerRef.current
-    if (!container) return
-    const section = resizer.closest('.group-section') as HTMLElement | null
-    if (!section) return
-
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-    // パフォーマンス最適化: ドラッグ中だけ body に is-resizing-nav class を当て、
-     // CSS 側で .group-section / .group-nav-wrapper に will-change: grid-template-columns を付与。
-     // これにより Chrome が grid 再計算を独立 layer に隔離し、reflow コストが下がる。
-     // ドラッグ終了時に class を外して will-change を消す (常時付けると memory コストが上がる)。
-    document.body.classList.add('is-resizing-nav')
-    resizer.classList.add('dragging')
-    try { resizer.setPointerCapture(pointerId) } catch { /* noop */ }
-
-    // パフォーマンス最適化: drag 開始時の section.left を 1 度だけキャッシュ。
-    // ドラッグ中に getBoundingClientRect() を呼ぶと「直前の setProperty 後のスタイル更新」を
-    // 完了させるための forced sync layout が rAF callback 内で発生し、frame budget を食い潰す。
-    // 座標は drag 中変わらないので start でキャッシュすれば flush は純粋に style write だけになる。
-    const cachedSectionLeft = section.getBoundingClientRect().left
-    // バーは grid gap 内 (-right-3.5) に浮いているため、pointer 位置をそのまま nav 幅に
-    // すると掴んだ瞬間に十数 px ジャンプする。掴み位置と nav 右端 (= wrapper 右端) の
-    // 差分を引いて「掴んだ場所がそのまま付いてくる」挙動にする。
-    const wrapper = resizer.parentElement
-    const grabDelta = wrapper ? e.clientX - wrapper.getBoundingClientRect().right : 0
-    let rafId: number | null = null
-    let pendingClientX = 0
-    let lastWrittenPx = -1
-    function flush() {
-      rafId = null
-      if (!container) return
-      const next = pendingClientX - cachedSectionLeft - grabDelta
-      const clamped = Math.max(NAV_WIDTH_MIN, Math.min(NAV_WIDTH_MAX, next))
-      const rounded = Math.round(clamped)
-      // パフォーマンス最適化: 同じ px 値なら setProperty を skip (style recalc を起こさない)。
-      // 1px 未満の微動でも cascade が走るのを防ぐ。
-      if (rounded === lastWrittenPx) return
-      lastWrittenPx = rounded
-      container.style.setProperty('--nav-width', `${rounded}px`)
-    }
-    function onMove(ev: PointerEvent) {
-      pendingClientX = ev.clientX
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(flush)
-    }
-    function onUp() {
-      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      document.body.classList.remove('is-resizing-nav')
-      resizer.classList.remove('dragging')
-      try { resizer.releasePointerCapture(pointerId) } catch { /* noop */ }
-      resizer.removeEventListener('pointermove', onMove)
-      resizer.removeEventListener('pointerup', onUp)
-      resizer.removeEventListener('pointercancel', onUp)
-    }
-    resizer.addEventListener('pointermove', onMove)
-    resizer.addEventListener('pointerup', onUp)
-    resizer.addEventListener('pointercancel', onUp)
-  }, [])
+  const onNavResizerPointerDown = useNavResizer(containerRef)
 
   const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
   const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
