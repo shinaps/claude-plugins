@@ -4,6 +4,8 @@
 //   - SubmitBar のボタン押下で POST /result?token=... に ResultJson が飛ぶ
 //     (decision / reviewKind / groupDecisions の fillMode 補完 / note の thread 合成 / submitNote)
 //   - 成功時は完了画面 ("Review submitted ..." 等) を表示し、300ms 後に window.close() が呼ばれる
+//   - 完了画面の approved / request-changes 集計は実際に POST した groupDecisions と一致する
+//     (fillMode 補完分を含む)
 //   - 失敗時は toast を出し、submit 可能な状態を保つ (close しない)
 //   - context+ は decision='regen-group' で currentRanges / lineCommentDrafts を回収して送る
 //   - 全 group decision がユーザー操作で確定した瞬間に auto-submit が発火する
@@ -208,18 +210,59 @@ describe('submit (SubmitBar 経由)', () => {
 })
 
 describe('完了画面 (submitted state)', () => {
-  test('SubmitBar Approve 成功後: state ベースの集計で完了画面が表示され、その後 window.close', async () => {
+  test('SubmitBar Approve 成功後: fillMode 補完を含む POST 内容と一致する集計で完了画面が表示される', async () => {
     const user = userEvent.setup()
     render(<App payload={makePayload()} />)
 
     await openSidebar(user)
     await user.click(screen.getByRole('button', { name: 'Approve' }))
 
-    // 完了画面の集計は groupDecisions **state** から計算される。fillMode='approved' の補完は
-    // POST body にのみ効き state は更新しないため、未判定だった g0 はどちらにも数えられない
-    // (POST は all approved なのに画面は "1 approved" になる。この不整合は既知、別途検討対象)。
+    // 完了画面の集計は「実際に POST した groupDecisions」のスナップショットから計算される。
+    // fillMode='approved' で補完された未判定 g0 も集計に含まれ、POST と画面が常に一致する。
+    expect(postedBody().groupDecisions).toEqual({ g0: 'approved', g1: 'approved' })
     expect(
-      screen.getByText('Review submitted (1 approved / 0 request-changes). You can close this tab.'),
+      screen.getByText(/Review submitted \(all 2 groups approved\)/),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('SubmitBar Request Changes 成功後: RC 補完分を含む集計で完了画面が表示される', async () => {
+    const user = userEvent.setup()
+    // g0 未判定 → fillMode='request-changes' で補完、g1 は panels=0 の自動 approved
+    render(<App payload={makePayload()} />)
+
+    await openSidebar(user)
+    await user.click(screen.getByRole('button', { name: 'Request Changes' }))
+
+    expect(postedBody().groupDecisions).toEqual({ g0: 'request-changes', g1: 'approved' })
+    expect(
+      screen.getByText('Review submitted (1 approved / 1 request-changes). You can close this tab.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('全 group RC 補完の submit: "all N groups request-changes" 完了画面が表示される', async () => {
+    const user = userEvent.setup()
+    // 両 group が panels を持つ payload にして g0/g1 とも未判定 → RC fillMode で全件補完される
+    const p2 = makePanel('p2')
+    render(
+      <App
+        payload={makePayload({
+          groups: [
+            { groupId: 'g0', title: 'Group Zero', description: '', panels: [makePanel()] },
+            { groupId: 'g1', title: 'Group One', description: '', panels: [p2] },
+          ],
+          allPanels: ['p1', 'p2'],
+        })}
+      />,
+    )
+
+    await openSidebar(user)
+    await user.click(screen.getByRole('button', { name: 'Request Changes' }))
+
+    expect(postedBody().groupDecisions).toEqual({ g0: 'request-changes', g1: 'request-changes' })
+    expect(
+      screen.getByText(/Review submitted \(all 2 groups request-changes\)/),
     ).toBeInTheDocument()
     await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
   })
