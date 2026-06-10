@@ -393,7 +393,9 @@ export function App({ payload }: Props) {
 
   // fillMode は SubmitBar の「Approve & Submit」「Reject & Submit」用。
   // 未判定 group をどちらかに補完して意思を明示する。指定なしなら未判定はそのまま (null 落とし) で送る。
-  // note は SubmitBar の textarea で書いた全体コメント (任意)。SKILL.md 側で commit メッセージ生成等に活用。
+  // note は SubmitBar の textarea で書いた全体コメント (任意)。review scope thread の user message として
+  // 積むので Claude が返信でき、会話履歴が UI に残る。submitNote にも同じ文字列を載せる
+  // (SKILL.md の commit メッセージ生成が submitNote を読む後方互換)。
   // v5: reviewKind ('approve' | 'request-changes' | 'comment') を必須引数として受け取る。
   //     'comment' のときは decision='comment-reply' に切り替え、Claude が thread に返信する経路に乗る。
   async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) {
@@ -408,12 +410,26 @@ export function App({ payload }: Props) {
       if (next !== null) decisions[g.groupId] = next
     }
     const cs = collectComments()
+    // note は送信と同時に review thread へ積む。setThreads を待たずローカルで合成するのは
+    // state 反映前に fetch する race を避けるため (この直後にタブは閉じるので state 更新は不要)。
+    let outThreads = threads
+    if (note) {
+      const key = threadKey({ type: 'review' })
+      const existing = threads[key]
+      const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: note, ts: Date.now() }
+      outThreads = {
+        ...threads,
+        [key]: existing
+          ? { ...existing, messages: [...existing.messages, msg], resolved: false }
+          : { scope: { type: 'review' }, messages: [msg], resolved: false, outdated: false },
+      }
+    }
     const body: ResultJson = {
       decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
       reviewKind,
       groupDecisions: decisions,
       // ローカル threads state を送る (initialThreads + 本セッションで Comment ボタンが積んだ pending message)
-      threads,
+      threads: outThreads,
       comments: cs,
       ...(note ? { submitNote: note } : {}),
     }
@@ -772,6 +788,7 @@ export function App({ payload }: Props) {
         totalGroups={groupsState.length}
         onSubmit={submit}
         submitting={submitted !== null}
+        reviewThread={threads[threadKey({ type: 'review' })] ?? null}
       />
       {toast ? (
         <div
