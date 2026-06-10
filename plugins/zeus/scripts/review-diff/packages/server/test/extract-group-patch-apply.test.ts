@@ -146,6 +146,41 @@ test('(d) 無音誤削除の防止: 重複内容行 (DUP) 近傍の削除 hunk',
   expect(r.headContents['f.txt']).toBe(final)
 })
 
+test('(f) 新規ファイル追加を含む group が実 apply で commit できる', () => {
+  // runLinearStack は base を必ず書くため、新規ファイルは別経路でセットアップする:
+  // base 側に書かず final のみ存在 = AddedFile として diff に乗る。
+  const dir = mkdtempSync(join(tmpdir(), 'egp-apply-'))
+  try {
+    git(dir, 'init', '-q')
+    git(dir, 'config', 'user.name', 'test')
+    git(dir, 'config', 'user.email', 'test@example.com')
+    git(dir, 'config', 'commit.gpgsign', 'false')
+    writeFileSync(join(dir, 'existing.txt'), lines(...seq(1, 5)))
+    git(dir, 'add', '-A')
+    git(dir, 'commit', '-q', '-m', 'base')
+
+    const newContent = lines('N1', 'N2', 'N3')
+    writeFileSync(join(dir, 'brand-new.txt'), newContent)
+    git(dir, 'add', '-A')
+    const diffText = git(dir, 'diff', '--cached', '--no-color')
+    git(dir, 'restore', '--staged', '.')
+
+    const summary = makeSummary([
+      { title: 'g0', description: '', panels: [{ panelId: 'p1', intent: 'new', toBe: { file: 'brand-new.txt', ranges: [{ start: 1, end: 3 }] } }] },
+    ])
+    const r = extractGroupPatch({ summary, diffText, groupId: 'g0' })
+    expect(r.ok).toBe(true)
+    const patchPath = join(dir, '.patch.diff')
+    writeFileSync(patchPath, r.patch)
+    git(dir, 'apply', '--cached', '--unidiff-zero', '--recount', patchPath)
+    rmSync(patchPath)
+    git(dir, 'commit', '-q', '-m', 'g0')
+    expect(git(dir, 'show', 'HEAD:brand-new.txt')).toBe(newContent)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('(e) 同一 hunk 内で claim 行が交互に並ぶ', () => {
   const base = lines(...seq(1, 5))
   // L1 X1 X2 L2 Y1 L3 Z1 L4 L5 — g0 = Y1 と Z1、g1 = X1 X2

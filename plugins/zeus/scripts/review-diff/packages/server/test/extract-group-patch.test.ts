@@ -341,6 +341,34 @@ index 1111111..2222222 100644
   expect(hunkHeaders(r.patch)).toEqual(['@@ -2,0 +3,1 @@'])
 })
 
+test('U5. AddedFile (新規ファイル) のヘッダは @@ -0,0 +1,N @@ (corrupt な --1 を出さない)', () => {
+  // 新規ファイルの hunk は fromFileRange.start = 0 なので、anchor (start - 1) を
+  // そのまま使うと -1 になり `@@ --1,0 ...` という git apply が読めないヘッダになる。
+  const NEW_FILE_DIFF = `diff --git a/src/new.ts b/src/new.ts
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/src/new.ts
+@@ -0,0 +1,3 @@
++N1
++N2
++N3
+`
+  const summary = makeSummary([
+    {
+      title: 'g0',
+      description: '',
+      panels: [
+        { panelId: 'p1', intent: 'new file', toBe: { file: 'src/new.ts', ranges: [{ start: 1, end: 3 }] } },
+      ],
+    },
+  ])
+  const r = extractGroupPatch({ summary, diffText: NEW_FILE_DIFF, groupId: 'g0' })
+  expect(r.ok).toBe(true)
+  expect(hunkHeaders(r.patch)).toEqual(['@@ -0,0 +1,3 @@'])
+  expect(r.patch).toContain('new file mode 100644')
+})
+
 test('5. 不正な groupId → error', () => {
   const summary = makeSummary([])
   const r = extractGroupPatch({ summary, diffText: SIMPLE_DIFF, groupId: 'invalid' })
