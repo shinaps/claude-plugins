@@ -53,7 +53,6 @@ function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number
 }
 
 const SHIKI = createShiki()
-const CLICK_THRESHOLD_MS = 200
 
 type FlatRow = {
   row: SideBySideRow
@@ -110,7 +109,6 @@ type DragState = {
   side: Side
   startNumber: number
   currentNumber: number
-  startedAt: number
 } | null
 
 export type PanelProps = {
@@ -382,9 +380,7 @@ export const Panel = memo(function Panel({
     const endNumber = resolveLineAtPoint(clientX, clientY, cur.side) ?? cur.currentNumber
     const lo = Math.min(cur.startNumber, endNumber)
     const hi = Math.max(cur.startNumber, endNumber)
-    const elapsed = performance.now() - cur.startedAt
-    const isSingle = lo === hi && elapsed < CLICK_THRESHOLD_MS
-    if (isSingle || lo === hi) {
+    if (lo === hi) {
       handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo })
     } else {
       handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo, endNumber: hi })
@@ -523,10 +519,7 @@ export const Panel = memo(function Panel({
     if (e.button !== 0) return
     e.preventDefault()
     try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* noop */ }
-    setDragBoth({
-      side, startNumber: lineNumber, currentNumber: lineNumber,
-      startedAt: performance.now(),
-    })
+    setDragBoth({ side, startNumber: lineNumber, currentNumber: lineNumber })
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
