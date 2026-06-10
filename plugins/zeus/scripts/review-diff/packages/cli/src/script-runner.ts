@@ -41,6 +41,13 @@ export async function runScripts(args: RunScriptsArgs): Promise<RunScriptsResult
   const changedFiles = readChangedFiles(args.changedFilesPath)
   const ranAt = Date.now()
 
+  // 実行前に command 一覧を stderr へ出す。config が想定外の出所から渡された場合でも
+  // 「何が実行されようとしたか」を script-stderr.log から監査できるようにする多層防御。
+  // matchFiles フィルタ前の全件を列挙するのは「config に何が書かれていたか」の完全な
+  // 記録を残すため (skip 判定の結果は script-results.json 側に残る)。
+  const announcement = buildCommandAnnouncement(scripts)
+  if (announcement) process.stderr.write(announcement + '\n')
+
   // 並列起動。Promise.all なので全完了まで待つ (1 つだけ失敗しても他の結果は取りたい)。
   const results = await Promise.all(scripts.map(s => runOneScript(s, changedFiles, args.envOverride)))
 
@@ -50,6 +57,17 @@ export async function runScripts(args: RunScriptsArgs): Promise<RunScriptsResult
   const hasFailure = results.some(r => r.status === 'failed')
   const failureReport = hasFailure ? buildFailureReport(results) : ''
   return { payload, hasFailure, failureReport }
+}
+
+// config に書かれた script の name と command を人間可読な一覧にする。
+// 純粋関数として export しているのはテスト容易性のため (spawn を伴わず検証できる)。
+export function buildCommandAnnouncement(scripts: ScriptConfig[]): string {
+  if (scripts.length === 0) return ''
+  const lines = [`[review-diff] script gate: ${scripts.length} script(s) configured:`]
+  for (const s of scripts) {
+    lines.push(`  - ${s.name}: ${s.command}`)
+  }
+  return lines.join('\n')
 }
 
 function readChangedFiles(path: string): string[] {

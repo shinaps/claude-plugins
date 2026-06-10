@@ -35,7 +35,8 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 ├── diff.patch       ← staged または gh pr diff の出力
 ├── pr-meta.json     ← PR モードのみ
 ├── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
-└── restore.json     ← regen-group 後の再起動で前回 state を復元するための中間 JSON
+├── restore.json     ← regen-group 後の再起動で前回 state を復元するための中間 JSON
+└── trusted-config.json ← PR モードのみ。base ref から抽出した review-diff.config.json (Phase 4.5 参照)
 ```
 
 **Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
@@ -376,7 +377,19 @@ pr モードの `pr` フィールドは現状 CLI からは参照されない (C
 review-diff CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
 test / typecheck などの「コミット前に通したい」検査を起動条件として強制する仕組み。
 
-#### 4.5.1 config が存在しない場合: AskUserQuestion で誘導
+**config の信頼境界 (最重要)**: PR モードでは config を **checkout 後の working tree から読まない**。
+working tree は `gh pr checkout -f` で PR 作者の支配下にあり、PR 同梱 config の `scripts[].command` が
+UI 表示前に無認証で `sh -c` 実行される RCE になるため。信頼するのは **base ref に tracked な config
+(`git show <baseSha>:path` で checkout 前のレビュー済み履歴から抽出したもの) だけ**。working tree の
+untracked config も読まない (untracked 判定は PR が tracked symlink ディレクトリを同梱することで
+偽装できるため、working tree 由来は一律不信とする)。
+
+#### 4.5.1 config が存在しない場合 (staged モードのみ): AskUserQuestion で誘導
+
+config 作成の誘導は **staged モード限定**。PR モードでは誘導しない — PR レビュー中に config を
+作成しても working tree は PR ブランチ上にあり base ref には存在しないため、PR モードの config
+読み取り (base ref 限定) の対象にならず、誘導しても意味がない。config 設定は自分の staged
+レビュー時に行う。
 
 `.claude/zeus/review-diff.config.json` がリポに無いときは、`AskUserQuestion` で
 
@@ -389,16 +402,20 @@ test / typecheck などの「コミット前に通したい」検査を起動条
 - **永続的にスキップ** (= flag ファイル): `.claude/zeus/review-diff.no-config` を touch して、以後 review-diff 起動時に AskUserQuestion を出さない。flag ファイルを消せば再度誘導される
 
 ```bash
-# config 探索
-CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
-NO_CONFIG_FLAG="${REPO_ROOT}/.claude/zeus/review-diff.no-config"
-if [ ! -f "$CONFIG_FILE" ] && [ ! -f "$NO_CONFIG_FLAG" ]; then
-  # → メインエージェントが AskUserQuestion を投げる (上記 3 択)
-  # 「設定する」を選んだ場合は example.review-diff.config.json を読んで、
-  # editor.kind / scripts[] を AskUserQuestion で詰めて Write
-  # 「今回スキップ」を選んだ場合は何もしない (CONFIG_FILE は無いまま Phase 5 へ)
-  # 「永続スキップ」を選んだ場合は flag ファイルを touch
-  :
+# config 誘導は staged モードのみ (PR モード判定は pr-meta.json の存在で行う。
+# $MODE のような shell 変数は Bash 呼び出しを跨いで揮発し、空に評価されると危険側に
+# 倒れるため、永続アーティファクトをシグナルにする)
+if [ ! -f "$WORK_DIR/pr-meta.json" ]; then
+  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+  NO_CONFIG_FLAG="${REPO_ROOT}/.claude/zeus/review-diff.no-config"
+  if [ ! -f "$CONFIG_FILE" ] && [ ! -f "$NO_CONFIG_FLAG" ]; then
+    # → メインエージェントが AskUserQuestion を投げる (上記 3 択)
+    # 「設定する」を選んだ場合は example.review-diff.config.json を読んで、
+    # editor.kind / scripts[] を AskUserQuestion で詰めて Write
+    # 「今回スキップ」を選んだ場合は何もしない (CONFIG_FILE は無いまま Phase 5 へ)
+    # 「永続スキップ」を選んだ場合は flag ファイルを touch
+    :
+  fi
 fi
 ```
 
@@ -409,10 +426,28 @@ editor 設定 (= toBe addition 行の hover で出るエディタリンク) も�
 #### 4.5.2 config が存在する場合: スクリプト実行
 
 ```bash
-CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+# config の解決は信頼境界に従う (Phase 4.5 導入文参照):
+#   - PR モード (pr-meta.json が存在): base ref に tracked な config だけを
+#     trusted-config.json として抽出する。working tree の config は tracked / untracked を
+#     問わず一切読まない。`[ -s ]` の非空チェックは「空 config が JSON.parse で throw して
+#     ゲートが exit 2 → レビュー全体がブロックされる」事故を config 不在扱いに倒すため
+#   - staged モード: working tree は自分の変更 (信頼境界内) なので従来どおり直接読む
+if [ -f "$WORK_DIR/pr-meta.json" ]; then
+  BASE_SHA=$(jq -r '.baseRefOid' "$WORK_DIR/pr-meta.json")
+  CONFIG_FILE="$WORK_DIR/trusted-config.json"
+  if git show "${BASE_SHA}:.claude/zeus/review-diff.config.json" > "$CONFIG_FILE" 2>/dev/null \
+     && [ -s "$CONFIG_FILE" ]; then
+    :
+  else
+    rm -f "$CONFIG_FILE"  # base ref に config が無い (or 空) → config 不在として扱う
+  fi
+else
+  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+fi
+
 if [ -f "$CONFIG_FILE" ]; then
   # 変更ファイル一覧を生成 (staged モードと PR モードで取得方法が違う)
-  if [ "$MODE" = "staged" ]; then
+  if [ ! -f "$WORK_DIR/pr-meta.json" ]; then
     git diff --cached --name-only > "$WORK_DIR/changed-files.txt"
   else
     # PR mode: pr-meta.json の baseRefOid を使って PR base 全体との diff を取る
@@ -425,9 +460,11 @@ if [ -f "$CONFIG_FILE" ]; then
     --changed-files "$WORK_DIR/changed-files.txt" \
     --out "$WORK_DIR/script-results.json" 2>"$WORK_DIR/script-stderr.log"
   GATE_EXIT=$?
+  # 成否を問わず stderr ログを表示する。CLI は実行前に「これから実行する command 一覧」を
+  # stderr に出すので、成功時もここで何が実行されたかをメインエージェントが監査できる
+  cat "$WORK_DIR/script-stderr.log" >&2
   if [ "$GATE_EXIT" -ne 0 ]; then
     echo "[review-diff] Pre-flight script gate failed. UI not opened." >&2
-    cat "$WORK_DIR/script-stderr.log" >&2
     exit 1
   fi
 fi
@@ -452,14 +489,20 @@ CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskO
 #   --config <path>          : review-diff.config.json (editor / scripts の設定)
 #   --script-results <path>  : Phase 4.5 のスクリプトゲート結果 (Activity タブ Pre-flight チップ用)
 #   --base-sha <sha>         : PR モードで base ref の SHA を渡す (なければ HEAD~1)
-CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+# config の解決は Phase 4.5.2 と同じ信頼境界に従う。editor preset (editor.command も
+# sh -c 実行される) を含むため、PR モードでは base ref 由来の trusted-config.json だけを使う
+if [ -f "$WORK_DIR/pr-meta.json" ]; then
+  CONFIG_FILE="$WORK_DIR/trusted-config.json"
+else
+  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+fi
 CONFIG_ARG=""
 [ -f "$CONFIG_FILE" ] && CONFIG_ARG="--config $CONFIG_FILE"
 SCRIPT_RESULTS_ARG=""
 [ -f "$WORK_DIR/script-results.json" ] && SCRIPT_RESULTS_ARG="--script-results $WORK_DIR/script-results.json"
 
-# 通常起動 (初回 or rejectループ)
-if [ "$MODE" = "pr" ]; then
+# 通常起動 (初回 or rejectループ)。PR 判定は config 解決と同じく pr-meta.json の存在で行う
+if [ -f "$WORK_DIR/pr-meta.json" ]; then
   BASE_SHA=$(jq -r '.baseRefOid // ""' "$WORK_DIR/pr-meta.json")
   BASE_SHA_ARG=""
   [ -n "$BASE_SHA" ] && BASE_SHA_ARG="--base-sha $BASE_SHA"
