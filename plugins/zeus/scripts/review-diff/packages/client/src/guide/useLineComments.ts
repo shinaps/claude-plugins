@@ -60,16 +60,12 @@ export type LineCommentHandlers = {
   onDeleteLineComment: (key: string, index: number) => void
 }
 
-// regen-group → close-relaunch → restore の経路で、前回起動時の line comments を
-// 引き継いで Map に seed できるよう initial を受け取る。CommentForm 側の draft は sessionStorage
-// 経由で別途復元される (App.tsx mount 時に payload.initialLineCommentDrafts を sessionStorage に
-// 書き戻す)。
-export function useLineComments(
-  initial?: { lineComments?: Map<string, string[]> },
-): LineCommentHandlers {
-  const [lineComments, setLineComments] = useState<Map<string, string[]>>(
-    () => initial?.lineComments ? new Map(initial.lineComments) : new Map(),
-  )
+// Map はセッション内の編集可能な pending 層。submit / regen 時に line scope thread へ合成され
+// (lib/merge-threads)、restore 後は initialThreads 経由の読み取り専用スレッドとして表示される。
+// 未保存の textarea draft は sessionStorage 経由で別途復元される (App.tsx mount 時に
+// payload.initialLineCommentDrafts を sessionStorage に書き戻す)。
+export function useLineComments(): LineCommentHandlers {
+  const [lineComments, setLineComments] = useState<Map<string, string[]>>(() => new Map())
   const [activeForm, setActiveForm] = useState<string | null>(null)
   const [editing, setEditing] = useState<Map<string, string>>(() => new Map())
 

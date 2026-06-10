@@ -15,7 +15,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type {
   ClientPayload,
-  Comment,
   DisplayRange,
   GroupDecision,
   PrMeta,
@@ -35,7 +34,8 @@ import { ActivityView } from './activity/ActivityView'
 import { shouldAutoCollapseFile } from './guide/auto-collapse'
 import { renderMarkdown, escapeHtml } from './lib/markdown'
 import { basename } from './lib/path'
-import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
+import { getToken } from './lib/state'
+import { mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from './lib/merge-threads'
 import { useLineComments } from './guide/useLineComments'
 import { useNavResizer } from './guide/useNavResizer'
 
@@ -78,22 +78,6 @@ export function App({ payload }: Props) {
     return null
   })
 
-  // 前回の line comments (saved) を useLineComments の seed にする。
-  // payload.initialComments は CLI 側で pre-filter 済み (scope.type === 'line' のみ)。
-  const initialLineCommentsMap = useMemo(() => {
-    const m = new Map<string, string[]>()
-    const list = payload.initialComments
-    if (!list) return m
-    for (const c of list) {
-      if (c.scope.type !== 'line') continue
-      const key = lineCommentKey(c.scope.panelId, c.scope.side, c.scope.line, c.scope.endLine)
-      const arr = m.get(key) ?? []
-      arr.push(c.body)
-      m.set(key, arr)
-    }
-    return m
-  }, [payload.initialComments])
-
   // group decision state。
   // panels.length === 0 の group は自動 approved 扱い (W-6): UI で decision 不要、
   // Submit active 条件もこれで満たす。restore が来てもこれより自動 approved を優先する。
@@ -121,7 +105,8 @@ export function App({ payload }: Props) {
   )
 
   // group コメントを pending としてスレッドに積み、textarea をクリアする。
-  // textarea クリアは「同じ本文が submit 時の comments[] にも入って二重 thread 化される」のを防ぐ意図。
+  // textarea クリアは「同じ本文が submit 時の textarea 残量 thread 合成でもう一度積まれて
+  // 二重になる」のを防ぐ意図。
   const addGroupComment = useCallback((groupId: string) => {
     const body = (groupComments[groupId] ?? '').trim()
     if (!body) return
@@ -161,7 +146,7 @@ export function App({ payload }: Props) {
     onAdd: addFileComment,
   }), [threads, addFileComment])
 
-  const lineCommentHandlers = useLineComments({ lineComments: initialLineCommentsMap })
+  const lineCommentHandlers = useLineComments()
   // 初期タブは Activity (AI Review Report をまず俯瞰してから Guide で詳細を進める動線)
   const [tab, setTab] = useState<Tab>('activity')
   // SubmitBar (sidebar variant) の開閉。サイドバーはコンテンツに覆い被さるのではなく
@@ -347,42 +332,6 @@ export function App({ payload }: Props) {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
 
-  // submit する Comment[] を構築。
-  // - group コメント (空でないもの) を scope: {type:'group', groupId} で
-  // - line コメント を scope: {type:'line', panelId, side, file, line, endLine?} で
-  // useCallback なのは onRequestContext (useCallback) が deps に取るため。クロージャが読む
-  // groupComments / lineComments / panelFileMap を deps に全列挙することで stale を防ぐ。
-  const collectComments = useCallback((): Comment[] => {
-    const out: Comment[] = []
-    for (const [groupId, body] of Object.entries(groupComments)) {
-      const trimmed = body.trim()
-      if (trimmed) out.push({ body: trimmed, scope: { type: 'group', groupId } })
-    }
-    for (const [key, bodies] of lineCommentHandlers.lineComments) {
-      const { panelId, side, number, endNumber } = parseLineCommentKey(key)
-      const files = panelFileMap.get(panelId) ?? {}
-      const file = side === 'asIs'
-        ? (files.asIsFile ?? files.toBeFile ?? '')
-        : (files.toBeFile ?? files.asIsFile ?? '')
-      for (const body of bodies) {
-        const trimmed = body.trim()
-        if (!trimmed) continue
-        out.push({
-          body: trimmed,
-          scope: {
-            type: 'line',
-            panelId,
-            side,
-            file,
-            line: number,
-            ...(endNumber != null && endNumber !== number ? { endLine: endNumber } : {}),
-          },
-        })
-      }
-    }
-    return out
-  }, [groupComments, lineCommentHandlers.lineComments, panelFileMap])
-
   // sessionStorage 全体を走査して `draft:` prefix の値を Record にまとめる。
   function collectAllDrafts(): Record<string, string> {
     const out: Record<string, string> = {}
@@ -440,10 +389,16 @@ export function App({ payload }: Props) {
       reviewKind,
       groupDecisions: decisionsToSend,
       // ローカル threads state (initialThreads + 本セッションで Comment ボタンが積んだ pending message) に
-      // note を合成して送る。setThreads を待たずローカルで合成するのは、state 反映前に fetch する race を
-      // 避けるため (この直後にタブは閉じるので state 更新は不要)。
-      threads: appendReviewNote(threads, note),
-      comments: collectComments(),
+      // 保存済み行コメント・group textarea の書き残し・note を合成して送る。threads が唯一の
+      // コメントチャネル。setThreads を待たずローカルで合成するのは、state 反映前に fetch する
+      // race を避けるため (この直後にタブは閉じるので state 更新は不要)。
+      threads: appendReviewNote(
+        mergeGroupCommentsIntoThreads(
+          mergeLineCommentsIntoThreads(threads, lineCommentHandlers.lineComments, panelFileMap),
+          groupComments,
+        ),
+        note,
+      ),
       ...(note ? { submitNote: note } : {}),
     }
     await postResult(body, reviewKind === 'comment' ? 'comment' : 'submit', { message: 'Failed to submit.' })
@@ -475,8 +430,11 @@ export function App({ payload }: Props) {
         // regen-group は review 全体の決定ではないので reviewKind は 'comment' (= 未確定) で埋める
         reviewKind: 'comment',
         groupDecisions: buildDecisions(groupsState, groupDecisions),
-        threads,
-        comments: collectComments(),
+        // 保存済み行コメントは thread に合成して送る (restore 後は thread として読み取り専用表示)。
+        // group textarea の書き残しは thread 化せず groupComments で送る — regen は「送信」では
+        // なく「中断・復元」なので、draft のまま textarea に戻すのが正しい。
+        threads: mergeLineCommentsIntoThreads(threads, lineCommentHandlers.lineComments, panelFileMap),
+        ...(Object.keys(groupComments).length > 0 ? { groupComments } : {}),
         regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
       }
@@ -489,7 +447,8 @@ export function App({ payload }: Props) {
     // deps 注: collectAllDrafts / postResult は毎 render 再生成される plain function なので意図的に
     // 除外する (入れると memo 化が無意味になる)。collectAllDrafts は sessionStorage しか読まず、
     // postResult は tokenRef (ref) と stable setter のみ捕捉するため、除外しても stale にならない。
-    [groupsState, groupDecisions, threads, regenPending, submitted, collectComments],
+    // mergeLineCommentsIntoThreads はモジュールレベル純関数なので deps 不要。
+    [groupsState, groupDecisions, threads, regenPending, submitted, groupComments, lineCommentHandlers.lineComments, panelFileMap],
   )
 
   const onNavResizerPointerDown = useNavResizer(containerRef)

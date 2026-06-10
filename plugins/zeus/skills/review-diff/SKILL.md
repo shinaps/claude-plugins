@@ -532,41 +532,58 @@ CLI の挙動:
 - stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
 - ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する (= 旧 9 分絶対値タイムアウトは撤廃)
 - 終了時に stdout に **1 行の JSON** が出る:
-  `{"decision":"submit"|"timeout"|"regen-group", ...}` (合否は groupDecisions の分布から判定)
+  `{"decision":"submit"|"timeout"|"regen-group"|"comment-reply", ...}` (合否は groupDecisions の分布から判定)
 
 UI には 2 つの主要タブがある (評価軸は **Guide タブの group decision** のみ):
 - **Guide タブ**: AI が summary.json で指定した group / panel をそのままナラティブ順で表示。Approve / Request Changes と group コメント / 行コメントを付ける本番の評価面
 - **Diff タブ**: GitHub 風に「1 ファイル = 1 panel (file 全体表示)」で全変更ファイルを順に俯瞰するための補助面。grouping を介さない素の差分確認用で、行コメントは付けられるが decision には影響しない (CLI 内部で `rawPanels` として別系統で構築される)
 
-#### Comment / Result shape
+#### Thread / Result shape
 
-`comments[]` の各要素は scope union 構造:
-- `{ "body": "...", "scope": { "type": "group", "groupId": "g0" } }` — group コメント
-- `{ "body": "...", "scope": { "type": "file", "file": "path/to/foo.ts" } }` — ファイル全体へのコメント (panel header の MessageSquare ボタン)
-- `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42 } }` — 単一行コメント
-- `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42, "endLine": 58 } }` — 行範囲コメント
+コメントは **`threads` が唯一のチャネル**。client は保存済み行コメント・group textarea の書き残し・
+SubmitBar の note を送信直前に thread へ合成してから POST するため、`result.json.threads` を
+そのまま読めばレビュアーの全コメントが揃う。
 
-(旧 `scope: { type: 'overall' }` は廃止)
+`threads` は `threadKey → ThreadSnapshot` の Record。threadKey の形式:
+- `group:<groupId>` — group コメント
+- `file:<path>` — ファイル全体へのコメント (panel header の MessageSquare ボタン)
+- `review` — レビュー全体へのコメント (SubmitBar の textarea。固定キー)
+- `line:<panelId>:<side>:<line>` — 単一行コメント (side は `asIs` / `toBe`)
+- `line:<panelId>:<side>:<line>:<endLine>` — 行範囲コメント
+
+ThreadSnapshot の形:
+```json
+{
+  "scope": { "type": "line", "panelId": "p3", "side": "toBe", "file": "src/foo.ts", "line": 42 },
+  "messages": [ { "id": "<uuid>", "author": "user" | "agent", "body": "...", "ts": 1700000000000 } ],
+  "resolved": false,
+  "outdated": false
+}
+```
 
 ResultJson 全体:
 ```json
 {
-  "decision": "submit" | "timeout" | "regen-group",
+  "decision": "submit" | "timeout" | "regen-group" | "comment-reply",
+  "reviewKind": "approve" | "request-changes" | "comment",
   "groupDecisions": {
     "g0": "approved",
     "g1": "approved",
     "g2": "request-changes"
   },
-  "comments": [
-    { "body": "型定義 OK", "scope": { "type": "group", "groupId": "g0" } },
-    { "body": "ここ null check 漏れ", "scope": { "type": "line", "panelId": "p3", "side": "toBe", "file": "src/foo.ts", "line": 42 } }
-  ],
+  "threads": {
+    "group:g0": { "scope": { "type": "group", "groupId": "g0" }, "messages": [ ... ], "resolved": false, "outdated": false },
+    "line:p3:toBe:42": { "scope": { "type": "line", "panelId": "p3", "side": "toBe", "file": "src/foo.ts", "line": 42 }, "messages": [ ... ], "resolved": false, "outdated": false }
+  },
+  "groupComments": {          // decision='regen-group' の時のみ。group textarea の書きかけ draft
+    "g0": "書きかけのコメント"  // (restore で textarea に戻す。submit / comment-reply では thread に合成済みのため載らない)
+  },
   "regenGroup": {            // decision='regen-group' の時のみ
     "groupId": "g2",
     "currentRanges": [ { "panelId": "...", "asIs": {...}, "toBe": {...} } ],
     "note": "foo() の caller も見たい"   // 任意。ユーザーが inline textarea で書いた自由文
   },
-  "submitNote": "commit メッセージにはこの観点を含めて",  // decision='submit' 時に SubmitBar textarea で書いた全体コメント (任意)
+  "submitNote": "commit メッセージにはこの観点を含めて",  // SubmitBar textarea の全体コメント (任意。同じ文字列が review thread にも user message として入る)
   "lineCommentDrafts": {      // regen-group の時に restore で活きる、それ以外は無視可
     "draft:p1:asis:42": "draft body..."
   }
@@ -578,8 +595,7 @@ ResultJson 全体:
 - groupId は `g${i}` 形式 (`i` は summary.json の `groups[]` index)
 - 全体の合否は `groupDecisions` の分布から SKILL.md が判定 (全 approved / 全 RC / mixed)
 - `decision='timeout'` の時は `groupDecisions` が空オブジェクト
-- 行コメントの side は **`asIs` / `toBe`** (camelCase)
-- 行コメントの `file` は panel の対応する側 (`asIs.file` または `toBe.file`) を自動で入れる
+- 行 scope の side は **`asIs` / `toBe`** (camelCase)。`file` は panel の対応する側 (`asIs.file` または `toBe.file`) が自動で入る
 
 ### Phase 6: 結果分岐
 
@@ -654,7 +670,7 @@ git log --oneline -n "$COMMIT_COUNT"
 ポイント:
 - `extract-group-patch` は `dist/cli.js` の subcommand。`--unidiff-zero` 互換の patch を出す
 - `git apply --cached --unidiff-zero --recount` で line count のずれを git 側に吸収させる
-- 各 commit メッセージは **AI が** `group.title` + group description + 該当 group の `comments` (scope='group') + 各 panel.intent + **`result.json.submitNote` (任意の全体コメント)** から生成 (semantic prefix 含む)
+- 各 commit メッセージは **AI が** `group.title` + group description + 該当 group の group scope thread (`threads["group:<id>"]`) の user messages + 各 panel.intent + **`result.json.submitNote` (任意の全体コメント)** から生成 (semantic prefix 含む)
 - mixed パスでは「N commits を作って g${k} onwards は request-changes のため un-commit」をユーザーに明示
 - 全 commit 完了後 (= 全 approved or mixed パスで break まで) は **work-dir をクリーンアップ** (`rm -rf "$WORK_DIR"`)
 - mixed パスで RC group が残った場合は、その後 reject ルートに合流して修正実装 → Skill 再起動
@@ -664,7 +680,7 @@ git log --oneline -n "$COMMIT_COUNT"
 全 group が 'request-changes' の場合:
 
 1. **rejectCount をメインの会話メモリで +1**
-2. UI で集めた `comments` 配列をユーザーに提示し、どの指摘を反映するか合意を取る
+2. `threads` の open スレッド (resolved=false) の user messages を scope 別に提示し、どの指摘を反映するか合意を取る
 3. `rejectCount >= 3` の場合は **必ず `AskUserQuestion`** で「このまま続行 / 中止 / 方針見直し」を聞く
 4. 修正実装を行う (大きい変更なら `/zeus:dev` への橋渡しを提案)
 5. 修正完了後、Skill 自動再起動の **直前** に work-dir をクリーンアップ:
@@ -678,7 +694,7 @@ git log --oneline -n "$COMMIT_COUNT"
 mixed パスで approved を全部 commit した後、最初の RC group 以降が un-stage で残る:
 
 1. ユーザーに「g${k} 以降は request-changes のため un-commit、コメントは以下: ...」を提示
-2. RC group の `comments` を要約して修正方針を提案
+2. RC group に紐づく group / line scope の threads を要約して修正方針を提案
 3. ユーザー合意後に修正実装 → 残った変更を `git add` → `Skill('zeus:review-diff', args)` で再起動
 4. 再起動側では、もう commit された変更は HEAD に取り込まれているので、`git diff --cached` は残った RC 部分 + 新しい修正だけが対象になる
 
@@ -703,18 +719,19 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
    - **`groups[]` の配列順は絶対に変えない** (group の挿入・削除・入れ替え禁止)
    - 他 group の panels は触らない (cross-group 影響を作らない)
    - panelId は安定 ID (intent 除外 hash) を保持するため、asIs/toBe の file を変えない限り変わらない
-5. **`restore.json` を Write** で書き出す:
+5. **`restore.json` を Write** で書き出す (schemaVersion 2):
    ```json
    {
+     "schemaVersion": 2,
      "groupDecisions": { "g0": "approved", "g1": "approved" },  // 該当 group (g2) の decision はクリア
-     "groupComments": { "g0": "型 OK", "g1": "API も OK" },     // 該当 group の comment はクリア
-     "comments": [ /* line scope のみ抽出して載せる */ ],
+     "groupComments": { "g0": "書きかけ", "g1": "..." },          // 該当 group の draft はクリア
+     "threads": { /* result.json.threads をそのままコピー */ },
      "lineCommentDrafts": { "draft:p1:asis:42": "..." }
    }
    ```
    - `groupDecisions`: `result.json.groupDecisions` から **regenGroup.groupId に該当する key を削除** したもの (Q-3: 該当 group の decision のみクリア)
-   - `groupComments`: `result.json.comments` から `scope.type==='group'` を集約、ただし **regenGroup.groupId に該当するものは除外**
-   - `comments`: `result.json.comments` から `scope.type==='line'` のみ抽出
+   - `groupComments`: `result.json.groupComments` (group textarea の書きかけ draft) から **regenGroup.groupId に該当する key を除外** してコピー
+   - `threads`: `result.json.threads` をそのままコピー (会話履歴 + client が合成済みの保存済み行コメント。regen 対象 group の分もクリアしない — クリア対象は decision と textarea draft のみ)
    - `lineCommentDrafts`: そのままコピー
 6. **`Skill('zeus:review-diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
    - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
@@ -734,22 +751,19 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
 
 手順:
 
-1. `result.json` から `threads` と `comments[]` を取得し、**comments[] の新規コメントを thread 化して threads にマージ** する:
-   - thread のキーは scope から決める: group scope → `group:<groupId>`、file scope → `file:<path>`、review scope → `review` (固定)、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
-   - 既存キーの thread があれば `messages[]` に user message として append、無ければ新規 thread (`resolved: false, outdated: false`) を作る
-   - message の形は `{ id: <uuid>, author: 'user', body, ts: <epoch ms> }`
-   - **group への質問・相談の正規動線**: decision section の textarea に書いて group の **Comment** ボタンで pending としてスレッドに積む (レビュー継続、GitHub の pending review コメントと同じ) → SubmitBar の **Comment** で一括送信。積んだ分は `threads` に user message として既に入っているので、comments[] の thread 化マージは「textarea に書き残したまま submit したケース」のフォールバック
+1. `result.json.threads` を取得する。**マージ処理は不要** — client が送信直前に「Comment ボタンで積んだ pending message + group textarea の書き残し + 保存済み行コメント」をすべて thread に合成済みなので、`threads` がレビュアーの全コメントの完成形になっている (キー形式と ThreadSnapshot の形は Phase 5 の「Thread / Result shape」参照):
+   - **group への質問・相談の正規動線**: decision section の textarea に書いて group の **Comment** ボタンで pending としてスレッドに積む (レビュー継続、GitHub の pending review コメントと同じ) → SubmitBar の **Comment** で一括送信
    - **ファイル全体への指摘** (設計方針・命名・分割など行に紐づかないもの) は panel header の MessageSquare ボタンから同じ pending 方式で file scope thread に積まれる
-   - **レビュー全体への指摘** は SubmitBar の textarea が review scope thread (`review` キー) への入力になっており、送信時に user message として threads に積まれて届く。`submitNote` には同じ文字列が後方互換で載る (commit メッセージ生成は従来どおり submitNote を読めばよい) が、**返信は review thread に対して行う** (= submitNote はテキスト返信チャネルではない)
+   - **レビュー全体への指摘** は SubmitBar の textarea が review scope thread (`review` キー) への入力になっており、送信時に user message として threads に積まれて届く。`submitNote` には同じ文字列が併記される (commit メッセージ生成は従来どおり submitNote を読めばよい) が、**返信は review thread に対して行う** (= submitNote はテキスト返信チャネルではない)
 2. **work-dir は維持** (summary.json / diff.patch を再利用)
 3. **Claude が「最後の message が user である全 open thread」の最新 user message を読んで応答内容を判定**:
    - 質問 → answer (回答メッセージを agent message として thread に append)
    - 指示 / 修正要求 → suggest (diff サンプル提示) または apply (実ファイルを Edit/Write で書き換え)
    - context+ 相当の要望 → expand (関連 panel を summary.json に追加)
-4. **`restore.json` を Write** で書き出す:
-   - `threads`: 手順 1 でマージした threads の各 thread.messages に agent message を追記したもの (agentAction で対応種別を記録)
+4. **`restore.json` を Write** で書き出す (schemaVersion 2):
+   - `threads`: `result.json.threads` の各 thread.messages に agent message を追記したもの (agentAction で対応種別を記録)
    - `groupDecisions` / `lineCommentDrafts`: result.json からそのままコピー
-   - `groupComments`: result.json からコピーするが、**手順 1 で thread 化した group のエントリは除去する** (textarea に残ったまま復元すると、次の Comment 送信で同じ本文がもう一度 thread 化されて二重になるため)
+   - `groupComments` は載せない (comment-reply では textarea の書き残しも client が thread 合成済みで、textarea はクリアされた状態に戻すのが正しいため)
    - `reviewKind: 'comment'` を載せる
 5. **apply の場合のみ、`mark-outdated` subcommand で outdated 自動判定**:
    ```bash

@@ -97,8 +97,8 @@ export type GroupDecision = 'approved' | 'request-changes'
 //   - 'comment'         : commit せず Claude が全 open スレッドに自動返信
 export type ReviewKind = 'approve' | 'request-changes' | 'comment'
 
-// 旧 Comment 型 (v4 互換)。v5 でも restore.json v1 → v2 migration の入力として残す。
-// 新 UI は ThreadSnapshot 経由で読み書きする。
+// restore.json v1 → v2 auto-migration の入力専用の型。送信 (ResultJson) には使われない —
+// コメントの送受信はすべて ThreadSnapshot (threads) で行う。
 export type Comment = {
   body: string
   scope:
@@ -241,10 +241,13 @@ export type ResultJson = {
   reviewKind: ReviewKind
   // groupId → 'approved' | 'request-changes'。timeout 時のみ空オブジェクト。
   groupDecisions: Record<string, GroupDecision>
-  // v5 で必須化 (空オブジェクトでも明示)。threadKey() ベースで thread state を載せる。
+  // 唯一のコメントチャネル (空オブジェクトでも明示)。threadKey() ベースで thread state を載せる。
+  // 保存済み line コメントと group textarea の書き残しは client が送信直前に thread へ合成する。
   threads: Record<string, ThreadSnapshot>
-  // 旧形式互換、optional に降格 (v4 readers がいた場合の degradation 用、v5 自身は読まない)。
-  comments?: Comment[]
+  // regen-group 時のみ: group textarea の書きかけ draft を close-relaunch 後に復元するチャネル。
+  // submit / comment-reply では textarea 残量が thread に合成されるため載らない。
+  // RestoreStateV2.groupComments と同形なので restore 経路をそのまま共有できる。
+  groupComments?: Record<string, string>
   regenGroup?: {
     groupId: string
     // 現在その group が見せている panel 範囲。AI が「ここから ±N 行広げる」判断に使う。
@@ -346,8 +349,6 @@ export type ClientPayload = {
   // restore.json (v2) を pre-filter して ClientPayload に注入する。初回起動では全て undefined。
   initialGroupDecisions?: Record<string, GroupDecision>
   initialGroupComments?: Record<string, string>
-  // v4 互換: line scope のみの Comment[] (CLI が v1 restore.json を読んだとき seed として使う)。
-  initialComments?: Comment[]
   initialLineCommentDrafts?: Record<string, string>
   // v5 で新規。restore.json v2 の threads をそのまま seed する。
   initialThreads?: Record<string, ThreadSnapshot>

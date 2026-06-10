@@ -39,7 +39,7 @@ test('POST /result without Origin header is rejected via app.fetch', async () =>
     new Request(`http://127.0.0.1:${port}/result?token=${token}`, {
       method: 'POST',
       headers: { Host: `127.0.0.1:${port}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'submit', groupDecisions: {}, comments: [] }),
+      body: JSON.stringify({ decision: 'submit', groupDecisions: {} }),
     }),
   )
   expect(res.status).toBe(403)
@@ -93,7 +93,6 @@ test('POST /result with valid token + Origin resolves waitResult (e2e via serve)
     body: JSON.stringify({
       decision: 'submit',
       groupDecisions: { g0: 'approved' },
-      comments: [],
     }),
   })
   expect(post.status).toBe(200)
@@ -113,7 +112,6 @@ test('POST /result with decision=regen-group passes through to waitResult', asyn
   const body = {
     decision: 'regen-group',
     groupDecisions: { g0: 'approved', g1: 'request-changes' },
-    comments: [],
     regenGroup: {
       groupId: 'g2',
       currentRanges: [

@@ -117,7 +117,8 @@ describe('submit (SubmitBar 経由)', () => {
     expect(body.reviewKind).toBe('approve')
     // g0 は fillMode='approved' で補完、g1 は panels=0 の自動 approved
     expect(body.groupDecisions).toEqual({ g0: 'approved', g1: 'approved' })
-    expect(body.comments).toEqual([])
+    // コメントチャネルは threads に一本化されており comments フィールドは存在しない
+    expect(body).not.toHaveProperty('comments')
     expect(body.threads).toEqual({})
     expect(body.submitNote).toBeUndefined()
     expect(body.regenGroup).toBeUndefined()
@@ -190,6 +191,33 @@ describe('submit (SubmitBar 経由)', () => {
     expect(reviewThread.resolved).toBe(false)
 
     // 300ms 後の window.close タイマーを test 内で消化する (次の test への漏れ込み防止)
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('group textarea の書き残しは submit 時に group scope thread へ合成される', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    // Guide タブで g0 の group コメント textarea に書き、Comment ボタンは押さずに
+    // Activity タブへ戻って submit する (書き残しの典型動線)
+    await user.click(screen.getByRole('tab', { name: 'Guide' }))
+    await user.type(
+      withinGroup('g0').getByPlaceholderText(/この group へのコメント/),
+      'leftover note',
+    )
+    await user.click(screen.getByRole('tab', { name: 'Activity' }))
+    await openSidebar(user)
+    // Guide タブ訪問後は GroupNav 側の Approve も DOM に残るため、SubmitBar 側を title で特定する
+    await user.click(screen.getByTitle(/Approve として Submit/))
+
+    const body = postedBody()
+    expect(body).not.toHaveProperty('comments')
+    const groupThread = body.threads['group:g0']
+    expect(groupThread).toBeDefined()
+    expect(groupThread.messages).toHaveLength(1)
+    expect(groupThread.messages[0]).toMatchObject({ author: 'user', body: 'leftover note' })
+    expect(groupThread.resolved).toBe(false)
+
     await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
   })
 
@@ -386,6 +414,27 @@ describe('context+ (onRequestContext 経由)', () => {
     ])
     // payload.initialLineCommentDrafts は sessionStorage に書き戻され、submit 時に回収される
     expect(body.lineCommentDrafts).toEqual({ 'draft:p1:asis:2': 'unsaved draft' })
+    expect(body).not.toHaveProperty('comments')
+
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('context+: group textarea の書き残しは thread 化せず groupComments で送られる', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    await user.click(screen.getByRole('tab', { name: 'Guide' }))
+    await user.type(
+      withinGroup('g0').getByPlaceholderText(/この group へのコメント/),
+      'draft in progress',
+    )
+    await user.click(withinGroup('g0').getByRole('button', { name: /More context/ }))
+    await user.click(screen.getByRole('button', { name: 'Submit context+' }))
+
+    const body = postedBody()
+    // regen は「送信」ではなく「中断・復元」: draft は textarea に戻すために groupComments で運ぶ
+    expect(body.groupComments).toEqual({ g0: 'draft in progress' })
+    expect(body.threads['group:g0']).toBeUndefined()
 
     await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
   })

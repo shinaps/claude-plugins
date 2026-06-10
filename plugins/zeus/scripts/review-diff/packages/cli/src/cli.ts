@@ -182,11 +182,8 @@ async function main(): Promise<void> {
 
   // 7. restore state を読む (v2 + v1 auto migrate)
   const restore = readRestoreState(values['restore-state'] as string | undefined)
-  // restore.threads が現在の真実。v1 comments[] を migrate する場合は restoreThreads に統合済み。
+  // スレッドの真実源。v1 restore.json の comments[] は readRestoreState が thread へ migrate 済み。
   const restoreThreads = restore?.threads ?? {}
-  // v5: スレッド表示は payload.initialThreads (= window.__reviewDiffThreads) に一本化したので、
-  // initialComments への擬似 seed は廃止する (= 旧 client で「最後の message が saved comment として
-  // 重複表示される」UX バグの根本原因だった)。
 
   // 8. config (editor + scripts) を読む
   let editorPreset: ReturnType<typeof loadReviewDiffConfig>['editorPreset'] = null
@@ -261,7 +258,6 @@ async function main(): Promise<void> {
     rawPanels,
     initialGroupDecisions: restore?.groupDecisions,
     initialGroupComments: restore?.groupComments,
-    initialComments: undefined,
     initialLineCommentDrafts: restore?.lineCommentDrafts,
     initialThreads: Object.keys(restoreThreads).length > 0 ? restoreThreads : undefined,
     initialReviewKind: restore?.reviewKind,

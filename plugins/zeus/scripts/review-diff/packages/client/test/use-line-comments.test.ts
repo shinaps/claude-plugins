@@ -15,8 +15,19 @@ import { lineCommentKey } from '../src/lib/state'
 
 const KEY = lineCommentKey('p1', 'asIs', 3)
 
-function renderWith(initial?: Map<string, string[]>) {
-  return renderHook(() => useLineComments(initial ? { lineComments: initial } : undefined))
+function renderWith() {
+  return renderHook(() => useLineComments())
+}
+
+// 既存コメントがある状態を作る (hook は seed 引数を持たないため handler 経由で積む)
+function renderWithExisting(bodies: string[]) {
+  const rendered = renderWith()
+  act(() => {
+    for (const body of bodies) {
+      rendered.result.current.onAddLineComment('p1', { side: 'asIs', number: 3 }, body)
+    }
+  })
+  return rendered
 }
 
 describe('useLineComments: add / form open-close', () => {
@@ -34,7 +45,7 @@ describe('useLineComments: add / form open-close', () => {
   })
 
   test('onAddLineComment は同一 key への追加でコメントを後ろに積む', () => {
-    const { result } = renderWith(new Map([[KEY, ['first']]]))
+    const { result } = renderWithExisting(['first'])
     act(() => {
       result.current.onAddLineComment('p1', { side: 'asIs', number: 3 }, 'second')
     })
@@ -62,7 +73,7 @@ describe('useLineComments: add / form open-close', () => {
 
 describe('useLineComments: edit start / cancel', () => {
   test('onStartEditLineComment は editing に `${key}#${index}` で body を積み、cancel で消える', () => {
-    const { result } = renderWith(new Map([[KEY, ['first']]]))
+    const { result } = renderWithExisting(['first'])
     act(() => {
       result.current.onStartEditLineComment(KEY, 0, 'first')
     })
@@ -78,7 +89,7 @@ describe('useLineComments: edit start / cancel', () => {
 
 describe('useLineComments: delete', () => {
   test('onDeleteLineComment は index 番目だけを除去し、残りがあれば key を保持する', () => {
-    const { result } = renderWith(new Map([[KEY, ['a', 'b', 'c']]]))
+    const { result } = renderWithExisting(['a', 'b', 'c'])
     act(() => {
       result.current.onDeleteLineComment(KEY, 1)
     })
@@ -86,7 +97,7 @@ describe('useLineComments: delete', () => {
   })
 
   test('onDeleteLineComment は最後の 1 件を消すと key 自体を Map から削除する', () => {
-    const { result } = renderWith(new Map([[KEY, ['only']]]))
+    const { result } = renderWithExisting(['only'])
     act(() => {
       result.current.onDeleteLineComment(KEY, 0)
     })
@@ -94,7 +105,7 @@ describe('useLineComments: delete', () => {
   })
 
   test('onDeleteLineComment は editing 中のエントリも掃除する', () => {
-    const { result } = renderWith(new Map([[KEY, ['a', 'b']]]))
+    const { result } = renderWithExisting(['a', 'b'])
     act(() => {
       result.current.onStartEditLineComment(KEY, 1, 'b')
       result.current.onDeleteLineComment(KEY, 1)
@@ -104,8 +115,7 @@ describe('useLineComments: delete', () => {
   })
 
   test('onDeleteLineComment は存在しない key なら lineComments を無変更に保つ', () => {
-    const seed = new Map([[KEY, ['a']]])
-    const { result } = renderWith(seed)
+    const { result } = renderWithExisting(['a'])
     const before = result.current.lineComments
     act(() => {
       result.current.onDeleteLineComment('missing-key', 0)
@@ -117,7 +127,7 @@ describe('useLineComments: delete', () => {
 
 describe('useLineComments: save edit', () => {
   test('onSaveEditLineComment は index 番目を trim 済み body で置換し editing を掃除する', () => {
-    const { result } = renderWith(new Map([[KEY, ['a', 'b']]]))
+    const { result } = renderWithExisting(['a', 'b'])
     act(() => {
       result.current.onStartEditLineComment(KEY, 0, 'a')
       result.current.onSaveEditLineComment(KEY, 0, '  updated  ')
@@ -127,7 +137,7 @@ describe('useLineComments: save edit', () => {
   })
 
   test('onSaveEditLineComment は存在しない key なら lineComments を無変更に保ち editing だけ掃除する', () => {
-    const { result } = renderWith(new Map([[KEY, ['a']]]))
+    const { result } = renderWithExisting(['a'])
     const before = result.current.lineComments
     act(() => {
       result.current.onStartEditLineComment('missing-key', 0, 'x')
@@ -138,7 +148,7 @@ describe('useLineComments: save edit', () => {
   })
 
   test('空保存は削除と同義: index 番目を除去し editing を掃除する', () => {
-    const { result } = renderWith(new Map([[KEY, ['a', 'b']]]))
+    const { result } = renderWithExisting(['a', 'b'])
     act(() => {
       result.current.onStartEditLineComment(KEY, 0, 'a')
       result.current.onSaveEditLineComment(KEY, 0, '   ')
@@ -148,7 +158,7 @@ describe('useLineComments: save edit', () => {
   })
 
   test('空保存で最後の 1 件を消すと key 自体が Map から消える (削除と同一の観測結果)', () => {
-    const { result } = renderWith(new Map([[KEY, ['only']]]))
+    const { result } = renderWithExisting(['only'])
     act(() => {
       result.current.onSaveEditLineComment(KEY, 0, '')
     })
@@ -156,8 +166,7 @@ describe('useLineComments: save edit', () => {
   })
 
   test('空保存は存在しない key なら lineComments を無変更に保つ', () => {
-    const seed = new Map([[KEY, ['a']]])
-    const { result } = renderWith(seed)
+    const { result } = renderWithExisting(['a'])
     const before = result.current.lineComments
     act(() => {
       result.current.onSaveEditLineComment('missing-key', 0, '')
