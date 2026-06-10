@@ -49,9 +49,9 @@ export function TabBar({ active, onChange, meta, project, pending }: Props) {
           className="flex items-baseline gap-1.5 mr-3 pr-3 border-r border-border-soft min-w-0 max-w-[40%]"
           title={project.branch ? `${project.name} (${project.branch})` : project.name}
         >
-          <span className="text-[12.5px] font-semibold text-text whitespace-nowrap">{project.name}</span>
+          <span className="text-xs font-semibold text-text whitespace-nowrap">{project.name}</span>
           {project.branch ? (
-            <span className="text-[11px] text-text-dim font-mono truncate">{project.branch}</span>
+            <span className="text-2xs text-text-dim font-mono truncate">{project.branch}</span>
           ) : null}
         </div>
       ) : null}
@@ -83,7 +83,7 @@ export function TabBar({ active, onChange, meta, project, pending }: Props) {
         Diff
       </button>
       {meta ? (
-        <div className="ml-auto text-[11px] text-text-dim font-mono">{meta}</div>
+        <div className="ml-auto text-2xs text-text-dim font-mono">{meta}</div>
       ) : null}
     </div>
   )

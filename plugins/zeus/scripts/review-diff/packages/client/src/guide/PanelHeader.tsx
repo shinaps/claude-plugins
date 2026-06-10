@@ -60,7 +60,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
       <div className="flex justify-between items-center gap-3">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
           <div className="text-sm font-semibold text-text font-sans">{panel.intent}</div>
-          <div className="flex items-center gap-1.5 text-[11px] text-text-dim font-mono">
+          <div className="flex items-center gap-1.5 text-2xs text-text-dim font-mono">
             {asIsFile && toBeFile && asIsFile !== toBeFile ? (
               <>
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap text-del-fg">{asIsFile}</span>
@@ -83,7 +83,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
           >
             <MessageSquare size={14} strokeWidth={1.5} aria-hidden />
             {messageCount > 0 ? (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-accent text-background text-[9px] font-semibold inline-flex items-center justify-center leading-none">
+              <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-accent text-background text-3xs font-semibold inline-flex items-center justify-center leading-none">
                 {messageCount}
               </span>
             ) : null}
@@ -92,7 +92,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
         {onExpand ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface border border-border text-text-dim rounded-[5px] cursor-pointer font-sans text-[11.5px] font-medium shrink-0 transition-colors duration-[120ms] hover:bg-surface-3 hover:text-text hover:border-border"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface border border-border text-text-dim rounded-[5px] cursor-pointer font-sans text-xs font-medium shrink-0 transition-colors duration-[120ms] hover:bg-surface-3 hover:text-text hover:border-border"
             onClick={onExpand}
             title="Show diff"
             aria-label="Show this panel's diff"
@@ -129,7 +129,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
                     m.author === 'agent' && i === fileThread.messages.length - 1 ? ' thread-new-message' : ''
                   }`}
                 >
-                  <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
+                  <span className={`text-3xs font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
                     {m.author === 'agent' ? 'Claude' : 'You'}
                   </span>
                   <p className="m-0 text-sm leading-[1.55] text-text whitespace-pre-wrap break-words font-sans">{m.body}</p>
@@ -150,7 +150,7 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
           />
           <button
             type="button"
-            className="self-end px-3 py-1.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="self-end px-3 py-1.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer text-xs font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={draft.trim() === ''}
             onClick={submitDraft}
             title="コメントをこのファイルのスレッドに追加 (Claude への送信は右下の Comment / Submit でまとめて)"

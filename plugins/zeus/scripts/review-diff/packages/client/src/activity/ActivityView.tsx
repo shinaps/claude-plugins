@@ -129,7 +129,7 @@ export const ActivityView: FC<ActivityViewProps> = ({
             <Section label="Overview">
               {/* markdown BEM 維持: globals.css の prose 用 token 上書き scope */}
               <div
-                className="markdown prose prose-invert prose-sm max-w-none text-[13.5px] leading-[1.65]"
+                className="markdown prose prose-invert prose-sm max-w-none text-sm leading-[1.65]"
                 dangerouslySetInnerHTML={{ __html: overallHtml }}
               />
             </Section>
@@ -169,24 +169,24 @@ const Hero: FC<{
 }> = ({ title, metaHtml, reviewedPercent, reviewedGroups, totalGroups }) => (
   <header className="mb-12">
     <div className="flex items-center gap-3 mb-6">
-      <span className="text-[10px] tracking-[0.22em] uppercase text-accent font-semibold">
+      <span className="text-3xs tracking-[0.22em] uppercase text-accent font-semibold">
         AI Review
       </span>
       <span className="h-px flex-1 bg-border-soft" aria-hidden />
       <span
-        className="text-[10px] tracking-[0.18em] uppercase font-mono tabular-nums text-text-dim"
+        className="text-3xs tracking-[0.18em] uppercase font-mono tabular-nums text-text-dim"
         title={`${reviewedGroups} of ${totalGroups} groups reviewed`}
       >
         {reviewedPercent}% reviewed
       </span>
     </div>
     {/* 巨大 title: tracking-[-0.025em] でぎっしり感を出す。leading は 1.08 で行間を詰めて重力感 */}
-    <h1 className="m-0 text-[40px] leading-[1.08] font-semibold tracking-[-0.025em] text-text">
+    <h1 className="m-0 text-4xl leading-[1.08] font-semibold tracking-[-0.025em] text-text">
       {title}
     </h1>
     {metaHtml ? (
       <div
-        className="mt-5 text-[12.5px] text-text-muted font-mono"
+        className="mt-5 text-xs leading-normal text-text-muted font-mono"
         dangerouslySetInnerHTML={{ __html: metaHtml }}
       />
     ) : null}
@@ -222,7 +222,7 @@ const BreakdownSection: FC<{ label: string; buckets: ReadonlyArray<Bucket> }> = 
       {buckets.map((b, i) => (
         <li
           key={b.label}
-          className="inline-flex items-center gap-2 text-[11.5px] text-text-muted"
+          className="inline-flex items-center gap-2 text-xs text-text-muted"
         >
           <span
             className={`inline-block w-2 h-2 rounded-[2px] ${SEGMENT_COLORS[i % SEGMENT_COLORS.length]}`}
@@ -243,7 +243,7 @@ const BreakdownSection: FC<{ label: string; buckets: ReadonlyArray<Bucket> }> = 
 const Section: FC<{ label: string; children: ReactNode }> = ({ label, children }) => (
   <section className="mb-12">
     <div className="flex items-center gap-3 mb-5">
-      <span className="text-[10px] tracking-[0.22em] uppercase font-semibold text-text-dim">
+      <span className="text-3xs tracking-[0.22em] uppercase font-semibold text-text-dim">
         {label}
       </span>
       <span className="h-px flex-1 bg-border-soft" aria-hidden />
@@ -276,11 +276,11 @@ const GroupIndex: FC<{
           >
             {/* dot + index は同じ垂直位置に揃えて目線を安定させる (mt-[7px] は dot 半径 + 行頭 baseline 補正) */}
             <DecisionDot decision={decision} />
-            <span className="font-mono text-[12px] tabular-nums text-text-dim min-w-[24px] mt-[2px]">
+            <span className="font-mono text-xs tabular-nums text-text-dim min-w-[24px] mt-[2px]">
               {indexLabel}
             </span>
             <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-              <span className="text-[14px] font-medium text-text leading-snug">
+              <span className="text-sm font-medium text-text leading-snug">
                 {g.title}
               </span>
               {files.length > 0 ? (
@@ -291,7 +291,7 @@ const GroupIndex: FC<{
                 </div>
               ) : null}
             </div>
-            <span className="text-[10.5px] tabular-nums font-mono text-text-dim mt-[3px] shrink-0">
+            <span className="text-2xs tabular-nums font-mono text-text-dim mt-[3px] shrink-0">
               {g.panels.length} {g.panels.length === 1 ? 'panel' : 'panels'}
             </span>
           </button>
@@ -334,10 +334,10 @@ const FileChip: FC<{ info: GroupFileInfo }> = ({ info }) => {
   const meta = KIND_META[info.kind]
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[5px] font-mono text-[10.5px] leading-[1.4] ${meta.chipBg} ${meta.chipText}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[5px] font-mono text-2xs leading-[1.4] ${meta.chipBg} ${meta.chipText}`}
       title={`${meta.longLabel}: ${info.fullPath}`}
     >
-      <span className="text-[8.5px] font-semibold tracking-wider opacity-70">
+      <span className="text-3xs font-semibold tracking-wider opacity-70">
         {meta.letter}
       </span>
       <span>{info.display}</span>
@@ -457,7 +457,7 @@ const ConversationList: FC<{
           {showInactive ? <ChevronUp className="w-3.5 h-3.5" aria-hidden /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden />}
           <span>
             {showInactive ? 'Hide' : 'Show'} resolved &amp; outdated
-            <span className="ml-1.5 px-1.5 py-px rounded-full bg-surface-3 text-text text-[10.5px]">{inactive.length}</span>
+            <span className="ml-1.5 px-1.5 py-px rounded-full bg-surface-3 text-text text-2xs">{inactive.length}</span>
           </span>
         </button>
       ) : null}
@@ -514,7 +514,7 @@ const ConversationCard: FC<{
 
   // resolve / reopen ボタン。on 状態の色は base と排他で持つ (utility の同 property 競合回避)
   const RESOLVE_BASE =
-    'inline-flex items-center gap-1 px-2 py-[3px] border rounded-md text-[10.5px] font-mono uppercase tracking-[0.04em] cursor-pointer transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-accent-soft focus-visible:outline-offset-1'
+    'inline-flex items-center gap-1 px-2 py-[3px] border rounded-md text-2xs font-mono uppercase tracking-[0.04em] cursor-pointer transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-accent-soft focus-visible:outline-offset-1'
   const RESOLVE_STATE = resolved
     ? 'text-add-fg border-add-fg/30 bg-add-bg/50'
     : 'text-text-muted border-border-soft bg-surface hover:text-text hover:border-border hover:bg-surface-2'
@@ -547,7 +547,7 @@ const ConversationCard: FC<{
               : <FileCode className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />}
           <span className="font-mono text-xs text-text overflow-hidden text-ellipsis whitespace-nowrap">{anchorLabel}</span>
         </div>
-        <div className="inline-flex items-center gap-2 text-text-dim text-[11px]">
+        <div className="inline-flex items-center gap-2 text-text-dim text-2xs">
           <StatusPill variant={variant} />
           <span className="font-mono text-text-muted">
             {snap.messages.length} {snap.messages.length === 1 ? 'msg' : 'msgs'}
@@ -608,7 +608,7 @@ const ConversationCard: FC<{
 
 // border-color は variant 側で排他に持つ (utility の同 property 競合回避)
 const PILL_BASE =
-  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-mono uppercase tracking-[0.06em] bg-surface-2 border'
+  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono uppercase tracking-[0.06em] bg-surface-2 border'
 
 const StatusPill: FC<{ variant: ThreadVariant }> = ({ variant }) => {
   if (variant === 'active') {
@@ -672,7 +672,7 @@ const ConversationMessage: FC<{ msg: ThreadMessage; highlight?: boolean }> = ({ 
       data-author={msg.author}
     >
       <span
-        className={`relative w-6 h-6 rounded-full inline-flex items-center justify-center font-mono text-[10.5px] font-semibold tracking-[0.05em] z-[1] ${avatarClass}`}
+        className={`relative w-6 h-6 rounded-full inline-flex items-center justify-center font-mono text-2xs font-semibold tracking-[0.05em] z-[1] ${avatarClass}`}
         aria-hidden
       >
         {msg.author === 'agent' ? 'C' : 'Y'}
@@ -681,12 +681,12 @@ const ConversationMessage: FC<{ msg: ThreadMessage; highlight?: boolean }> = ({ 
         <header className="flex items-center gap-2 mb-1 text-text-muted text-xs">
           <span className="text-text font-semibold">{msg.author === 'agent' ? 'Claude' : 'You'}</span>
           {Icon && actionLabel ? (
-            <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-surface-2 text-accent text-[10.5px] font-mono uppercase tracking-[0.04em]">
+            <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-surface-2 text-accent text-2xs font-mono uppercase tracking-[0.04em]">
               <Icon className="w-3 h-3" strokeWidth={2} aria-hidden />
               <span>{actionLabel}</span>
             </span>
           ) : null}
-          <time className="ml-auto text-text-dim font-mono text-[10.5px]" title={new Date(msg.ts).toString()}>
+          <time className="ml-auto text-text-dim font-mono text-2xs" title={new Date(msg.ts).toString()}>
             {relativeTime(msg.ts)}
           </time>
         </header>

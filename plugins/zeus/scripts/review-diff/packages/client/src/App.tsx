@@ -603,12 +603,12 @@ export function App({ payload }: Props) {
               onClick={() => jumpToRawPanel(p.panelId)}
               title={p.intent}
             >
-              <span className="col-start-1 row-start-1 text-[12.5px] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basenameFromIntent(p.intent)}</span>
-              <span className="col-start-2 row-start-1 inline-flex gap-1 items-baseline font-mono text-[10.5px] tabular-nums">
+              <span className="col-start-1 row-start-1 text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basenameFromIntent(p.intent)}</span>
+              <span className="col-start-2 row-start-1 inline-flex gap-1 items-baseline font-mono text-2xs tabular-nums">
                 {add > 0 ? <span className="text-add-fg">+{add}</span> : null}
                 {del > 0 ? <span className="text-del-fg">-{del}</span> : null}
               </span>
-              <span className="col-span-full row-start-2 text-[10.5px] text-text-dim font-mono overflow-hidden text-ellipsis whitespace-nowrap">{p.intent}</span>
+              <span className="col-span-full row-start-2 text-2xs text-text-dim font-mono overflow-hidden text-ellipsis whitespace-nowrap">{p.intent}</span>
             </button>
           )
         })}
@@ -633,7 +633,7 @@ export function App({ payload }: Props) {
           )
         })}
         {payload.rawPanels.length === 0 ? (
-          <div className="px-6 py-[60px] text-center text-text-dim text-[13px]">No file changes to display.</div>
+          <div className="px-6 py-[60px] text-center text-text-dim text-sm leading-normal">No file changes to display.</div>
         ) : null}
       </div>
     </div>

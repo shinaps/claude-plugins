@@ -97,7 +97,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
         highlightLast && i === messages.length - 1 ? ' thread-new-message' : ''
       }`}
     >
-      <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
+      <span className={`text-3xs font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
         {m.author === 'agent' ? 'Claude' : 'You'}
       </span>
       <p className="m-0 text-sm leading-[1.55] text-text whitespace-pre-wrap break-words font-sans">{m.body}</p>
@@ -186,7 +186,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
           aria-hidden={!sidebarOpen}
         >
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold font-sans text-text-dim tracking-[0.05em] uppercase mr-auto">
+            <span className="text-2xs font-semibold font-sans text-text-dim tracking-[0.05em] uppercase mr-auto">
               {hasThread ? `Conversation · ${messages.length}` : 'Review'}
             </span>
             <button
@@ -231,7 +231,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
         <button
           type="button"
           onClick={toggleThread}
-          className="flex items-center gap-1.5 w-full px-1 py-0.5 bg-transparent border-0 rounded-md cursor-pointer text-[11px] font-sans text-text-dim transition-colors duration-100 hover:text-text"
+          className="flex items-center gap-1.5 w-full px-1 py-0.5 bg-transparent border-0 rounded-md cursor-pointer text-2xs font-sans text-text-dim transition-colors duration-100 hover:text-text"
           aria-expanded={threadOpen}
           title={threadOpen ? 'スレッドを折りたたむ' : 'スレッドを展開する'}
         >

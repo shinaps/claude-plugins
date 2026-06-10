@@ -116,12 +116,12 @@ export function GroupNav({
     <aside className="sticky top-16 self-start max-h-[calc(100vh-96px)] overflow-y-auto pr-2 flex flex-col max-[1000px]:static max-[1000px]:max-h-none [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-[2px]">
       <header className="pb-[18px] mb-[18px] border-b border-border-soft">
         <div className="flex items-center justify-between mb-3.5 min-h-6">
-          <span className="font-mono text-[10px] font-semibold tracking-[0.18em] text-text-dim uppercase">GROUP</span>
+          <span className="font-mono text-3xs font-semibold tracking-[0.18em] text-text-dim uppercase">GROUP</span>
           <span
             className="inline-flex items-baseline font-mono tabular-nums text-text-dim tracking-tight"
             aria-label={`Group ${index + 1} of ${total}`}
           >
-            <span className="text-[17px] font-semibold text-text">{groupIndexLabel}</span>
+            <span className="text-lg font-semibold text-text">{groupIndexLabel}</span>
             <span className="text-sm mx-[3px] text-text-dim opacity-60">/</span>
             <span className="text-sm text-text-dim">{totalGroupsLabel}</span>
           </span>
@@ -153,7 +153,7 @@ export function GroupNav({
           {badge ? (
             // group-decision-badge BEM 維持: is-approved/is-rc/is-no-panels の色切替が globals.css にあるため
             <span
-              className={`group-decision-badge inline-flex items-center px-2 py-0.5 ml-1.5 text-[10px] font-semibold tracking-[0.06em] uppercase rounded-full border border-transparent ${badge.cls}`}
+              className={`group-decision-badge inline-flex items-center px-2 py-0.5 ml-1.5 text-3xs font-semibold tracking-[0.06em] uppercase rounded-full border border-transparent ${badge.cls}`}
               aria-label={`Decision: ${badge.label}`}
             >
               {badge.label}
@@ -164,7 +164,7 @@ export function GroupNav({
         {descHtml ? (
           // group-desc BEM 維持: prose 内 typography token の上書き scope として globals.css で使用。
           <div
-            className="group-desc prose prose-invert prose-sm max-w-none text-[12.5px] leading-[1.55] mb-4"
+            className="group-desc prose prose-invert prose-sm max-w-none text-xs leading-[1.55] mb-4"
             dangerouslySetInnerHTML={{ __html: descHtml }}
           />
         ) : null}
@@ -279,7 +279,7 @@ export function GroupNav({
                   m.author === 'agent' && i === thread.messages.length - 1 ? ' thread-new-message' : ''
                 }`}
               >
-                <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
+                <span className={`text-3xs font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
                   {m.author === 'agent' ? 'Claude' : 'You'}
                 </span>
                 <p className="m-0 text-sm leading-[1.55] text-text whitespace-pre-wrap break-words">{m.body}</p>
@@ -388,7 +388,7 @@ function PanelItem({
           <span className="panel-intent-line text-sm font-medium text-text whitespace-normal break-words leading-[1.4] tracking-[-0.005em] transition-colors duration-[120ms]">
             {panel.intent}
           </span>
-          <span className="text-[10.5px] text-text-dim font-mono flex gap-1 items-center flex-wrap break-all">
+          <span className="text-2xs text-text-dim font-mono flex gap-1 items-center flex-wrap break-all">
             {asIs && toBe && asIs !== toBe ? (
               <>
                 <span className="min-w-0 break-all">{basename(asIs)}</span>

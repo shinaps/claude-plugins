@@ -252,7 +252,7 @@ export function ChunkNavigator({ activeTab }: Props) {
           <ChevronDown size={14} strokeWidth={1.6} aria-hidden />
         </button>
       </div>
-      <span className="text-[11px] text-text-muted font-mono tabular-nums">
+      <span className="text-2xs text-text-muted font-mono tabular-nums">
         {display} <span className="text-text-dim ml-1">changes</span>
       </span>
     </div>

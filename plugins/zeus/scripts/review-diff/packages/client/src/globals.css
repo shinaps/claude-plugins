@@ -47,6 +47,13 @@
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* UI の最小ラベル群 (バッジ / メタデータ / 行番号など) は標準の text-xs (12px) より
+     小さい段が必要なため 2 トークンだけ追加する。line-height をあえて定義しないのは、
+     Tailwind v4 では line-height 未定義の font-size トークンが font-size のみを出力し、
+     継承中の行送り (body の 1.5) を変えないため。 */
+  --text-3xs: 0.625rem;   /* 10px */
+  --text-2xs: 0.6875rem;  /* 11px */
 }
 
 /* === base layer ============================================================ */

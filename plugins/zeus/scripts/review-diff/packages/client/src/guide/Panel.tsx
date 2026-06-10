@@ -973,10 +973,10 @@ function CommentRow({
   // 横スクロールを生まないよう」固定する (CommentForm の textarea や長文 message が起点だった)。
   const thread = (
     <div
-      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-[13px] leading-[1.5] min-w-0 max-w-full overflow-hidden"
+      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-sm leading-[1.5] min-w-0 max-w-full overflow-hidden"
       data-side={sideToAttr(parsed.side)}
     >
-      <div className="font-mono text-[11px] text-text-dim tracking-[0.04em] uppercase">{label}</div>
+      <div className="font-mono text-2xs text-text-dim tracking-[0.04em] uppercase">{label}</div>
       {/* v5: persistedMessages を user / agent 別バブルで時系列順に表示 */}
       {persistedMessages.map((msg) => (
         <div
@@ -987,7 +987,7 @@ function CommentRow({
               : 'thread-message thread-message-user border-l-[3px] border-border bg-surface rounded-r-md px-3 py-2 min-w-0 max-w-full [overflow-wrap:anywhere] [word-break:break-word]'
           }
         >
-          <div className="text-[10px] uppercase tracking-wider text-text-dim mb-1">
+          <div className="text-3xs uppercase tracking-wider text-text-dim mb-1">
             {msg.author === 'agent' ? 'Claude' : 'You'}
           </div>
           <div className="whitespace-pre-wrap">{msg.body}</div>
@@ -1027,7 +1027,7 @@ function CommentRow({
       {hasPersisted && !formOpen ? (
         <button
           type="button"
-          className="self-start mt-1 px-2.5 py-1 text-[11.5px] text-text-muted border border-border rounded-md hover:bg-surface-2 cursor-pointer"
+          className="self-start mt-1 px-2.5 py-1 text-xs text-text-muted border border-border rounded-md hover:bg-surface-2 cursor-pointer"
           onClick={() => handlers.onOpenLineForm(panel.panelId, { side: parsed.side, number: parsed.number, endNumber: parsed.endNumber })}
         >
           Reply
@@ -1099,10 +1099,10 @@ function SavedComment({
   // globals.css にある + is-editing は外側からの状態指定 hook 用に残す (現在は padding 切替に使用)。
   if (isEditing) {
     return (
-      <div className="comment-bubble is-editing relative bg-surface border border-border-soft rounded-lg px-3 py-2.5 text-text text-[13px]">
+      <div className="comment-bubble is-editing relative bg-surface border border-border-soft rounded-lg px-3 py-2.5 text-text text-sm leading-normal">
         <textarea
           ref={ref}
-          className="w-full min-h-[70px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-[13px] leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
+          className="w-full min-h-[70px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-sm leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -1135,21 +1135,21 @@ function SavedComment({
     )
   }
   return (
-    <div className="comment-bubble relative bg-surface border border-border-soft rounded-lg px-4 py-3 text-text text-[13px]">
+    <div className="comment-bubble relative bg-surface border border-border-soft rounded-lg px-4 py-3 text-text text-sm leading-normal">
       <div className="whitespace-pre-wrap break-words">{body}</div>
       {/* comment-actions BEM 維持: comment-bubble:hover/focus-within で opacity を 1 に切り替える
           scope selector が globals.css にあるため。base の opacity:0 と placement は utility で表現。 */}
       <div className="comment-actions absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-100">
         <button
           type="button"
-          className="bg-transparent border border-border text-text-muted text-[11px] px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:bg-surface-3 hover:text-text"
+          className="bg-transparent border border-border text-text-muted text-2xs px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:bg-surface-3 hover:text-text"
           onClick={() => onStartEdit(lineKey, index, body)}
         >
           編集
         </button>
         <button
           type="button"
-          className="bg-transparent border border-border text-text-muted text-[11px] px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:text-danger hover:border-[rgba(248,113,113,0.4)]"
+          className="bg-transparent border border-border text-text-muted text-2xs px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:text-danger hover:border-[rgba(248,113,113,0.4)]"
           onClick={() => {
             if (confirm('このコメントを削除しますか？')) onDelete(lineKey, index)
           }}
