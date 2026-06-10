@@ -93,6 +93,14 @@ export const ActivityView: FC<ActivityViewProps> = ({
 }) => {
   // diff 規模は同じ payload では不変 → mount 時 1 回計算 (rawPanels 参照は安定)。
   const stats = useMemo(() => computeDiffStats(rawPanels), [rawPanels])
+  // review スレッド (レビュー全体コメント) は Conversation 一覧に出さない:
+  // SubmitBar の sidebar / floating パネルが専用の表示場所なので、ここにも出すと二重になる。
+  const conversationThreads = useMemo(() => {
+    if (!threads) return threads
+    return Object.fromEntries(
+      Object.entries(threads).filter(([, snap]) => snap.scope.type !== 'review'),
+    )
+  }, [threads])
   const totalGroups = groups.length
   const reviewedGroups = approvedCount + rcCount
   const reviewedPercent = totalGroups > 0
@@ -157,9 +165,9 @@ export const ActivityView: FC<ActivityViewProps> = ({
             </Section>
           ) : null}
 
-          {threads && Object.keys(threads).length > 0 ? (
-            <Section label={`Conversation · ${Object.keys(threads).length}`}>
-              <ConversationList threads={threads} groups={groups} rawPanels={rawPanels} />
+          {conversationThreads && Object.keys(conversationThreads).length > 0 ? (
+            <Section label={`Conversation · ${Object.keys(conversationThreads).length}`}>
+              <ConversationList threads={conversationThreads} groups={groups} rawPanels={rawPanels} />
             </Section>
           ) : null}
         </div>
