@@ -9,6 +9,7 @@
 //   - 言語/レイヤ別 bucket は「上位 N-1 + その他」に正規化し、bar の segment 数を爆発させない
 
 import type { RenderedPanel } from '@zeus/review-diff-shared'
+import { basename } from '../lib/path'
 
 export type FileChangeKind = 'added' | 'modified' | 'deleted' | 'renamed'
 
@@ -44,10 +45,6 @@ export type DiffStats = {
 // バー segment 数の上限。これを超える bucket は末尾を「その他」にまとめる。
 // 6 = SEGMENT_COLORS の長さと一致 (色サイクルが破綻しない最大値)。
 const MAX_BUCKETS = 6
-
-function basename(p: string): string {
-  return p.includes('/') ? p.slice(p.lastIndexOf('/') + 1) : p
-}
 
 function extOf(path: string): string {
   const base = basename(path)

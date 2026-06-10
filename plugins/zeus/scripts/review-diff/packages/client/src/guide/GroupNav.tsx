@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Loader2, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
 import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { renderMarkdown } from '../lib/markdown'
+import { basename } from '../lib/path'
 
 type Props = {
   index: number
@@ -60,8 +61,9 @@ export function GroupNav({
   decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, submitDisabled,
   onJumpToGroupIndex,
 }: Props) {
-  const num = String(index + 1).padStart(2, '0')
-  const tot = String(total).padStart(2, '0')
+  // eyebrow に "01/04" のようなゼロ埋め 2 桁で表示するためのラベル文字列
+  const groupIndexLabel = String(index + 1).padStart(2, '0')
+  const totalGroupsLabel = String(total).padStart(2, '0')
   const descHtml = renderMarkdown(description || '')
 
   const activePanelId = useScrollSpy(panels)
@@ -119,9 +121,9 @@ export function GroupNav({
             className="inline-flex items-baseline font-mono tabular-nums text-text-dim tracking-tight"
             aria-label={`Group ${index + 1} of ${total}`}
           >
-            <span className="text-[17px] font-semibold text-text">{num}</span>
+            <span className="text-[17px] font-semibold text-text">{groupIndexLabel}</span>
             <span className="text-sm mx-[3px] text-text-dim opacity-60">/</span>
-            <span className="text-sm text-text-dim">{tot}</span>
+            <span className="text-sm text-text-dim">{totalGroupsLabel}</span>
           </span>
           {/* グループ間ナビゲーション。
               eyebrow 直後に prev/next 矢印を置いて scroll を 1 click でやれるようにする。
@@ -401,11 +403,6 @@ function PanelItem({
       </button>
     </div>
   )
-}
-
-function basename(p: string): string {
-  const idx = p.lastIndexOf('/')
-  return idx < 0 ? p : p.slice(idx + 1)
 }
 
 // ---------- scroll spy hook ----------

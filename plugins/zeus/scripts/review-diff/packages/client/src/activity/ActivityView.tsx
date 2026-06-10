@@ -30,6 +30,7 @@ import {
   type FileChangeKind,
   type GroupFileInfo,
 } from './activity-summary'
+import { basename } from '../lib/path'
 
 // Activity タブの group 行で必要な最小限の info だけ受ける (App.tsx の AppGroup と互換)。
 export type ActivityGroup = {
@@ -721,13 +722,8 @@ function relativeTime(ts: number): string {
   return `${Math.floor(diff / 86400)} d ago`
 }
 
-function basenameOf(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i >= 0 ? path.slice(i + 1) : path
-}
-
 function renderLineAnchor(file: string, line: number, endLine?: number): string {
-  const base = basenameOf(file)
+  const base = basename(file)
   return endLine != null && endLine !== line
     ? `${base}:${line}-${endLine}`
     : `${base}:${line}`
