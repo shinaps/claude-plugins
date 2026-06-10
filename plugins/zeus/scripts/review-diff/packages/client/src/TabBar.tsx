@@ -22,9 +22,15 @@ type Props = {
 // tabbar BEM を残す理由: `.tabbar.is-pending::after` の progress bar pseudo-element +
 // animation が globals.css にあるため。bg は `rgba(10,10,13,0.85)` で background token の alpha 版
 // (token に alpha 込みのものを足すか迷ったが、ここ 1 箇所だけなので arbitrary value で OK)。
+// text 色 / hover は base に入れず active / inactive で排他にする:
+// 同一要素に text-text-dim と text-text を併記すると Tailwind は記述順でなく
+// stylesheet 順で解決するため、active 側の色が効かない事故になる。
 const TAB_BASE =
-  'px-3 py-1.5 text-xs font-medium font-sans text-text-dim bg-transparent border-0 rounded-md cursor-pointer transition-colors duration-[120ms] disabled:cursor-not-allowed disabled:opacity-[0.45] enabled:hover:text-text-muted enabled:hover:bg-surface'
-const TAB_ACTIVE = 'text-text bg-surface-2'
+  'px-3 py-1.5 text-xs font-medium font-sans bg-transparent border-0 rounded-md cursor-pointer transition-colors duration-[120ms] disabled:cursor-not-allowed disabled:opacity-[0.45]'
+const TAB_INACTIVE = 'text-text-dim enabled:hover:text-text-muted enabled:hover:bg-surface'
+// アクティブタブは accent で着色する: 輝度差 (text-text + bg-surface-2) だけでは
+// どのタブを開いているか一目で判別できないため。
+const TAB_ACTIVE = 'text-accent bg-accent-soft'
 
 export function TabBar({ active, onChange, meta, project, pending }: Props) {
   // tabbar 高さを 46px に固定する理由:
@@ -52,7 +58,8 @@ export function TabBar({ active, onChange, meta, project, pending }: Props) {
       <button
         type="button"
         role="tab"
-        className={active === 'activity' ? `${TAB_BASE} ${TAB_ACTIVE}` : TAB_BASE}
+        aria-selected={active === 'activity'}
+        className={`${TAB_BASE} ${active === 'activity' ? TAB_ACTIVE : TAB_INACTIVE}`}
         onClick={() => onChange('activity')}
       >
         Activity
@@ -60,7 +67,8 @@ export function TabBar({ active, onChange, meta, project, pending }: Props) {
       <button
         type="button"
         role="tab"
-        className={active === 'guide' ? `${TAB_BASE} ${TAB_ACTIVE}` : TAB_BASE}
+        aria-selected={active === 'guide'}
+        className={`${TAB_BASE} ${active === 'guide' ? TAB_ACTIVE : TAB_INACTIVE}`}
         onClick={() => onChange('guide')}
       >
         Guide
@@ -68,7 +76,8 @@ export function TabBar({ active, onChange, meta, project, pending }: Props) {
       <button
         type="button"
         role="tab"
-        className={active === 'diff' ? `${TAB_BASE} ${TAB_ACTIVE}` : TAB_BASE}
+        aria-selected={active === 'diff'}
+        className={`${TAB_BASE} ${active === 'diff' ? TAB_ACTIVE : TAB_INACTIVE}`}
         onClick={() => onChange('diff')}
       >
         Diff
