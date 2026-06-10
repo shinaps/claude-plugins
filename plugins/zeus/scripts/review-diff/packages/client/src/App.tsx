@@ -266,6 +266,12 @@ export function App({ payload }: Props) {
 
   const containerRef = useRef<HTMLDivElement>(null)
   const tokenRef = useRef<string>(getToken())
+  // 完了画面の集計を「実際に POST した groupDecisions」と一致させるため、submit() が送信直前に
+  // ここへスナップショットを保存する。fillMode 補完は submit 時の解釈であってユーザーの decision
+  // ではないので state (groupDecisions) には書き戻さない (書き戻すと fetch 解決前の再 render で
+  // auto-submit effect が二重発火しうる)。set は submit() 内・read は submitted 確定後の render
+  // のみの一方向フローなので、render 中に ref を読んでも値は安定している。
+  const sentDecisionsRef = useRef<Record<string, GroupDecision> | null>(null)
 
   // panelId → 所属 file (line comment の file 併記用)
   const panelFileMap = useMemo(() => {
@@ -425,10 +431,12 @@ export function App({ payload }: Props) {
     if (submitted) return
     const note = opts?.note?.trim() || undefined
     const reviewKind: ReviewKind = opts?.reviewKind ?? 'approve'
+    const decisionsToSend = buildDecisions(groupsState, groupDecisions, opts?.fillMode)
+    sentDecisionsRef.current = decisionsToSend
     const body: ResultJson = {
       decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
       reviewKind,
-      groupDecisions: buildDecisions(groupsState, groupDecisions, opts?.fillMode),
+      groupDecisions: decisionsToSend,
       // ローカル threads state (initialThreads + 本セッションで Comment ボタンが積んだ pending message) に
       // note を合成して送る。setThreads を待たずローカルで合成するのは、state 反映前に fetch する race を
       // 避けるため (この直後にタブは閉じるので state 更新は不要)。
@@ -522,11 +530,16 @@ export function App({ payload }: Props) {
     )
   }
   if (submitted === 'submit') {
-    const msg = approvedCount === totalGroups
+    // 集計は submit() が保存した送信スナップショットから計算する。state の groupDecisions は
+    // fillMode 補完を含まないため、ここで state を見ると実際に送った内容とずれる。
+    const sent = sentDecisionsRef.current ?? {}
+    const sentApproved = Object.values(sent).filter(d => d === 'approved').length
+    const sentRc = Object.values(sent).filter(d => d === 'request-changes').length
+    const msg = sentApproved === totalGroups
       ? `Review submitted (all ${totalGroups} groups approved). You can close this tab — Claude will create commits.`
-      : rcCount === totalGroups
+      : sentRc === totalGroups
         ? `Review submitted (all ${totalGroups} groups request-changes). You can close this tab.`
-        : `Review submitted (${approvedCount} approved / ${rcCount} request-changes). You can close this tab.`
+        : `Review submitted (${sentApproved} approved / ${sentRc} request-changes). You can close this tab.`
     return <div className="px-6 py-20 text-center text-lg text-text w-full">{msg}</div>
   }
 
