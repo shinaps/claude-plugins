@@ -499,6 +499,7 @@ UI には 2 つの主要タブがある (評価軸は **Guide タブの group de
 
 `comments[]` の各要素は scope union 構造:
 - `{ "body": "...", "scope": { "type": "group", "groupId": "g0" } }` — group コメント
+- `{ "body": "...", "scope": { "type": "file", "file": "path/to/foo.ts" } }` — ファイル全体へのコメント (panel header の MessageSquare ボタン)
 - `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42 } }` — 単一行コメント
 - `{ "body": "...", "scope": { "type": "line", "panelId": "...", "side": "asIs"|"toBe", "file": "path/to/foo.ts", "line": 42, "endLine": 58 } }` — 行範囲コメント
 
@@ -689,10 +690,11 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
 手順:
 
 1. `result.json` から `threads` と `comments[]` を取得し、**comments[] の新規コメントを thread 化して threads にマージ** する:
-   - thread のキーは scope から決める: group scope → `group:<groupId>`、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
+   - thread のキーは scope から決める: group scope → `group:<groupId>`、file scope → `file:<path>`、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
    - 既存キーの thread があれば `messages[]` に user message として append、無ければ新規 thread (`resolved: false, outdated: false`) を作る
    - message の形は `{ id: <uuid>, author: 'user', body, ts: <epoch ms> }`
    - **group への質問・相談の正規動線**: decision section の textarea に書いて group の **Comment** ボタンで pending としてスレッドに積む (レビュー継続、GitHub の pending review コメントと同じ) → SubmitBar の **Comment** で一括送信。積んだ分は `threads` に user message として既に入っているので、comments[] の thread 化マージは「textarea に書き残したまま submit したケース」のフォールバック
+   - **ファイル全体への指摘** (設計方針・命名・分割など行に紐づかないもの) は panel header の MessageSquare ボタンから同じ pending 方式で file scope thread に積まれる
 2. **work-dir は維持** (summary.json / diff.patch を再利用)
 3. **Claude が「最後の message が user である全 open thread」の最新 user message を読んで応答内容を判定**:
    - 質問 → answer (回答メッセージを agent message として thread に append)
