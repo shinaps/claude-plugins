@@ -2,11 +2,11 @@
 // 戻り値 FileChange は「変更行集合 (asIs/toBe) と path 情報」だけの軽量構造。
 // 実際の行 LCS は panel-renderer 側で jsdiff diffArrays に任せる。
 //
-// なぜ Shiki を呼ばないか:
-//   旧実装は行ごとに codeToHtml() を CLI bundle 内 (Node 側) で実行していたが、
-//   GitHub/GitLab と同様にハイライトはクライアントの責務に倒した。
+// なぜサーバ側で Shiki を呼ばないか:
+//   ハイライトは GitHub/GitLab と同様クライアントの責務とする設計。
 //   サーバは raw text + language hint だけを返し、ブラウザ側の Shiki が
-//   レンダリング時にハイライトする。これで server bundle から Shiki + langs + themes が消える。
+//   レンダリング時にハイライトする。Shiki + langs + themes を server bundle に
+//   含めずに済み、bundle サイズを抑えられる。
 
 import parseGitDiff from 'parse-git-diff'
 

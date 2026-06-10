@@ -1,10 +1,10 @@
 // summary.json (panel schema) の検証 + panelId 補完 + 重複 suffix 付与。
 //
 // 設計判断:
-//   - 旧 schema (groups[].files: GroupFileRef[]) は明示的に reject し、
-//     SKILL.md Phase 4 の新形式に誘導する移行メッセージを stderr に出す。
-//     zod だと「files が無い」を「該当 field がない」エラーとしてしか表現できず、
-//     旧 schema ユーザーへの誘導文を出せない。そのため zod 前に手書きの detectLegacy で先回り判定する。
+//   - 過去バージョンの SKILL.md 手順で生成された legacy 形式 (groups[].files: GroupFileRef[]) は
+//     今も入力されうるため明示的に reject し、現行形式 (SKILL.md Phase 4) へ誘導する
+//     移行メッセージを stderr に出す。zod に任せると「該当 field がない」という機械的エラーに
+//     しかならず誘導文を出せないため、zod 前に手書きの detectLegacy で先回り判定する。
 //   - panelId の自動生成は intent を含めない sha1({asIs, toBe}).slice(0,10)。
 //     context+ / context- 再生成で intent 文を書き直しても、asIs/toBe が同じなら ID 不変
 //     → ブラウザの draft (sessionStorage) と reviewed state が維持される (FR-9 / AC-9 系の要請)。

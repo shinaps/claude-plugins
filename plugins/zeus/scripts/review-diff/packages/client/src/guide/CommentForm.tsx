@@ -1,8 +1,8 @@
 // panel model 用の行コメント入力フォーム。
 //
-// 旧 DiffTable 内 NewCommentForm との違い:
-//   - sessionStorage に draft を退避する (panelId + side + number で key 生成)
-//   - panelId / side ('asIs'|'toBe') / number / endNumber を直接 props として受ける
+// 書きかけ本文 (draft) は sessionStorage に退避する。フォームは Escape /
+// キャンセルで unmount されて component state が消えるため、
+// 「再度フォームを開いたら書きかけが復元される」挙動を sessionStorage 側で担保する。
 //
 // draft key 形式: `draft:${panelId}:${side}:${number}[:${endNumber}]`
 //   panelId は zod 側で sanitize 済み (空白 → '-'、ASCII のみ) で ':' を含まないため、
