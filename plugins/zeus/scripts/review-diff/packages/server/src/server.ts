@@ -137,10 +137,10 @@ export function createApp(opts: CreateAppOptions): Hono {
 
   // GET /source → unchanged-lines バナークリックで呼ばれる。
   // sources Map から原文を引いて指定行範囲 (1-based, 両端 inclusive) を text/plain で返す。
-  // セキュリティ: middleware で token / Host を既に検証済み。path は Map の key 完全一致で
-  // 引くだけなのでパストラバーサルにはならない (filesystem を直接見ない設計)。
+  // セキュリティ: middleware で token / Host を既に検証済み。query の path は Map の key
+  // 完全一致で引くだけなのでパストラバーサルにはならない (filesystem を直接見ない設計)。
   app.get('/source', (c) => {
-    const path = c.req.query('path') ?? ''
+    const filePath = c.req.query('path') ?? ''
     const side = c.req.query('side') ?? ''
     const startStr = c.req.query('start') ?? ''
     const endStr = c.req.query('end') ?? ''
@@ -150,7 +150,7 @@ export function createApp(opts: CreateAppOptions): Hono {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
       return c.text('bad range', 400)
     }
-    const src = sources.get(path)
+    const src = sources.get(filePath)
     if (!src) return c.text('not found', 404)
     const text = side === 'before' ? src.before : src.after
     const lines = text.split('\n')

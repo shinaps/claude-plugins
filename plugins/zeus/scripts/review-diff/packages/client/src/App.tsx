@@ -34,6 +34,7 @@ import { ChunkNavigator } from './chrome/ChunkNavigator'
 import { ActivityView } from './activity/ActivityView'
 import { shouldAutoCollapseFile } from './guide/auto-collapse'
 import { renderMarkdown, escapeHtml } from './lib/markdown'
+import { basename } from './lib/path'
 import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
 import { useLineComments } from './guide/useLineComments'
 
@@ -692,7 +693,7 @@ export function App({ payload }: Props) {
               onClick={() => jumpToRawPanel(p.panelId)}
               title={p.intent}
             >
-              <span className="col-start-1 row-start-1 text-[12.5px] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basename(p.intent)}</span>
+              <span className="col-start-1 row-start-1 text-[12.5px] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basenameFromIntent(p.intent)}</span>
               <span className="col-start-2 row-start-1 inline-flex gap-1 items-baseline font-mono text-[10.5px] tabular-nums">
                 {add > 0 ? <span className="text-add-fg">+{add}</span> : null}
                 {del > 0 ? <span className="text-del-fg">-{del}</span> : null}
@@ -842,11 +843,10 @@ function cssEscape(s: string): string {
   return s.replace(/["\\]/g, '\\$&')
 }
 
-// "a/b/c.ts" → "c.ts" 形式の basename (rename 表記 "old → new" は new 側を採用)
-function basename(intentOrPath: string): string {
-  // rename 表記 "old → new" は new 側 (矢印の後) を使う
+// panel の intent 表示用 basename。lib/path の basename と違い、rename 矢印表記
+// "old → new" を new 側 (矢印の後) に分解してから basename を取る。
+function basenameFromIntent(intentOrPath: string): string {
   const arrowIdx = intentOrPath.indexOf('→')
   const target = arrowIdx >= 0 ? intentOrPath.slice(arrowIdx + 1).trim() : intentOrPath
-  const slashIdx = target.lastIndexOf('/')
-  return slashIdx >= 0 ? target.slice(slashIdx + 1) : target
+  return basename(target)
 }
