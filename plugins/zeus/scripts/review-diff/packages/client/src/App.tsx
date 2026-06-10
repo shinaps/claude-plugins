@@ -350,7 +350,9 @@ export function App({ payload }: Props) {
   // submit する Comment[] を構築。
   // - group コメント (空でないもの) を scope: {type:'group', groupId} で
   // - line コメント を scope: {type:'line', panelId, side, file, line, endLine?} で
-  function collectComments(): Comment[] {
+  // useCallback なのは onRequestContext (useCallback) が deps に取るため。クロージャが読む
+  // groupComments / lineComments / panelFileMap を deps に全列挙することで stale を防ぐ。
+  const collectComments = useCallback((): Comment[] => {
     const out: Comment[] = []
     for (const [groupId, body] of Object.entries(groupComments)) {
       const trimmed = body.trim()
@@ -379,7 +381,7 @@ export function App({ payload }: Props) {
       }
     }
     return out
-  }
+  }, [groupComments, lineCommentHandlers.lineComments, panelFileMap])
 
   // sessionStorage 全体を走査して `draft:` prefix の値を Record にまとめる。
   function collectAllDrafts(): Record<string, string> {
@@ -484,7 +486,10 @@ export function App({ payload }: Props) {
         cleanup: () => setRegenPending(false),
       })
     },
-    [groupsState, groupDecisions, groupComments, threads, regenPending, submitted, lineCommentHandlers.lineComments],
+    // deps 注: collectAllDrafts / postResult は毎 render 再生成される plain function なので意図的に
+    // 除外する (入れると memo 化が無意味になる)。collectAllDrafts は sessionStorage しか読まず、
+    // postResult は tokenRef (ref) と stable setter のみ捕捉するため、除外しても stale にならない。
+    [groupsState, groupDecisions, threads, regenPending, submitted, collectComments],
   )
 
   const onNavResizerPointerDown = useNavResizer(containerRef)
