@@ -171,6 +171,13 @@ export function App({ payload }: Props) {
   const lineCommentHandlers = useLineComments({ lineComments: initialLineCommentsMap })
   // 初期タブは Activity (AI Review Report をまず俯瞰してから Guide で詳細を進める動線)
   const [tab, setTab] = useState<Tab>('activity')
+  // SubmitBar (sidebar variant) の開閉。サイドバーはコンテンツに覆い被さるのではなく
+  // activity pane を margin で押し出してレイアウトごと狭めるため、SubmitBar 内部ではなく
+  // App が状態を持つ。デフォルトは「最後の message が Claude の返信なら開く」(スレッド自動展開と同じ方針)。
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    const msgs = (payload.initialThreads ?? {})[threadKey({ type: 'review' })]?.messages ?? []
+    return msgs.length > 0 && msgs[msgs.length - 1].author === 'agent'
+  })
   // 訪問済みタブを追跡: 一度 mount したタブは content-visibility: hidden で隠して保持し、
   // 次回切替を即時化する。Guide / Diff は 28 panel × 数千行 = 数万 DOM のレンダリングコストがあるため、
   // 毎回 mount/unmount すると切替に数秒かかる (LoAF 実測 6 秒級)。
@@ -798,6 +805,9 @@ export function App({ payload }: Props) {
         >
           {toast}
         </div>
+        variant={tab === 'activity' ? 'sidebar' : 'floating'}
+        sidebarOpen={sidebarOpen}
+        onSidebarToggle={() => setSidebarOpen(o => !o)}
       ) : null}
     </>
   )
