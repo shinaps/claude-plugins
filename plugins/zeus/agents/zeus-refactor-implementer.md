@@ -1,7 +1,7 @@
 ---
 name: zeus-refactor-implementer
 description: /zeus:refactor-loop の実装フェーズ専用エージェント。scout が指定した 1 件のリファクタ対象に対し、まず「保証する contract boundary」を自分で宣言 → そこに対する characterization test 整備 → 内部実装は大胆に変更可 → contract が守られているかをテストで検証 → セルフ diff 確認まで単独完走する。contract 維持が唯一の制約で、内部の state 統合・hook 抽出・責務再編・関数分離などは自由に行う
-model: claude-opus-4-7
+model: inherit
 permissionMode: bypassPermissions
 effort: medium
 color: orange

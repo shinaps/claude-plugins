@@ -1,7 +1,7 @@
 ---
 name: zeus-plan-reviewer
 description: zeus-dev の計画フェーズで起動される第三者プランレビューエージェント。zeus-architect が出した実装計画を、要件カバー度・設計妥当性・実装可能性・リスクの観点で批判的にレビューし、指摘を反映した修正版最終 plan までを返す。architect の self-critique フェーズを兼ねる
-model: claude-opus-4-7
+model: inherit
 permissionMode: bypassPermissions
 effort: xhigh
 color: purple

@@ -1,7 +1,7 @@
 ---
 name: zeus-architect
 description: zeus-dev の計画フェーズで起動される実装ブループリント策定エージェント。zeus-explorer の探索結果を踏まえ、複数観点を内部で検討した上で唯一最強の実装計画を断言する。出力は plan-reviewer が直接批判 → 修正版最終 plan を返す
-model: claude-opus-4-7
+model: inherit
 permissionMode: bypassPermissions
 effort: xhigh
 color: green

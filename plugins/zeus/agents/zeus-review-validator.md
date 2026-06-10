@@ -1,7 +1,7 @@
 ---
 name: zeus-review-validator
 description: zeus-review 専用のレビュー妥当性検証エージェント。zeus-reviewer の指摘を受け取り、該当コードを実際に Read して事実確認・妥当性検証を行う。false positive を排除し、見落としを追加発見する
-model: claude-opus-4-7
+model: inherit
 permissionMode: bypassPermissions
 effort: xhigh
 color: orange
