@@ -92,8 +92,17 @@ export const sampleData: ClientPayload = {
   expandable: true,
   rawPanels: [],
   editorAvailable: false,
-  // group スレッド (decision section の会話履歴表示) の dev 確認用サンプル
+  // group / file スレッド (decision section + panel header の会話履歴表示) の dev 確認用サンプル
   initialThreads: {
+    'file:src/utils.ts': {
+      scope: { type: 'file', file: 'src/utils.ts' },
+      messages: [
+        { id: 'm-demo-f1', author: 'user', body: 'このファイル、そろそろ責務ごとに分割した方がよくない?', ts: 1750000100000 },
+        { id: 'm-demo-f2', author: 'agent', body: '同感です。format 系と parse 系で 2 ファイルに分ける案を次の round で提案します。', ts: 1750000160000, agentAction: { kind: 'answer' } },
+      ],
+      resolved: false,
+      outdated: false,
+    },
     'group:g0': {
       scope: { type: 'group', groupId: 'g0' },
       messages: [

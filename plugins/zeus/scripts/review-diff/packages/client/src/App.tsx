@@ -138,6 +138,29 @@ export function App({ payload }: Props) {
     setGroupComments(prev => ({ ...prev, [groupId]: '' }))
   }, [groupComments])
 
+  // ファイル単位コメント (panel header の MessageSquare ボタン)。group と同じ pending 方式で
+  // file scope thread に積む。draft は PanelHeader ローカル state なのでここでは append のみ。
+  const addFileComment = useCallback((file: string, body: string) => {
+    const trimmed = body.trim()
+    if (!trimmed) return
+    const key = threadKey({ type: 'file', file })
+    const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: trimmed, ts: Date.now() }
+    setThreads(prev => {
+      const existing = prev[key]
+      const snap: ThreadSnapshot = existing
+        ? { ...existing, messages: [...existing.messages, msg], resolved: false }
+        : { scope: { type: 'file', file }, messages: [msg], resolved: false, outdated: false }
+      return { ...prev, [key]: snap }
+    })
+  }, [])
+
+  // PanelHeader まで 1 prop で drill するための束。threads が変わった時だけ参照が変わる
+  // (= 全 panel の memo が破れるのはコメント追加時のみ)。
+  const fileComments = useMemo(() => ({
+    getThread: (file: string) => threads[threadKey({ type: 'file', file })] ?? null,
+    onAdd: addFileComment,
+  }), [threads, addFileComment])
+
   // 読了マーカ (panel 単位): group decision とは別軸の視覚アシスト。
   // 左 nav の dot を click したら toggle。ResultJson には載せない (= 読了状態は session-local)。
   // 将来 regen-group の restore に乗せたい場合は payload.initialReviewedPanels を seed する。
@@ -627,6 +650,7 @@ export function App({ payload }: Props) {
           comment={groupComments[g.groupId] ?? ''}
           thread={threads[threadKey({ type: 'group', groupId: g.groupId })] ?? null}
           onSubmitComment={() => addGroupComment(g.groupId)}
+          fileComments={fileComments}
           onDecisionChange={onDecisionChange}
           onCommentChange={onCommentChange}
           submitDisabled={regenPending}
@@ -703,6 +727,7 @@ export function App({ payload }: Props) {
               key={p.panelId}
               panel={p}
               defaultCollapsed={isAutoCollapseByPattern || isAutoCollapseByRows}
+              fileComments={fileComments}
               {...lineCommentHandlers}
             />
           )

@@ -50,7 +50,7 @@ function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number
   const range = endLine != null && endLine !== line ? `${line}:${endLine}` : `${line}`
   return `line:${panelId}:${side}:${range}`
 }
-import { PanelHeader } from './PanelHeader'
+import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { CommentForm } from './CommentForm'
 import { createShiki } from './shiki-bundle'
 
@@ -121,12 +121,15 @@ export type PanelProps = {
   // PanelHeader 右に Hide diff ボタンを出すための callback。
   // PanelBlock 側で「userOverride='collapse' 状態に切替」をハンドル。
   onCollapse?: () => void
+  // ファイル単位コメント (PanelHeader に pass-through)
+  fileComments?: FileCommentHandlers
 } & LineCommentHandlers
 
 export const Panel = memo(function Panel({
   panel,
   highlight = true,
   onCollapse,
+  fileComments,
   ...handlers
 }: PanelProps) {
   const [drag, setDrag] = useState<DragState>(null)
@@ -574,7 +577,7 @@ export const Panel = memo(function Panel({
       data-panel-id={panel.panelId}
       ref={panelContainerRef}
     >
-      <PanelHeader panel={panel} onCollapse={onCollapse} />
+      <PanelHeader panel={panel} onCollapse={onCollapse} fileComments={fileComments} />
       {panel.sourcesUnavailable ? (
         <SourcesUnavailableBanner info={panel.sourcesUnavailable} />
       ) : null}

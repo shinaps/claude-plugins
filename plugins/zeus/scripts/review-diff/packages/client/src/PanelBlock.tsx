@@ -14,7 +14,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from './Panel'
-import { PanelHeader } from './PanelHeader'
+import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { useLazyHighlight } from './useLazyHighlight'
 import type { LineCommentHandlers } from './useLineComments'
 
@@ -24,6 +24,8 @@ export type PanelBlockProps = {
   // 初期 collapsed 状態。ユーザーが Show diff を押すと expand 可能。
   // defaultCollapsed の値変更には反応しない (= mount 後に group decision が変わっても collapsed 状態は維持)。
   defaultCollapsed?: boolean
+  // ファイル単位コメント (PanelHeader に pass-through、collapsed 状態でも付けられる)
+  fileComments?: FileCommentHandlers
 } & LineCommentHandlers
 
 // 行高見積もり (推定値): 1 行 ~22px。多少のズレは cv:auto の auto キーワードでブラウザが
@@ -32,7 +34,7 @@ const ROW_HEIGHT_PX = 22
 const PANEL_HEADER_PX = 56
 
 export function PanelBlock(props: PanelBlockProps) {
-  const { panel, highlight, defaultCollapsed, ...handlers } = props
+  const { panel, highlight, defaultCollapsed, fileComments, ...handlers } = props
 
   // segments の row 数合計から panel 高さを推定。これを contain-intrinsic-size に流すことで、
   // cv:auto の placeholder が 500px 固定 (CSS default) ではなく、各 panel に正確な値になる。
@@ -123,6 +125,7 @@ export function PanelBlock(props: PanelBlockProps) {
           panel={panel}
           onExpand={() => setOverrideWithTransition('expand')}
           totalRowsHint={totalRows}
+          fileComments={fileComments}
         />
       </div>
     )
@@ -139,6 +142,7 @@ export function PanelBlock(props: PanelBlockProps) {
         panel={panel}
         highlight={effectiveHighlight}
         onCollapse={() => setOverrideWithTransition('collapse')}
+        fileComments={fileComments}
         {...handlers}
       />
     </div>

@@ -11,6 +11,7 @@ import { memo } from 'react'
 import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { GroupNav } from './GroupNav'
 import { PanelBlock } from './PanelBlock'
+import type { FileCommentHandlers } from './PanelHeader'
 import { shouldAutoCollapseFile } from './auto-collapse'
 import type { LineCommentHandlers } from './useLineComments'
 
@@ -34,6 +35,8 @@ type Props = {
   onCommentChange: (groupId: string, body: string) => void
   // group コメントをスレッドに積む (GroupNav の Comment ボタン → App.addGroupComment へ pass-through)
   onSubmitComment: () => void
+  // ファイル単位コメント (PanelBlock → PanelHeader へ pass-through)
+  fileComments?: FileCommentHandlers
   submitDisabled: boolean
   // panel 読了マーカ (左 nav の dot click でトグル、視覚アシスト)
   reviewedPanels: Set<string>
@@ -46,7 +49,7 @@ export const GroupSection = memo(function GroupSection({
   index, total, groupId, title, description, panels,
   onJumpToPanel, onNavResizerPointerDown,
   regenPending, onRequestContext,
-  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, submitDisabled,
+  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, fileComments, submitDisabled,
   reviewedPanels, onToggleReviewed,
   onJumpToGroupIndex,
   ...lineCommentHandlers
@@ -104,6 +107,7 @@ export const GroupSection = memo(function GroupSection({
               key={p.panelId}
               panel={p}
               defaultCollapsed={isCollapseDefault}
+              fileComments={fileComments}
               {...lineCommentHandlers}
             />
           )
