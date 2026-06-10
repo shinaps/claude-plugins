@@ -11,9 +11,19 @@
 //   - rename + 内容変更: rename header (`rename from old` / `rename to new`) を維持する。
 //   - 空 patch (= group の panels が一切変更行を claim しない、context-only group): stdout に
 //     空文字列を出して exit 0。SKILL.md が「空なら commit skip」する。
+//
+// 座標系 (重要):
+//   - parse-git-diff の lineAfter は「全 group 適用後」のファイル座標。一方 linear-stack コミット
+//     (SKILL.md) では group gN の patch は「HEAD + 先行 group g0..g(N-1) コミット済み」の index に
+//     適用されるため、new 側ヘッダ (`+B`) は committed-prefix 座標へ変換して出力する。
+//     変換は afterOffset (ファイル単位累積): 先行 group に属さない skip 行 = まだ index に存在しない
+//     追加 (-1) / まだ index に残っている削除 (+1)。先行 group の行は lineAfter が既に織り込んで
+//     いるため補正しない。どの group も claim しない行も commit されず index に無いので後続と同じ扱い。
+//   - old 側 (`-A`) は補正しない: git apply は zero-context hunk の適用位置を new 側開始行のみで
+//     決める (old 側開始行は位置決めに使われない) ため、full-diff 座標のままで害がない。
 
 import parseGitDiff from 'parse-git-diff'
-import type { SummaryJson, Panel } from '@zeus/review-diff-shared'
+import type { SummaryJson, Panel, PanelSide, Group } from '@zeus/review-diff-shared'
 
 // parse-git-diff の AnyFile / AnyChunk / AnyChange は型 export されていないため独自定義 (diff-parser と同形)。
 type AnyChange = {
@@ -64,24 +74,9 @@ export function extractGroupPatch(input: ExtractGroupPatchInput): ExtractGroupPa
 
   // 該当 group の panels から (file, side, lineSet) を集約。
   // asIs.file は rename の場合 oldPath、それ以外は path と一致するよう AI に書いてもらう前提。
-  const ownedAsIs = new Map<string, Set<number>>() // asIs.file → owned before-lines
-  const ownedToBe = new Map<string, Set<number>>() // toBe.file → owned after-lines
-  for (const p of group.panels as Panel[]) {
-    if (p.asIs) {
-      const s = ownedAsIs.get(p.asIs.file) ?? new Set<number>()
-      for (const r of p.asIs.ranges) {
-        for (let n = r.start; n <= r.end; n++) s.add(n)
-      }
-      ownedAsIs.set(p.asIs.file, s)
-    }
-    if (p.toBe) {
-      const s = ownedToBe.get(p.toBe.file) ?? new Set<number>()
-      for (const r of p.toBe.ranges) {
-        for (let n = r.start; n <= r.end; n++) s.add(n)
-      }
-      ownedToBe.set(p.toBe.file, s)
-    }
-  }
+  const { asIs: ownedAsIs, toBe: ownedToBe } = collectClaims([group])
+  // 先行 group (index < idx) の claim 集合。afterOffset の補正対象判定に使う (冒頭コメント参照)。
+  const priorClaims = collectClaims(summary.groups.slice(0, idx))
 
   // panels が言及する全 file (asIs と toBe を union) を集めて、diff から該当 file 部分のみ抽出する。
   const filesOfInterest = new Set<string>()
@@ -99,13 +94,25 @@ export function extractGroupPatch(input: ExtractGroupPatchInput): ExtractGroupPa
 
     const asIsLines = ownedAsIs.get(oldPath) ?? ownedAsIs.get(path) ?? new Set<number>()
     const toBeLines = ownedToBe.get(path) ?? new Set<number>()
+    // prior の lookup も own と同一のフォールバック規則にする。rename ファイルで prior が
+    // 引けず空 Set になると、先行 group の skip 行まで補正対象に誤算入してしまうため。
+    const priorAsIsLines = priorClaims.asIs.get(oldPath) ?? priorClaims.asIs.get(path) ?? new Set<number>()
+    const priorToBeLines = priorClaims.toBe.get(path) ?? new Set<number>()
 
     // ファイル単位で各 chunk の Added/Deleted 行を group が claim しているかフィルタ
     // 出力は --unidiff-zero 形式: 連続する +/- 行を 1 hunk にまとめる。
+    // afterOffset は chunk をまたいで効く (前の hunk で skip した行が後の hunk の位置をずらす)
+    // ため、state はファイル単位で生成して全 chunk に同じものを渡す。
+    const state: FilePatchState = { afterOffset: 0 }
     const hunks: string[] = []
     for (const chunk of file.chunks ?? []) {
       if (chunk.type === 'BinaryFilesChunk') continue
-      const blocks = collectBlocksForChunk(chunk, asIsLines, toBeLines)
+      const blocks = collectBlocksForChunk(
+        chunk,
+        { asIsLines, toBeLines },
+        { asIsLines: priorAsIsLines, toBeLines: priorToBeLines },
+        state,
+      )
       for (const b of blocks) {
         hunks.push(formatHunk(b))
       }
@@ -124,6 +131,35 @@ export function extractGroupPatch(input: ExtractGroupPatchInput): ExtractGroupPa
   return { ok: true, patch: out.join('') }
 }
 
+// groups の panels が claim する行集合を file 単位に集約する。
+// asIs は oldPath キー / toBe は newPath キー (extractGroupPatch のファイルループの lookup 規則と対応)。
+function collectClaims(groups: Group[]): {
+  asIs: Map<string, Set<number>>
+  toBe: Map<string, Set<number>>
+} {
+  const asIs = new Map<string, Set<number>>()
+  const toBe = new Map<string, Set<number>>()
+  const addSide = (map: Map<string, Set<number>>, side: PanelSide) => {
+    const lines = map.get(side.file) ?? new Set<number>()
+    for (const r of side.ranges) {
+      for (let n = r.start; n <= r.end; n++) lines.add(n)
+    }
+    map.set(side.file, lines)
+  }
+  for (const g of groups) {
+    for (const p of g.panels as Panel[]) {
+      if (p.asIs) addSide(asIs, p.asIs)
+      if (p.toBe) addSide(toBe, p.toBe)
+    }
+  }
+  return { asIs, toBe }
+}
+
+// afterOffset: full-diff 座標 (lineAfter) を「HEAD + 先行 group コミット済み index」の座標へ
+// 変換する累積補正。先行 group に属さない skip 行 (= まだ index に存在しない追加 / まだ index に
+// 残っている削除) のぶんだけ new 側行番号がずれるため、ファイル先頭から累積する (冒頭コメント参照)。
+type FilePatchState = { afterOffset: number }
+
 type Block = {
   beforeStart: number // この block 内の最初の deletion 行の lineBefore (純粋 addition なら 後述の anchor)
   afterStart: number
@@ -134,11 +170,15 @@ type Block = {
 // 1 chunk 内の changes を walk して、group が claim している変更行を block 単位に集約する。
 // 「連続して group が claim している変更行」のまとまり = 1 block = 1 hunk として出力する。
 // 他 group が claim する変更行や Unchanged 行に当たったら block を切る。
+// skip は必ず flush() を伴うため、block 生成後にその block の afterStart へ効く offset 変動は
+// 起きない (= block 生成時点の state.afterOffset で確定してよい)。
 function collectBlocksForChunk(
   chunk: AnyChunk,
-  asIsLines: Set<number>,
-  toBeLines: Set<number>,
+  own: { asIsLines: Set<number>; toBeLines: Set<number> },
+  prior: { asIsLines: Set<number>; toBeLines: Set<number> },
+  state: FilePatchState,
 ): Block[] {
+  const { asIsLines, toBeLines } = own
   const blocks: Block[] = []
   // 現在組み立て中の block。null = 未開始。
   let cur: Block | null = null
@@ -173,11 +213,14 @@ function collectBlocksForChunk(
       const claimed = asIsLines.has(before)
       if (!claimed) {
         flush()
+        // 先行 group 以外の削除行は committed-prefix index にまだ残っているため、
+        // これ以降の new 側行番号は full-diff 座標より 1 行下にずれる。
+        if (!prior.asIsLines.has(before)) state.afterOffset += 1
         beforeCursor = before + 1
         continue
       }
       if (!cur) {
-        cur = { beforeStart: before, afterStart: afterCursor, beforeLines: [], afterLines: [] }
+        cur = { beforeStart: before, afterStart: afterCursor + state.afterOffset, beforeLines: [], afterLines: [] }
       } else if (cur.beforeLines.length === 0) {
         // pure-addition で始まった block に最初の deletion が join した場合、
         // beforeStart は最初 lastContextBefore に anchor されているので、実 line に更新する。
@@ -194,6 +237,9 @@ function collectBlocksForChunk(
       const claimed = toBeLines.has(after)
       if (!claimed) {
         flush()
+        // 先行 group 以外の追加行は committed-prefix index にまだ存在しないため、
+        // これ以降の new 側行番号は full-diff 座標より 1 行上にずれる。
+        if (!prior.toBeLines.has(after)) state.afterOffset -= 1
         afterCursor = after + 1
         continue
       }
@@ -202,7 +248,7 @@ function collectBlocksForChunk(
           // beforeStart: 既に block 内に deletion がある場合は元の beforeStart、
           // 純粋 addition で先頭なら直前の context 行の lineBefore (= 挿入アンカー)
           beforeStart: lastContextBefore,
-          afterStart: after,
+          afterStart: after + state.afterOffset,
           beforeLines: [],
           afterLines: [],
         }
