@@ -24,8 +24,8 @@ import { createPortal } from 'react-dom'
 import { Plus, SquareArrowOutUpRight } from 'lucide-react'
 import type { RenderedPanel, SideBySideRow, Side } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
-import { parseLineCommentKey, lineCommentKey } from './state'
-import { getToken } from './state'
+import { parseLineCommentKey, lineCommentKey } from '../lib/state'
+import { getToken } from '../lib/state'
 import type { LineCommentHandlers } from './useLineComments'
 
 // v5: window 経由で editorAvailable と editor-open Toast コールバックを受け渡す。
@@ -52,7 +52,7 @@ function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number
 }
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { CommentForm } from './CommentForm'
-import { createShiki } from './shiki-bundle'
+import { createShiki } from '../lib/shiki-bundle'
 
 const SHIKI = createShiki()
 const CLICK_THRESHOLD_MS = 200
@@ -610,10 +610,13 @@ export const Panel = memo(function Panel({
           contain: paint が効き、position: fixed の containing block が panel-block に redirect されて
           中心に固定されるデグレが発生していた。createPortal で document.body 直下に逃がして
           viewport 座標で動く本来の挙動に戻す。 */}
+      {/* 寸法 / box-shadow / radius / opacity は hover 時の .line-comment-trigger と完全に揃える。
+          幅高は w-4/h-4 (= 1rem)。px で書くと body font-size に応じて rem 側が縮んで両者の実サイズが
+          ズレるため、rem 統一でユーザー font-size 拡大にも追従させる。 */}
       {dragIndicator
         ? createPortal(
             <div
-              className="drag-cursor-indicator"
+              className="fixed -translate-x-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center bg-accent text-white rounded-[4px] shadow-[0_1px_3px_rgba(0,0,0,0.35)] opacity-85 pointer-events-none z-[9999] select-none"
               aria-hidden="true"
               style={{ left: dragIndicator.left, top: dragIndicator.top }}
             >

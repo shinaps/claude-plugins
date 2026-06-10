@@ -91,8 +91,6 @@ export const ActivityView: FC<ActivityViewProps> = ({
   scriptResults,
   threads,
 }) => {
-  // diff 規模は同じ payload では不変 → mount 時 1 回計算 (rawPanels 参照は安定)。
-  const stats = useMemo(() => computeDiffStats(rawPanels), [rawPanels])
   // review スレッド (レビュー全体コメント) は Conversation 一覧に出さない:
   // SubmitBar の sidebar / floating パネルが専用の表示場所なので、ここにも出すと二重になる。
   const conversationThreads = useMemo(() => {
@@ -107,14 +105,6 @@ export const ActivityView: FC<ActivityViewProps> = ({
     ? Math.round((reviewedGroups / totalGroups) * 100)
     : 0
 
-  // Files セルの sub-text: "+3 added · 12 modified · 1 deleted" のように 0 件を省略して短く。
-  const fileBreakdown = [
-    stats.filesAdded > 0    ? `${stats.filesAdded} added`       : null,
-    stats.filesModified > 0 ? `${stats.filesModified} modified` : null,
-    stats.filesDeleted > 0  ? `${stats.filesDeleted} deleted`   : null,
-    stats.filesRenamed > 0  ? `${stats.filesRenamed} renamed`   : null,
-  ].filter(Boolean).join(' · ') || 'no changes'
-
   return (
     <div className="m-0 w-full">
       {/* canvas: 上部 padding 多めで「読み物」っぽい縦リズム + 中央寄せ。max-w は dashboard が 4 列に収まる幅 */}
@@ -126,17 +116,6 @@ export const ActivityView: FC<ActivityViewProps> = ({
             reviewedPercent={reviewedPercent}
             reviewedGroups={reviewedGroups}
             totalGroups={totalGroups}
-          />
-
-          <StatsDashboard
-            filesTotal={stats.filesTotal}
-            fileBreakdown={fileBreakdown}
-            linesAdded={stats.linesAdded}
-            linesDeleted={stats.linesDeleted}
-            reviewedGroups={reviewedGroups}
-            totalGroups={totalGroups}
-            approvedCount={approvedCount}
-            rcCount={rcCount}
           />
 
           {scriptResults && scriptResults.results.length > 0 ? (
@@ -212,87 +191,6 @@ const Hero: FC<{
     ) : null}
   </header>
 )
-
-// === Stats Dashboard ==========================================================
-// 4 列の「計器盤」。grid + gap-px + parent bg で cell 間に 1px の hairline を作る。
-// 各セルは label (eyebrow) + 大型 mono number + 小型 sub-text + 任意の bottom 要素。
-
-const StatsDashboard: FC<{
-  filesTotal: number
-  fileBreakdown: string
-  linesAdded: number
-  linesDeleted: number
-  reviewedGroups: number
-  totalGroups: number
-  approvedCount: number
-  rcCount: number
-}> = ({
-  filesTotal, fileBreakdown, linesAdded, linesDeleted,
-  reviewedGroups, totalGroups, approvedCount, rcCount,
-}) => (
-  <div className="grid grid-cols-4 gap-px bg-border-soft border border-border-soft rounded-xl overflow-hidden mb-14">
-    <StatCell label="Files" big={filesTotal.toLocaleString()} sub={fileBreakdown} />
-    <StatCell
-      label="Additions"
-      big={`+${linesAdded.toLocaleString()}`}
-      bigColor="text-add-fg"
-      sub="lines"
-    />
-    <StatCell
-      label="Deletions"
-      // 真の minus sign (U+2212) を使ってタイポグラフィを整える
-      big={`−${linesDeleted.toLocaleString()}`}
-      bigColor="text-del-fg"
-      sub="lines"
-    />
-    <StatCell
-      label="Progress"
-      big={`${reviewedGroups}/${totalGroups}`}
-      sub={`${approvedCount} approved · ${rcCount} rc`}
-    >
-      <ProgressBar reviewedGroups={reviewedGroups} totalGroups={totalGroups} />
-    </StatCell>
-  </div>
-)
-
-const StatCell: FC<{
-  label: string
-  big: string
-  bigColor?: string
-  sub: string
-  children?: ReactNode
-}> = ({ label, big, bigColor, sub, children }) => (
-  <div className="bg-surface px-6 py-5 min-w-0">
-    <div className="text-[10px] tracking-[0.18em] uppercase font-semibold text-text-dim mb-3">
-      {label}
-    </div>
-    {/* 30px+ の display number。font-mono + tabular-nums で計器の安定感、tracking で凝縮感 */}
-    <div
-      className={`text-[30px] leading-none font-semibold tabular-nums tracking-[-0.02em] font-mono ${bigColor ?? 'text-text'}`}
-    >
-      {big}
-    </div>
-    <div className="mt-2 text-[11px] text-text-muted tabular-nums truncate" title={sub}>
-      {sub}
-    </div>
-    {children}
-  </div>
-)
-
-const ProgressBar: FC<{ reviewedGroups: number; totalGroups: number }> = ({
-  reviewedGroups, totalGroups,
-}) => {
-  const percent = totalGroups > 0 ? (reviewedGroups / totalGroups) * 100 : 0
-  return (
-    <div className="mt-3 h-1 bg-surface-3 rounded-full overflow-hidden">
-      <div
-        className="h-full bg-accent rounded-full transition-[width] duration-300 ease-out"
-        style={{ width: `${percent}%` }}
-        aria-label={`${Math.round(percent)}% reviewed`}
-      />
-    </div>
-  )
-}
 
 // === Breakdown (Languages / Layers) ==========================================
 // このタブの「差別化点」: bucket を proportional segment bar で表現し、diff 構成を視覚化する。
@@ -452,18 +350,23 @@ const FileChip: FC<{ info: GroupFileInfo }> = ({ info }) => {
 //   - failed: ✗ icon + 赤系 (この状態では本来 UI が開かないので、表示されるのは復旧後のみ)
 //   - skipped: − icon + neutral
 
+// border-color は base に置かず status 側で排他にする (同一 property の utility 競合は
+// 記述順でなく stylesheet 順で解決されるため、base + override の重ね書きは事故る)
+const PREFLIGHT_CHIP_BASE =
+  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border bg-surface-2'
+const PREFLIGHT_CHIP_STATUS: Record<ScriptResult['status'], string> = {
+  passed: 'text-add-fg border-success/40',
+  failed: 'text-del-fg border-danger/50',
+  skipped: 'text-text-muted border-border',
+}
+
 const PreflightChecks: FC<{ results: ReadonlyArray<ScriptResult> }> = ({ results }) => (
-  <div className="preflight-results">
+  <div className="flex flex-wrap gap-2 py-1">
     {results.map((r) => {
       const Icon = r.status === 'passed' ? Check : r.status === 'failed' ? X : MinusCircle
-      const klass = r.status === 'passed'
-        ? 'preflight-chip preflight-chip-passed'
-        : r.status === 'failed'
-          ? 'preflight-chip preflight-chip-failed'
-          : 'preflight-chip preflight-chip-skipped'
       const duration = r.durationMs > 0 ? formatDuration(r.durationMs) : (r.reason ?? '')
       return (
-        <span key={r.name} className={klass} title={r.reason ?? r.status}>
+        <span key={r.name} className={`${PREFLIGHT_CHIP_BASE} ${PREFLIGHT_CHIP_STATUS[r.status]}`} title={r.reason ?? r.status}>
           <Icon className="w-3 h-3" aria-hidden strokeWidth={2.5} />
           <span>{r.name}</span>
           {duration ? <span className="opacity-70">({duration})</span> : null}
@@ -510,22 +413,23 @@ const ConversationList: FC<{
 
   if (active.length === 0 && inactive.length === 0) {
     return (
-      <div className="conversation-empty">
+      <div className="inline-flex items-center gap-2 py-3 text-text-muted text-xs">
         <MessagesSquare className="w-4 h-4" strokeWidth={1.8} aria-hidden />
         <span>No threads yet — drop a comment on any line to start one.</span>
       </div>
     )
   }
 
+  const SUMMARY_BASE = 'inline-flex items-center gap-1.5 m-0 mb-1 text-xs font-mono'
   return (
-    <div className="conversation-list">
+    <div className="flex flex-col gap-3">
       {unresolvedCount > 0 ? (
-        <p className="conversation-list-summary">
+        <p className={`${SUMMARY_BASE} text-warn`}>
           <CircleDot className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
           <span>{unresolvedCount} unresolved {unresolvedCount === 1 ? 'thread' : 'threads'}</span>
         </p>
       ) : (
-        <p className="conversation-list-summary conversation-list-summary-clear">
+        <p className={`${SUMMARY_BASE} text-add-fg`}>
           <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
           <span>All threads resolved</span>
         </p>
@@ -545,14 +449,14 @@ const ConversationList: FC<{
       {inactive.length > 0 ? (
         <button
           type="button"
-          className="conversation-list-toggle"
+          className="self-start inline-flex items-center gap-1.5 px-2.5 py-1.5 mt-1 bg-transparent border border-border-soft rounded-full text-text-muted text-xs font-mono cursor-pointer transition-colors duration-[120ms] hover:text-text hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-soft focus-visible:outline-offset-2"
           aria-expanded={showInactive}
           onClick={() => setShowInactive(s => !s)}
         >
           {showInactive ? <ChevronUp className="w-3.5 h-3.5" aria-hidden /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden />}
           <span>
             {showInactive ? 'Hide' : 'Show'} resolved &amp; outdated
-            <span className="conversation-list-toggle-count">{inactive.length}</span>
+            <span className="ml-1.5 px-1.5 py-px rounded-full bg-surface-3 text-text text-[10.5px]">{inactive.length}</span>
           </span>
         </button>
       ) : null}
@@ -607,41 +511,48 @@ const ConversationCard: FC<{
         ? 'Review'
         : `Group · ${groups.find(g => g.groupId === scope.groupId)?.title ?? scope.groupId}`
 
+  // resolve / reopen ボタン。on 状態の色は base と排他で持つ (utility の同 property 競合回避)
+  const RESOLVE_BASE =
+    'inline-flex items-center gap-1 px-2 py-[3px] border rounded-md text-[10.5px] font-mono uppercase tracking-[0.04em] cursor-pointer transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-accent-soft focus-visible:outline-offset-1'
+  const RESOLVE_STATE = resolved
+    ? 'text-add-fg border-add-fg/30 bg-add-bg/50'
+    : 'text-text-muted border-border-soft bg-surface hover:text-text hover:border-border hover:bg-surface-2'
+
   return (
     <article
-      className="conversation-card"
+      className="relative grid grid-cols-[24px_minmax(0,1fr)] gap-2 pt-3 pr-3.5 pb-3.5 pl-2.5 border border-border-soft rounded-[10px] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--color-surface)_92%,transparent),var(--color-surface-2))] transition-[border-color,box-shadow] duration-[120ms] hover:border-border focus-within:shadow-[0_0_0_1px_var(--color-accent-soft)] data-[state=active]:border-l-accent-soft data-[state=resolved]:opacity-75 data-[state=outdated]:border-l-2 data-[state=outdated]:border-l-warn"
       data-thread-key={threadKey}
       data-state={variant}
     >
-      <header className="conversation-card-head">
+      <header className="col-span-2 grid grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-x-2">
         <button
           type="button"
-          className="conversation-card-toggle"
+          className="w-6 h-6 inline-flex items-center justify-center border border-border-soft rounded-md bg-surface text-text-muted cursor-pointer transition-colors duration-[120ms] hover:text-text hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-soft focus-visible:outline-offset-1"
           aria-expanded={expanded}
           aria-controls={sectionId}
           onClick={() => setExpanded(e => !e)}
         >
           {expanded
-            ? <ChevronUp className="conversation-card-chevron" aria-hidden />
-            : <ChevronDown className="conversation-card-chevron" aria-hidden />}
+            ? <ChevronUp className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />
+            : <ChevronDown className="w-3.5 h-3.5" strokeWidth={2} aria-hidden />}
           <span className="sr-only">{expanded ? 'Collapse thread' : 'Expand thread'}</span>
         </button>
-        <div className="conversation-card-anchor">
+        <div className="inline-flex items-center gap-1.5 min-w-0 text-text-muted">
           {/* file / line はファイル系、review は会話系、group は dot のアイコン */}
           {snap.scope.type === 'group'
             ? <CircleDot className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />
             : snap.scope.type === 'review'
               ? <MessagesSquare className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />
               : <FileCode className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />}
-          <span className="conversation-card-anchor-label">{anchorLabel}</span>
+          <span className="font-mono text-xs text-text overflow-hidden text-ellipsis whitespace-nowrap">{anchorLabel}</span>
         </div>
-        <div className="conversation-card-meta">
+        <div className="inline-flex items-center gap-2 text-text-dim text-[11px]">
           <StatusPill variant={variant} />
-          <span className="conversation-card-meta-msg">
+          <span className="font-mono text-text-muted">
             {snap.messages.length} {snap.messages.length === 1 ? 'msg' : 'msgs'}
           </span>
           {lastMessage ? (
-            <time className="conversation-card-meta-time" title={new Date(lastMessage.ts).toString()}>
+            <time className="font-mono" title={new Date(lastMessage.ts).toString()}>
               {relativeTime(lastMessage.ts)}
             </time>
           ) : null}
@@ -649,7 +560,7 @@ const ConversationCard: FC<{
           {!snap.outdated ? (
             <button
               type="button"
-              className={`conversation-card-resolve ${resolved ? 'conversation-card-resolve-on' : ''}`}
+              className={`${RESOLVE_BASE} ${RESOLVE_STATE}`}
               onClick={onToggleResolved}
               aria-pressed={resolved}
               title={resolved ? 'Reopen thread' : 'Mark thread as resolved'}
@@ -667,14 +578,16 @@ const ConversationCard: FC<{
 
       {/* collapse 時の preview として title (= first message excerpt) を出し、expand 時は
           timeline と重複するため非表示にする。 */}
-      {!expanded ? <p className="conversation-card-title">{title}</p> : null}
+      {!expanded ? (
+        <p className="col-start-2 m-0 text-sm leading-normal text-text font-medium [overflow-wrap:anywhere] break-words">{title}</p>
+      ) : null}
 
       {expanded ? (
         <ol
           id={sectionId}
           role="region"
           aria-label="Thread messages"
-          className="conversation-thread"
+          className="col-start-2 relative mt-1 pt-2 pb-1 pl-0 list-none border-t border-dashed border-border-soft before:content-[''] before:absolute before:left-[11px] before:top-7 before:bottom-4 before:w-px before:bg-border-soft"
         >
           {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (各スレッド表示と同じ視覚言語) */}
           {snap.messages.map((msg, i) => (
@@ -692,10 +605,14 @@ const ConversationCard: FC<{
 
 // === supporting subcomponents ===================================================
 
+// border-color は variant 側で排他に持つ (utility の同 property 競合回避)
+const PILL_BASE =
+  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-mono uppercase tracking-[0.06em] bg-surface-2 border'
+
 const StatusPill: FC<{ variant: ThreadVariant }> = ({ variant }) => {
   if (variant === 'active') {
     return (
-      <span className="conversation-pill conversation-pill-active">
+      <span className={`${PILL_BASE} text-accent border-accent/25`}>
         <CircleDot className="w-3 h-3" strokeWidth={2} aria-hidden />
         <span>Open</span>
       </span>
@@ -703,14 +620,14 @@ const StatusPill: FC<{ variant: ThreadVariant }> = ({ variant }) => {
   }
   if (variant === 'resolved') {
     return (
-      <span className="conversation-pill conversation-pill-resolved">
+      <span className={`${PILL_BASE} text-add-fg border-add-fg/25`}>
         <CheckCircle2 className="w-3 h-3" strokeWidth={2} aria-hidden />
         <span>Resolved</span>
       </span>
     )
   }
   return (
-    <span className="conversation-pill conversation-pill-outdated">
+    <span className={`${PILL_BASE} text-warn border-warn/25`}>
       <AlertTriangle className="w-3 h-3" strokeWidth={2} aria-hidden />
       <span>Outdated</span>
     </span>
@@ -718,8 +635,8 @@ const StatusPill: FC<{ variant: ThreadVariant }> = ({ variant }) => {
 }
 
 const ConversationSnippet: FC<{ snippet: LineSnippet }> = ({ snippet }) => (
-  <div className="conversation-snippet" data-line-type={snippet.target.type}>
-    <div className="conversation-snippet-rail">
+  <div className="col-start-2 border border-border-soft rounded-md overflow-hidden bg-surface" data-line-type={snippet.target.type}>
+    <div className="flex flex-col">
       {snippet.before ? <SnippetLine line={snippet.before} muted /> : null}
       <SnippetLine line={snippet.target} highlight />
       {snippet.after ? <SnippetLine line={snippet.after} muted /> : null}
@@ -729,38 +646,50 @@ const ConversationSnippet: FC<{ snippet: LineSnippet }> = ({ snippet }) => (
 
 const SnippetLine: FC<{ line: SnippetRow; muted?: boolean; highlight?: boolean }> = ({ line, muted, highlight }) => (
   <div
-    className="conversation-snippet-row"
+    className={`grid grid-cols-[40px_minmax(0,1fr)] items-center font-mono text-xs leading-[1.55]${
+      line.type === 'addition' ? ' bg-add-bg/70' : line.type === 'deletion' ? ' bg-del-bg/70' : ''
+    }${muted ? ' opacity-65' : ''}${highlight ? ' shadow-[inset_2px_0_0_0_var(--color-accent)]' : ''}`}
     data-row-type={line.type}
-    data-muted={muted ? '1' : undefined}
-    data-highlight={highlight ? '1' : undefined}
   >
-    <span className="conversation-snippet-num">{line.line ?? ''}</span>
-    <code className="conversation-snippet-code">{line.raw || ' '}</code>
+    <span className="px-2 py-1 text-right text-text-dim border-r border-border-soft bg-surface-2/60 select-none">{line.line ?? ''}</span>
+    <code className={`px-3 py-1 whitespace-pre overflow-x-auto [overflow-wrap:normal] ${
+      line.type === 'addition' ? 'text-add-fg' : line.type === 'deletion' ? 'text-del-fg' : 'text-text'
+    }`}>{line.raw || ' '}</code>
   </div>
 )
 
 const ConversationMessage: FC<{ msg: ThreadMessage; highlight?: boolean }> = ({ msg, highlight }) => {
   const Icon = msg.agentAction ? AGENT_ACTION_ICON[msg.agentAction.kind] : null
   const actionLabel = msg.agentAction ? AGENT_ACTION_LABEL[msg.agentAction.kind] : null
+  // avatar の box-shadow (surface 色 3px) は timeline 縦線の上に乗ったとき線を「切る」ための縁取り
+  const avatarClass = msg.author === 'agent'
+    ? 'bg-accent text-surface shadow-[0_0_0_3px_var(--color-surface)]'
+    : 'bg-surface-3 text-text border border-border shadow-[0_0_0_3px_var(--color-surface)]'
   return (
-    <li className={`conversation-msg${highlight ? ' thread-new-message' : ''}`} data-author={msg.author}>
-      <span className="conversation-avatar" aria-hidden>
+    <li
+      className={`grid grid-cols-[24px_minmax(0,1fr)] gap-x-2.5 py-2${highlight ? ' thread-new-message' : ''}`}
+      data-author={msg.author}
+    >
+      <span
+        className={`relative w-6 h-6 rounded-full inline-flex items-center justify-center font-mono text-[10.5px] font-semibold tracking-[0.05em] z-[1] ${avatarClass}`}
+        aria-hidden
+      >
         {msg.author === 'agent' ? 'C' : 'Y'}
       </span>
-      <div className="conversation-msg-body">
-        <header className="conversation-msg-head">
-          <span className="conversation-msg-author">{msg.author === 'agent' ? 'Claude' : 'You'}</span>
+      <div className="min-w-0">
+        <header className="flex items-center gap-2 mb-1 text-text-muted text-xs">
+          <span className="text-text font-semibold">{msg.author === 'agent' ? 'Claude' : 'You'}</span>
           {Icon && actionLabel ? (
-            <span className="conversation-msg-action">
+            <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-surface-2 text-accent text-[10.5px] font-mono uppercase tracking-[0.04em]">
               <Icon className="w-3 h-3" strokeWidth={2} aria-hidden />
               <span>{actionLabel}</span>
             </span>
           ) : null}
-          <time className="conversation-msg-time" title={new Date(msg.ts).toString()}>
+          <time className="ml-auto text-text-dim font-mono text-[10.5px]" title={new Date(msg.ts).toString()}>
             {relativeTime(msg.ts)}
           </time>
         </header>
-        <p className="conversation-msg-text">{msg.body}</p>
+        <p className="m-0 text-text text-sm leading-[1.55] whitespace-pre-wrap [overflow-wrap:anywhere] break-words">{msg.body}</p>
       </div>
     </li>
   )
