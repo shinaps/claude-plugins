@@ -186,8 +186,11 @@ function collectBlocksForChunk(
   let beforeCursor = chunk.fromFileRange?.start ?? 1
   let afterCursor = chunk.toFileRange?.start ?? 1
   // pure-addition の block で beforeStart として使う anchor (= 直前の context 行 の lineBefore、
-  // hunk 先頭なら fromFileRange.start - 1)
-  let lastContextBefore = (chunk.fromFileRange?.start ?? 1) - 1
+  // hunk 先頭なら fromFileRange.start - 1)。
+  // 0 未満に clamp する理由: AddedFile (新規ファイル) の hunk は fromFileRange.start = 0 で、
+  // そのまま -1 すると `@@ --1,0 ...` という corrupt なヘッダになり git apply が読めない。
+  // 新規ファイルの正規形は `@@ -0,0 +1,N @@`。
+  let lastContextBefore = Math.max(0, (chunk.fromFileRange?.start ?? 1) - 1)
 
   const flush = () => {
     if (cur && (cur.beforeLines.length > 0 || cur.afterLines.length > 0)) {
