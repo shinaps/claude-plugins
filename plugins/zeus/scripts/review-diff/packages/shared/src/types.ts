@@ -103,6 +103,7 @@ export type Comment = {
   body: string
   scope:
     | { type: 'group'; groupId: string }
+    | { type: 'file'; file: string }
     | {
         type: 'line'
         panelId: string
@@ -136,9 +137,11 @@ export type ThreadMessage = {
   agentAction?: AgentAction
 }
 
-// スレッドの anchor。新規スレッドは必ず line / group のいずれか。'overall' は v4 で廃止済み。
+// スレッドの anchor。新規スレッドは line / group / file のいずれか。'overall' は v4 で廃止済み。
+// file scope は「特定の行ではなくファイル全体への指摘」(設計方針・命名・ファイル分割など) 用。
 export type ThreadScope =
   | { type: 'group'; groupId: string }
+  | { type: 'file'; file: string }
   | {
       type: 'line'
       panelId: string
