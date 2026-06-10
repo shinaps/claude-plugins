@@ -18,6 +18,7 @@ export default defineWorkspace([
       include: [
         'packages/server/test/**/*.test.ts',
         'packages/shared/test/**/*.test.ts',
+        'packages/cli/test/**/*.test.ts',
       ],
     },
   },
