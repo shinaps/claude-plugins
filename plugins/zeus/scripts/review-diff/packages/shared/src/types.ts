@@ -137,11 +137,14 @@ export type ThreadMessage = {
   agentAction?: AgentAction
 }
 
-// スレッドの anchor。新規スレッドは line / group / file のいずれか。'overall' は v4 で廃止済み。
+// スレッドの anchor。line / group / file / review のいずれか。'overall' は v4 で廃止済み。
 // file scope は「特定の行ではなくファイル全体への指摘」(設計方針・命名・ファイル分割など) 用。
+// review scope は「レビュー全体への申し送り・指摘」用 (SubmitBar の textarea = この thread への入力)。
+// anchor が 1 つしかないため payload を持たない。
 export type ThreadScope =
   | { type: 'group'; groupId: string }
   | { type: 'file'; file: string }
+  | { type: 'review' }
   | {
       type: 'line'
       panelId: string

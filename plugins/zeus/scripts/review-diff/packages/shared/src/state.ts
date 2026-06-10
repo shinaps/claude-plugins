@@ -3,6 +3,7 @@ import type { ThreadScope } from './types'
 // threadKey: ThreadScope を restore.json / Map / log で一意に識別する文字列キーに変換する。
 //   - group  : 'group:<groupId>'
 //   - file   : 'file:<path>'
+//   - review : 'review' (anchor が 1 つしかないので固定キー)
 //   - line   : 'line:<panelId>:<side>:<line>' または 'line:<panelId>:<side>:<line>:<endLine>'
 //
 // 既存 lineCommentKey は \x1f 区切りで衝突回避していたが、threadKey は restore.json / DOM 属性で
@@ -12,6 +13,7 @@ import type { ThreadScope } from './types'
 export function threadKey(scope: ThreadScope): string {
   if (scope.type === 'group') return `group:${scope.groupId}`
   if (scope.type === 'file') return `file:${scope.file}`
+  if (scope.type === 'review') return 'review'
   const range = scope.endLine != null ? `${scope.line}:${scope.endLine}` : `${scope.line}`
   return `line:${scope.panelId}:${scope.side}:${range}`
 }
