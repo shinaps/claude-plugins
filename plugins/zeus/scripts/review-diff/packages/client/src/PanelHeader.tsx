@@ -121,8 +121,14 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
           {fileThread && fileThread.messages.length > 0 ? (
             /* 高さ制限なしの全文表示 (group スレッドの会話欄と同じ方針) */
             <div className="flex flex-col gap-1.5 rounded-[7px] border border-border-soft bg-surface px-2.5 py-2">
-              {fileThread.messages.map((m) => (
-                <div key={m.id} className="flex flex-col gap-0.5">
+              {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (review スレッドと同じ視覚言語) */}
+              {fileThread.messages.map((m, i) => (
+                <div
+                  key={m.id}
+                  className={`flex flex-col gap-0.5 px-1 -mx-1${
+                    m.author === 'agent' && i === fileThread.messages.length - 1 ? ' thread-new-message' : ''
+                  }`}
+                >
                   <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
                     {m.author === 'agent' ? 'Claude' : 'You'}
                   </span>

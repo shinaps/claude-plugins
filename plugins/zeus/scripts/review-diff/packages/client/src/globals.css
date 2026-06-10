@@ -895,6 +895,18 @@
   to { background-position: -100% 0; }
 }
 
+/* スレッド新着 message の注目喚起ハイライト (review / group / file / Activity 共通)。
+   accent-soft (14% alpha) から透明へ 10 秒かけてフェードアウトする。
+   パルス (点滅) も試したが読書中の視界で動き続けるのが煩わしく、単発フェードに落ち着いた。 */
+@keyframes thread-new-message {
+  from { background-color: var(--color-accent-soft); }
+  to { background-color: transparent; }
+}
+.thread-new-message {
+  border-radius: 4px;
+  animation: thread-new-message 10s ease-out;
+}
+
 /* === @media: モバイル時 group-section の grid 解除 ======================== */
 @media (max-width: 1000px) {
   .group-section {

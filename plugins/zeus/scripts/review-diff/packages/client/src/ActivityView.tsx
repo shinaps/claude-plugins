@@ -668,8 +668,13 @@ const ConversationCard: FC<{
           aria-label="Thread messages"
           className="conversation-thread"
         >
-          {snap.messages.map((msg) => (
-            <ConversationMessage key={msg.id} msg={msg} />
+          {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (各スレッド表示と同じ視覚言語) */}
+          {snap.messages.map((msg, i) => (
+            <ConversationMessage
+              key={msg.id}
+              msg={msg}
+              highlight={msg.author === 'agent' && i === snap.messages.length - 1}
+            />
           ))}
         </ol>
       ) : null}
@@ -726,11 +731,11 @@ const SnippetLine: FC<{ line: SnippetRow; muted?: boolean; highlight?: boolean }
   </div>
 )
 
-const ConversationMessage: FC<{ msg: ThreadMessage }> = ({ msg }) => {
+const ConversationMessage: FC<{ msg: ThreadMessage; highlight?: boolean }> = ({ msg, highlight }) => {
   const Icon = msg.agentAction ? AGENT_ACTION_ICON[msg.agentAction.kind] : null
   const actionLabel = msg.agentAction ? AGENT_ACTION_LABEL[msg.agentAction.kind] : null
   return (
-    <li className="conversation-msg" data-author={msg.author}>
+    <li className={`conversation-msg${highlight ? ' thread-new-message' : ''}`} data-author={msg.author}>
       <span className="conversation-avatar" aria-hidden>
         {msg.author === 'agent' ? 'C' : 'Y'}
       </span>
