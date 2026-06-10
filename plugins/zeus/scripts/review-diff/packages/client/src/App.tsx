@@ -805,6 +805,9 @@ export function App({ payload }: Props) {
         onSubmit={submit}
         submitting={submitted !== null}
         reviewThread={threads[threadKey({ type: 'review' })] ?? null}
+        variant={tab === 'activity' ? 'sidebar' : 'floating'}
+        sidebarOpen={sidebarOpen}
+        onSidebarToggle={() => setSidebarOpen(o => !o)}
       />
       {toast ? (
         <div
@@ -814,9 +817,6 @@ export function App({ payload }: Props) {
         >
           {toast}
         </div>
-        variant={tab === 'activity' ? 'sidebar' : 'floating'}
-        sidebarOpen={sidebarOpen}
-        onSidebarToggle={() => setSidebarOpen(o => !o)}
       ) : null}
     </>
   )
