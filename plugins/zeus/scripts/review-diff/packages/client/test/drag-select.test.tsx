@@ -15,6 +15,17 @@ import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from '../src/guide/Panel'
 import type { LineCommentHandlers, LineTarget } from '../src/guide/useLineComments'
 
+// happy-dom には document.elementsFromPoint が無く、drag 中の pointermove で
+// drag-indicator effect の onMove が TypeError でクラッシュする。drag を発生させる
+// 全テストに影響するためファイルレベルで空配列 stub を入れて無害化する
+// (行解決は elementFromPoint 側を使うので indicator の戻り値は検証対象外)。
+beforeEach(() => {
+  ;(document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => []
+})
+afterEach(() => {
+  delete (document as Partial<Document>).elementsFromPoint
+})
+
 function makePanel(panelId = 'p1'): RenderedPanel {
   // context 3 行のシンプルな panel。各 row は両側 context (= 行番号が両側 1..3)。
   return {
@@ -110,10 +121,18 @@ describe('Panel drag select (grid)', () => {
     const { handlers } = renderPanel()
     const user = userEvent.setup()
     const cell = getGutterCell('p1', 'tobe', 2)
-    await user.pointer([
-      { target: cell, keys: '[MouseLeft>]' },
-      { target: cell, keys: '[/MouseLeft]' },
-    ])
+    // happy-dom は layout を持たず elementFromPoint が座標から正しい要素を解決できないため、
+    // 「同じ行で離した」状況を mock で決定化する
+    const orig = document.elementFromPoint
+    document.elementFromPoint = (() => cell) as typeof document.elementFromPoint
+    try {
+      await user.pointer([
+        { target: cell, keys: '[MouseLeft>]' },
+        { target: cell, keys: '[/MouseLeft]' },
+      ])
+    } finally {
+      document.elementFromPoint = orig
+    }
     expect(handlers.openedCalls).toEqual([
       { panelId: 'p1', target: { side: 'toBe', number: 2 } },
     ])
@@ -124,7 +143,7 @@ describe('Panel drag select (grid)', () => {
     const user = userEvent.setup()
     const start = getGutterCell('p1', 'tobe', 1)
     const end = getGutterCell('p1', 'tobe', 3)
-    // happy-dom の elementFromPoint は座標 → 要素を解決しないので mock で end を返す
+    // happy-dom は layout を持たず elementFromPoint が座標から要素を解決できないので mock で end を返す
     const orig = document.elementFromPoint
     document.elementFromPoint = ((_x: number, _y: number) => end) as typeof document.elementFromPoint
     try {
@@ -247,13 +266,6 @@ describe('Panel drag select (grid)', () => {
 describe('Panel drag commit contract', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    // happy-dom には document.elementsFromPoint が無く、drag 中の pointermove で
-    // drag-indicator effect の onMove が TypeError でクラッシュする。コミット挙動の検証に
-    // indicator は無関係なので空配列 stub で無害化する (行解決は elementFromPoint 側を使う)。
-    ;(document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => []
-  })
-  afterEach(() => {
-    delete (document as Partial<Document>).elementsFromPoint
   })
 
   // window レベルの pointerup / pointercancel を直接 dispatch する。
