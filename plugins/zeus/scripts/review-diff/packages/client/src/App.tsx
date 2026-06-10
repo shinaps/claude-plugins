@@ -285,7 +285,7 @@ export function App({ payload }: Props) {
   }, [scrollTarget])
 
   const onDecisionChange = useCallback((id: string, next: GroupDecision | null) => {
-    // v5.0.3: ユーザー操作で decision が変わった瞬間に auto-submit を arm する。
+    // ユーザー操作で decision が変わった瞬間に auto-submit を arm する。
     // restore 経由の初期状態が全埋まりでも、ここを経由しない限り発火しない。
     autoSubmitArmedRef.current = true
     setGroupDecisions(prev => ({ ...prev, [id]: next }))
@@ -332,6 +332,14 @@ export function App({ payload }: Props) {
     const el = containerRef.current?.querySelector(sel) as HTMLElement | null
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [groupsState])
+
+  // Diff タブの左 nav からファイル単位 panel へジャンプする。
+  // .raw-diff-tab スコープで querySelector する (Guide タブの同 panelId と衝突しないため)。
+  const jumpToRawPanel = useCallback((panelId: string) => {
+    const sel = `.raw-diff-tab .panel-block[data-panel-id="${cssEscape(panelId)}"]`
+    const el = document.querySelector(sel) as HTMLElement | null
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
 
   // submit する Comment[] を構築。
   // - group コメント (空でないもの) を scope: {type:'group', groupId} で
@@ -538,6 +546,31 @@ export function App({ payload }: Props) {
     resizer.addEventListener('pointercancel', onUp)
   }, [])
 
+  const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
+  const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
+  const totalGroups = groupsState.length
+  const allDecided = totalGroups > 0 && (approvedCount + rcCount) === totalGroups
+
+  // 全 group decision が確定した瞬間に submit を自動発火する。
+  // reviewKind は groupDecisions の分布から判定 (全 approved → 'approve'、それ以外 → 'request-changes')。
+  // 「Comment」だけは明示的にボタンで送る運用 (= 自動 submit には乗らない、note 付きで残せる)。
+  // submit 内で submitted === null ガードがあるので二重発火しない。
+  // restore (= regen-group/comment-reply 復帰) で initial がすでに全埋まりだった場合に意図せず即 submit が
+  // 走らないよう、autoSubmitArmedRef でユーザーの操作 (= setDecision を経由した遷移) が一度でも起きるまでは
+  // 発火しない仕掛けにする。
+  // 注意: この useRef / useEffect は下の submitted 早期 return 群より前に置くこと。後ろに置くと
+  // submitted 確定時の再 render で hooks 数が減り "Rendered fewer hooks than expected" でクラッシュする。
+  const autoSubmitArmedRef = useRef(false)
+  useEffect(() => {
+    if (!autoSubmitArmedRef.current) return
+    if (!allDecided) return
+    if (submitted || regenPending) return
+    // 全 approved なら approve、1 つでも RC があれば request-changes 扱い (linear-stack 側で先頭から
+    // approved を commit、最初の RC で break する既存ロジックがそのまま走る)
+    const reviewKind: ReviewKind = rcCount === 0 ? 'approve' : 'request-changes'
+    submit({ reviewKind })
+  }, [allDecided, rcCount, submitted, regenPending])
+
   // done state: 全画面センター寄せの完了メッセージ。
   if (submitted === 'regen') {
     return (
@@ -554,14 +587,11 @@ export function App({ payload }: Props) {
     )
   }
   if (submitted === 'submit') {
-    const approved = Object.values(groupDecisions).filter(d => d === 'approved').length
-    const rc = Object.values(groupDecisions).filter(d => d === 'request-changes').length
-    const total = groupsState.length
-    const msg = approved === total
-      ? `Review submitted (all ${total} groups approved). You can close this tab — Claude will create commits.`
-      : rc === total
-        ? `Review submitted (all ${total} groups request-changes). You can close this tab.`
-        : `Review submitted (${approved} approved / ${rc} request-changes). You can close this tab.`
+    const msg = approvedCount === totalGroups
+      ? `Review submitted (all ${totalGroups} groups approved). You can close this tab — Claude will create commits.`
+      : rcCount === totalGroups
+        ? `Review submitted (all ${totalGroups} groups request-changes). You can close this tab.`
+        : `Review submitted (${approvedCount} approved / ${rcCount} request-changes). You can close this tab.`
     return <div className="px-6 py-20 text-center text-lg text-text w-full">{msg}</div>
   }
 
@@ -572,29 +602,6 @@ export function App({ payload }: Props) {
     : payload.summary.mode === 'staged'
       ? 'Staged Diff Review'
       : 'Diff Review'
-
-  const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
-  const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
-
-  // v5.0.3: 全 group decision が確定した瞬間に submit を自動発火する。
-  // reviewKind は groupDecisions の分布から判定 (全 approved → 'approve'、それ以外 → 'request-changes')。
-  // 「Comment」だけは明示的にボタンで送る運用 (= 自動 submit には乗らない、note 付きで残せる)。
-  // submit 内で submitted === null ガードがあるので二重発火しない。
-  // restore (= regen-group/comment-reply 復帰) で initial がすでに全埋まりだった場合に意図せず即 submit が
-  // 走らないよう、autoSubmitArmedRef でユーザーの操作 (= setDecision を経由した遷移) が一度でも起きるまでは
-  // 発火しない仕掛けにする。
-  const autoSubmitArmedRef = useRef(false)
-  const totalGroups = groupsState.length
-  const allDecided = totalGroups > 0 && (approvedCount + rcCount) === totalGroups
-  useEffect(() => {
-    if (!autoSubmitArmedRef.current) return
-    if (!allDecided) return
-    if (submitted || regenPending) return
-    // 全 approved なら approve、1 つでも RC があれば request-changes 扱い (linear-stack 側で先頭から
-    // approved を commit、最初の RC で break する既存ロジックがそのまま走る)
-    const reviewKind: ReviewKind = rcCount === 0 ? 'approve' : 'request-changes'
-    submit({ reviewKind })
-  }, [allDecided, rcCount, submitted, regenPending])
 
   // Activity タブ: Editorial Dashboard 風の俯瞰画面。
   // diff 規模 (Files/Additions/Deletions/Progress) + 言語/レイヤ別 proportional bar + group index で
@@ -657,12 +664,6 @@ export function App({ payload }: Props) {
   // 左 sticky nav にファイル一覧 (intent + +N/-M 差分カウント) を配置。
   // GitHub PR の Files Changed タブと同じ感覚で「全ファイル俯瞰 + クリックで該当ファイルへジャンプ」できる。
   // 差分カウントは payload.rawPanels の segments を walk して addition/deletion 行数を集計。
-  const jumpToRawPanel = useCallback((panelId: string) => {
-    const sel = `.raw-diff-tab .panel-block[data-panel-id="${cssEscape(panelId)}"]`
-    const el = document.querySelector(sel) as HTMLElement | null
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
-
   const diffContent = (
     // raw-diff-tab BEM 維持 (jumpToRawPanel の querySelector で参照される) + 内側 scope に
     // `--nav-width: 280px` を設定。grid-template-columns は var(--nav-width) を参照し、内側

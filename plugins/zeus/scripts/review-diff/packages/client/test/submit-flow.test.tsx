@@ -3,14 +3,12 @@
 // contract (外部観測可能な振る舞い):
 //   - SubmitBar のボタン押下で POST /result?token=... に ResultJson が飛ぶ
 //     (decision / reviewKind / groupDecisions の fillMode 補完 / note の thread 合成 / submitNote)
-//   - 成功時は 300ms 後に window.close() が呼ばれる
+//   - 成功時は完了画面 ("Review submitted ..." 等) を表示し、300ms 後に window.close() が呼ばれる
 //   - 失敗時は toast を出し、submit 可能な状態を保つ (close しない)
 //   - context+ は decision='regen-group' で currentRanges / lineCommentDrafts を回収して送る
+//   - 全 group decision がユーザー操作で確定した瞬間に auto-submit が発火する
+//     (restore で初期 decision が全埋まりでも、操作なしには発火しない)
 // 内部実装 (fetch+close の共通化など) を変えてもこのテストが通ることを保証する。
-//
-// 完了画面 ("Review submitted ..." 等) の文言はここでは assert しない:
-// submitted 遷移後の render は App の hooks 配置 (早期 return より後ろに useRef/useEffect がある)
-// が原因でクラッシュし、現状ブラウザでも完了画面は表示されないため (既知バグ、別途修正対象)。
 
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -205,6 +203,107 @@ describe('submit (SubmitBar 経由)', () => {
     expect(screen.queryByText(/Review submitted/)).not.toBeInTheDocument()
     // submitted が立っていないので再 submit 可能
     expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(closeSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('完了画面 (submitted state)', () => {
+  test('SubmitBar Approve 成功後: state ベースの集計で完了画面が表示され、その後 window.close', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    await openSidebar(user)
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+
+    // 完了画面の集計は groupDecisions **state** から計算される。fillMode='approved' の補完は
+    // POST body にのみ効き state は更新しないため、未判定だった g0 はどちらにも数えられない
+    // (POST は all approved なのに画面は "1 approved" になる。この不整合は既知、別途検討対象)。
+    expect(
+      screen.getByText('Review submitted (1 approved / 0 request-changes). You can close this tab.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('submit 成功後: approved / request-changes 混在の集計が完了画面に出る', async () => {
+    const user = userEvent.setup()
+    // restore で g0=RC が入った状態 (g1 は自動 approved) → 1 approved / 1 request-changes の混在
+    render(<App payload={makePayload({ initialGroupDecisions: { g0: 'request-changes' } })} />)
+
+    await openSidebar(user)
+    await user.click(screen.getByRole('button', { name: 'Request Changes' }))
+
+    expect(
+      screen.getByText('Review submitted (1 approved / 1 request-changes). You can close this tab.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('Comment 成功後: "Comment sent." 完了画面が表示される', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    await openSidebar(user)
+    await user.type(screen.getByLabelText('Review-wide comment'), 'a note')
+    await user.click(screen.getByRole('button', { name: 'Comment' }))
+
+    expect(screen.getByText(/Comment sent\. You can close this tab/)).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('context+ 成功後: "Requesting context expansion." 完了画面が表示される', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    await user.click(screen.getByRole('tab', { name: 'Guide' }))
+    await user.click(withinGroup('g0').getByRole('button', { name: /More context/ }))
+    await user.click(screen.getByRole('button', { name: 'Submit context+' }))
+
+    expect(screen.getByText(/Requesting context expansion\./)).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+})
+
+describe('auto-submit (全 group decision 確定時)', () => {
+  test('最後の未判定 group を Approve すると reviewKind=approve で自動 submit され完了画面が出る', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    // Guide タブの GroupNav で g0 を approve → g1 は自動 approved なので全確定 → auto-submit
+    await user.click(screen.getByRole('tab', { name: 'Guide' }))
+    await user.click(withinGroup('g0').getByRole('button', { name: 'Approve' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const body = postedBody()
+    expect(body.decision).toBe('submit')
+    expect(body.reviewKind).toBe('approve')
+    expect(body.groupDecisions).toEqual({ g0: 'approved', g1: 'approved' })
+    expect(
+      await screen.findByText(/Review submitted \(all 2 groups approved\)/),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('RC を含めて全確定すると reviewKind=request-changes で自動 submit される', async () => {
+    const user = userEvent.setup()
+    render(<App payload={makePayload()} />)
+
+    await user.click(screen.getByRole('tab', { name: 'Guide' }))
+    await user.click(withinGroup('g0').getByRole('button', { name: 'Request changes' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const body = postedBody()
+    expect(body.decision).toBe('submit')
+    expect(body.reviewKind).toBe('request-changes')
+    expect(body.groupDecisions).toEqual({ g0: 'request-changes', g1: 'approved' })
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+  })
+
+  test('restore で初期 decision が全埋まりでも、ユーザー操作なしには発火しない', async () => {
+    render(<App payload={makePayload({ initialGroupDecisions: { g0: 'approved' } })} />)
+
+    // auto-submit effect が走り得る時間を与えてから「発火していない」ことを観測する
+    await new Promise(r => setTimeout(r, 200))
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(closeSpy).not.toHaveBeenCalled()
   })
 })
