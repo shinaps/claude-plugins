@@ -20,8 +20,8 @@
 //   見えている panel を active 表示する。
 
 import { useEffect, useState } from 'react'
-import { Plus, Loader2, Circle, ChevronUp, ChevronDown } from 'lucide-react'
-import type { RenderedPanel, GroupDecision } from '@zeus/review-diff-shared'
+import { Plus, Loader2, Circle, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
+import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { renderMarkdown } from './markdown'
 
 type Props = {
@@ -39,8 +39,14 @@ type Props = {
   // group decision + comment
   decision: GroupDecision | null
   comment: string
+  // この group を anchor にした会話スレッド。Comment で送った group コメントに
+  // Claude が返信すると comment-reply 復帰時にここへ載り、「質問した場所」で会話が読める。
+  thread: ThreadSnapshot | null
   onDecisionChange: (groupId: string, next: GroupDecision | null) => void
   onCommentChange: (groupId: string, body: string) => void
+  // group コメントをこの group のスレッドに「積む」(GitHub の pending review コメントと同じ感覚)。
+  // 即時送信はせずレビューを継続でき、Claude への送信は SubmitBar の Comment / Submit に同乗する。
+  onSubmitComment: () => void
   // regen 中など、Approve/RC ボタンも操作不可にしたい時 true
   submitDisabled: boolean
   // panel ごとの「読了マーカ」。group decision とは別軸の視覚アシスト。
@@ -56,7 +62,7 @@ type Props = {
 export function GroupNav({
   index, total, groupId, title, description, panels, onJumpToPanel,
   regenPending, onRequestContext,
-  decision, comment, onDecisionChange, onCommentChange, submitDisabled,
+  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, submitDisabled,
   reviewedPanels, onToggleReviewed,
   onJumpToGroupIndex,
 }: Props) {
@@ -263,6 +269,23 @@ export function GroupNav({
       {/* group-decision-section BEM の `margin-top: auto` は flex column 親 (.group-nav) で必要だったが、
           ここでは utility `mt-auto` で代替する。残りは utility 化。 */}
       <div className="mt-auto pt-4 border-t border-border-soft flex flex-col gap-2.5">
+        {/* group スレッドの会話履歴 (pending で積んだ自分のコメント + Claude の返信)。
+            Activity タブの Conversation にも出るが、「質問を書いた場所で返信が読める」ことを優先して
+            ここにも compact 表示する。追記は下の textarea に書いて Comment (= 同じ thread に積まれる)。 */}
+        {thread && thread.messages.length > 0 ? (
+          /* 高さ制限なしの全文表示: group スレッドは数往復程度の想定で、
+             max-height + スクロールにすると読み返しの体験が悪い */
+          <div className="flex flex-col gap-1.5 rounded-[7px] border border-border-soft bg-surface px-2.5 py-2">
+            {thread.messages.map((m) => (
+              <div key={m.id} className="flex flex-col gap-0.5">
+                <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
+                  {m.author === 'agent' ? 'Claude' : 'You'}
+                </span>
+                <p className="m-0 text-xs leading-[1.55] text-text whitespace-pre-wrap break-words">{m.body}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {/* field-sizing: content (Chrome 123+) で textarea を content 量に合わせて自動拡張。
             JS で scrollHeight を測る古典的 auto-resize より軽量、対応ブラウザでは scrollbar も出ない。
             overflow-y-auto 併用: 非対応ブラウザ (Safari/Firefox) では拡張しないので、scrollbar で
@@ -275,33 +298,55 @@ export function GroupNav({
               ? 'No panels in this group'
               : decision === 'request-changes'
                 ? '修正してほしい点を書いてください...'
-                : 'この group へのコメント (任意)'
+                : thread && thread.messages.length > 0
+                  ? 'スレッドに返信 (Comment で追加)'
+                  : 'この group へのコメント (Comment でスレッドに追加)'
           }
           value={comment}
           disabled={!decisionInteractive}
           onChange={(e) => onCommentChange(groupId, e.target.value)}
         />
-        <div className="flex gap-1.5" role="radiogroup" aria-label="Group decision">
-          {/* v5.0.4: SubmitBar (Comment → Request Changes → Approve) と順序を揃える。
-              btn-decision + btn-approve/btn-rc BEM 維持: .is-selected で approved=緑、rc=赤に色を切り替える
-              scope rule が globals.css にあるため。base 見た目は utility。 */}
+        {/* SubmitBar と同順 (Comment → Request Changes → Approve)・同系の配色。
+            nav 幅が狭くテキスト 3 つは収まらないため lucide アイコンのみ (title + aria-label で補完)。
+            btn-decision + btn-approve/btn-rc BEM 維持: .is-selected で approved=緑、rc=赤の
+            選択時 tint が globals.css にあるため。未選択時のベースは SubmitBar と同じ ghost 配色。 */}
+        <div className="flex gap-1.5" role="group" aria-label="Group review actions">
+          {/* Comment (neutral ghost): 常時表示し、空のときは disabled (入力時だけ出すと
+              「送る手段がある」こと自体に気付けない)。押すと pending としてスレッドに積むだけで
+              レビューは継続する。decision も確定しない。 */}
           <button
             type="button"
-            className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
+            className="btn-decision flex-1 px-2.5 py-1.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!decisionInteractive || comment.trim() === ''}
+            onClick={onSubmitComment}
+            aria-label="Comment"
+            title="コメントをこの group のスレッドに追加 (Claude への送信は右下の Comment / Submit でまとめて)"
+          >
+            <MessageSquare className="w-4 h-4 mx-auto" strokeWidth={2} aria-hidden />
+          </button>
+          {/* Request Changes (ghost 赤) */}
+          <button
+            type="button"
+            className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 border bg-transparent text-del-fg border-[rgba(248,113,113,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(248,113,113,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'request-changes'}
+            aria-label="Request changes"
+            title="Request changes"
             onClick={() => onDecisionChange(groupId, decision === 'request-changes' ? null : 'request-changes')}
           >
-            Request changes
+            <X className="w-4 h-4 mx-auto" strokeWidth={2} aria-hidden />
           </button>
+          {/* Approve (ghost 緑) */}
           <button
             type="button"
-            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border border-border bg-surface-2 text-text rounded-[7px] cursor-pointer text-[11.5px] font-medium font-sans transition-colors duration-[120ms] enabled:hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
+            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border bg-transparent text-add-fg border-[rgba(74,222,128,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(74,222,128,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'approved'}
+            aria-label="Approve"
+            title="Approve"
             onClick={() => onDecisionChange(groupId, decision === 'approved' ? null : 'approved')}
           >
-            Approve
+            <Check className="w-4 h-4 mx-auto" strokeWidth={2} aria-hidden />
           </button>
         </div>
       </div>

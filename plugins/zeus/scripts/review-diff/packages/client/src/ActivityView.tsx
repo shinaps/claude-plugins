@@ -589,9 +589,11 @@ const ConversationCard: FC<{
     [snap.scope, groups, rawPanels],
   )
 
-  const anchorLabel = snap.scope.type === 'line'
-    ? renderLineAnchor(snap.scope.file, snap.scope.line, snap.scope.endLine)
-    : `Group · ${snap.scope.groupId}`
+  // group anchor は groupId (g0 等) だと人間に意味が伝わらないので group title を引いて表示する
+  const scope = snap.scope
+  const anchorLabel = scope.type === 'line'
+    ? renderLineAnchor(scope.file, scope.line, scope.endLine)
+    : `Group · ${groups.find(g => g.groupId === scope.groupId)?.title ?? scope.groupId}`
 
   return (
     <article

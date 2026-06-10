@@ -92,4 +92,16 @@ export const sampleData: ClientPayload = {
   expandable: true,
   rawPanels: [],
   editorAvailable: false,
+  // group スレッド (decision section の会話履歴表示) の dev 確認用サンプル
+  initialThreads: {
+    'group:g0': {
+      scope: { type: 'group', groupId: 'g0' },
+      messages: [
+        { id: 'm-demo-1', author: 'user', body: 'この group の分割方針はこれで良い? helper を別ファイルにする案もあった気がする', ts: 1750000000000 },
+        { id: 'm-demo-2', author: 'agent', body: '現状は呼び出し元が 1 箇所だけなので同居させています。利用箇所が増えた時点で分離する方針です。', ts: 1750000060000, agentAction: { kind: 'answer' } },
+      ],
+      resolved: false,
+      outdated: false,
+    },
+  },
 }

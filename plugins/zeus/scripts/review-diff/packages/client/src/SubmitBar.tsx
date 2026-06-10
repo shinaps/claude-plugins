@@ -89,10 +89,11 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
         >
           {rcLabel}
         </button>
-        {/* Approve (primary 緑系 accent) */}
+        {/* Approve (primary 緑 solid): group 側の decision ボタン (ghost 緑) と色相を揃える。
+            accent (紫) ではなく add-fg 緑にするのは「approve = 緑」の色言語をレビュー UI 全体で統一するため */}
         <button
           type="button"
-          className={`${BTN_BASE} bg-accent text-background border-border`}
+          className={`${BTN_BASE} bg-add-fg text-background border-border`}
           disabled={!ready}
           onClick={() => fire('approve', allDecided ? undefined : 'approved')}
           title={allDecided ? 'Submit as Approve' : `${undecided} undecided を Approve として Submit`}
