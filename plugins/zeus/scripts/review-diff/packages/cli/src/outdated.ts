@@ -23,18 +23,26 @@ export function intervalsOverlap(a: LineInterval, b: LineInterval): boolean {
   return a.start <= b.end && b.start <= a.end
 }
 
-// git diff の hunk header (@@ -X,Y +A,B @@) から after 側の変更行 interval を抽出。
-// 1 hunk = 1 interval (B 行ぶん、A 開始)。改名/削除は無視 (chat の threads は file path で持つ)。
-export function extractChangedAfterIntervals(diffText: string): LineInterval[] {
+// git diff の hunk header (@@ -X,Y +A,B @@) から変更行 interval を抽出。
+// 追加・変更 hunk (B > 0) は after 側の {A, A+B-1}。純粋削除 hunk (B = 0) は after 側に
+// 行が存在しないため、thread の line anchor と同じ座標系である before 側の削除範囲
+// {X, X+Y-1} を使う (after 側の境界 1 点では削除された行上の thread と交叉できない)。
+// 例: "@@ -2 +1,0 @@" → {2,2}、先頭削除 "@@ -1,2 +0,0 @@" → {1,2}
+export function extractChangedIntervals(diffText: string): LineInterval[] {
   const intervals: LineInterval[] = []
-  const re = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm
+  const re = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm
   let m: RegExpExecArray | null
   while ((m = re.exec(diffText)) !== null) {
-    const start = parseInt(m[1], 10)
-    const lenStr = m[2]
-    const len = lenStr ? parseInt(lenStr, 10) : 1
-    if (!Number.isFinite(start) || !Number.isFinite(len) || len <= 0) continue
-    intervals.push({ start, end: start + len - 1 })
+    const beforeStart = parseInt(m[1], 10)
+    const beforeLen = m[2] ? parseInt(m[2], 10) : 1
+    const afterStart = parseInt(m[3], 10)
+    const afterLen = m[4] ? parseInt(m[4], 10) : 1
+    if (![beforeStart, beforeLen, afterStart, afterLen].every(Number.isFinite)) continue
+    if (afterLen > 0) {
+      intervals.push({ start: afterStart, end: afterStart + afterLen - 1 })
+    } else if (beforeLen > 0) {
+      intervals.push({ start: beforeStart, end: beforeStart + beforeLen - 1 })
+    }
   }
   return intervals
 }
@@ -72,9 +80,10 @@ export function markOutdated(args: MarkOutdatedArgs): MarkOutdatedResult {
       .filter(Boolean),
   )
 
+  const getDiff: FileDiffProvider = file => gitDiff(args.beforeSha, args.afterSha, file)
   let updated = 0
   for (const [key, snap] of Object.entries(threads)) {
-    const newSnap = computeOutdated(snap, args.beforeSha, args.afterSha, changedSet)
+    const newSnap = computeOutdated(snap, changedSet, getDiff)
     if (newSnap !== snap) {
       threads[key] = newSnap
       updated++
@@ -90,11 +99,13 @@ export function markOutdated(args: MarkOutdatedArgs): MarkOutdatedResult {
   return { updated, totalThreads: Object.keys(threads).length }
 }
 
-function computeOutdated(
+// file → unified diff テキストの取得を注入可能にして、git 非依存で単体テストできるようにする。
+export type FileDiffProvider = (file: string) => string
+
+export function computeOutdated(
   snap: ThreadSnapshot,
-  beforeSha: string,
-  afterSha: string,
   changedFiles: Set<string>,
+  getDiff: FileDiffProvider,
 ): ThreadSnapshot {
   if (snap.outdatedOverride === 'keep') {
     return snap.outdated ? { ...snap, outdated: false } : snap
@@ -106,9 +117,9 @@ function computeOutdated(
   if (snap.scope.type !== 'line') return snap
   const file = snap.scope.file
   if (!changedFiles.has(file)) return snap
-  const diff = gitDiff(beforeSha, afterSha, file)
+  const diff = getDiff(file)
   if (!diff) return snap
-  const intervals = extractChangedAfterIntervals(diff)
+  const intervals = extractChangedIntervals(diff)
   const threadInterval: LineInterval = {
     start: snap.scope.line,
     end: snap.scope.endLine ?? snap.scope.line,
