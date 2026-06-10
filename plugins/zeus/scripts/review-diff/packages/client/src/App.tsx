@@ -775,20 +775,29 @@ export function App({ payload }: Props) {
           display: none と違い render state を保持したまま「次回表示時のコストを最小化」する。
           ResizeObserver の一斉発火問題 (LoAF で計測された 6 秒級の主犯) も display:none 復帰時の
           0→実サイズ遷移が無くなるため抑制される。 */}
+      {/* .tab-pane は ChunkNavigator の chunk 走査スコープ (.tab-pane:not(.tab-hidden)) の目印。
+          activity pane の mr-[420px] は sidebar (w-[420px]) の押し出し: overlay でコンテンツを
+          隠すのではなく、レイアウトごと狭めて全文が読める状態を保つ。 */}
       {visitedTabs.has('activity') ? (
-        <div className={tab === 'activity' ? '' : 'tab-hidden'}>{activityContent}</div>
+        <div
+          className={`tab-pane transition-[margin] duration-200 ease-out${tab === 'activity' ? '' : ' tab-hidden'}${
+            tab === 'activity' && sidebarOpen ? ' mr-[420px]' : ''
+          }`}
+        >
+          {activityContent}
+        </div>
       ) : null}
       {visitedTabs.has('guide') ? (
-        <div className={tab === 'guide' ? '' : 'tab-hidden'}>{guideContent}</div>
+        <div className={tab === 'guide' ? 'tab-pane' : 'tab-pane tab-hidden'}>{guideContent}</div>
       ) : null}
       {visitedTabs.has('diff') ? (
-        <div className={tab === 'diff' ? '' : 'tab-hidden'}>{diffContent}</div>
+        <div className={tab === 'diff' ? 'tab-pane' : 'tab-pane tab-hidden'}>{diffContent}</div>
       ) : null}
       {/* ChunkNavigator (左下): SubmitBar と対称配置で「全 diff 通しの chunk ジャンプ」を提供。
-          activity タブには diff が無いので非表示にしたいが、ChunkNavigator 自身が「chunk 0 件なら null 返す」
-          ガードを持つので常時 render しても安全。 */}
-      <ChunkNavigator />
-      {/* SubmitBar は全タブで常時表示 (どこからでも Submit できるように) */}
+          activity タブには diff が無くジャンプ先が存在しないので render しない。 */}
+      {tab === 'guide' || tab === 'diff' ? <ChunkNavigator activeTab={tab} /> : null}
+      {/* SubmitBar は全タブで常時 mount (どこからでも Submit でき、note draft もタブをまたいで維持)。
+          Activity では会話を主役にした右サイドバー、Guide / Diff ではコードを隠さない floating パネル。 */}
       <SubmitBar
         approvedCount={approvedCount}
         rcCount={rcCount}

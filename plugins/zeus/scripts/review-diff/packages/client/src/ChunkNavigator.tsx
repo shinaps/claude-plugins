@@ -21,11 +21,16 @@ const CHUNK_SCROLL_OFFSET_PX = 110
 // strict `<` だと smooth scroll 完了直後に境界で false になり「2 回目以降押しても動かない」罠が出る。
 const CHUNK_CURRENT_SLOP_PX = 32
 
-// document 全体から「各 chunk の最初の row」を panel をまたいで順序通りに集める。
+// 表示中のタブから「各 chunk の最初の row」を panel をまたいで順序通りに集める。
 // panel ごとに chunkIdx は 0 から振り直されるので、panelId + chunkIdx の組で重複検出する。
+// .tab-pane:not(.tab-hidden) で絞る理由: 非アクティブタブは content-visibility: hidden で
+// DOM に残ったまま keep-alive されるため、document 全体を走査すると Guide と Diff の
+// chunk が合算されて件数が水増しされる。
 function collectGlobalChunkRows(): HTMLElement[] {
   const rows = Array.from(
-    document.querySelectorAll<HTMLElement>('.panel-side-asis [data-chunk-idx]'),
+    document.querySelectorAll<HTMLElement>(
+      '.tab-pane:not(.tab-hidden) .panel-side-asis [data-chunk-idx]',
+    ),
   )
   const out: HTMLElement[] = []
   let lastKey: string | null = null
@@ -53,7 +58,13 @@ function findCurrentGlobalChunkIdx(rows: HTMLElement[]): number {
   return current
 }
 
-export function ChunkNavigator() {
+type Props = {
+  // 表示中のタブ。guide / diff で chunk 集合が変わるが、タブ切替は wrapper の class 変更のみで
+  // childList mutation を起こさないため、MutationObserver では検知できない。prop で受けて再 collect する。
+  activeTab: 'guide' | 'diff'
+}
+
+export function ChunkNavigator({ activeTab }: Props) {
   // 表示用 state: 全 chunk 数と current index (1-based 表示にするが state は 0-based)。
   const [stats, setStats] = useState<{ total: number; current: number }>({ total: 0, current: -1 })
   // rows のキャッシュ。scroll 中は collect しない (重い)、layout 変化時のみ再構築。
@@ -73,12 +84,13 @@ export function ChunkNavigator() {
     setStats(prev => (prev.total === rows.length && prev.current === current ? prev : { total: rows.length, current }))
   }, [refreshRows])
 
-  // 初回 + 100ms 後に再 compute (lazy highlight 完了後の chunk 数変化を取り込むため)。
+  // 初回 / タブ切替時 + 100ms 後に再 compute (lazy highlight 完了後の chunk 数変化を取り込むため)。
   useEffect(() => {
+    dirtyRef.current = true
     recompute()
     const t = setTimeout(recompute, 100)
     return () => clearTimeout(t)
-  }, [recompute])
+  }, [recompute, activeTab])
 
   // scroll listen (rAF throttle で軽量化)。
   useEffect(() => {
@@ -170,8 +182,9 @@ export function ChunkNavigator() {
 
   return (
     // SubmitBar (fixed right-6 bottom-6) と対称に left-6 bottom-6。両者で「画面下隅 = グローバル操作」と認知させる。
+    // shadow は意図的に付けない: 高輝度モニターで暗色 shadow の halo が滲んで見えるため、区切りは border のみ (SubmitBar も同じ方針)。
     <div
-      className="fixed bottom-6 left-6 z-40 inline-flex items-center gap-2 px-2.5 py-2 bg-surface border border-border rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.4),0_2px_8px_rgba(0,0,0,0.3)]"
+      className="fixed bottom-6 left-6 z-40 inline-flex items-center gap-2 px-2.5 py-2 bg-surface border border-border rounded-xl"
       role="toolbar"
       aria-label="Jump between changes"
     >
