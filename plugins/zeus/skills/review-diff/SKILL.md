@@ -690,11 +690,12 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
 手順:
 
 1. `result.json` から `threads` と `comments[]` を取得し、**comments[] の新規コメントを thread 化して threads にマージ** する:
-   - thread のキーは scope から決める: group scope → `group:<groupId>`、file scope → `file:<path>`、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
+   - thread のキーは scope から決める: group scope → `group:<groupId>`、file scope → `file:<path>`、review scope → `review` (固定)、line scope → `line:<panelId>:<side>:<line>` (範囲コメントは `:<endLine>` を付ける)
    - 既存キーの thread があれば `messages[]` に user message として append、無ければ新規 thread (`resolved: false, outdated: false`) を作る
    - message の形は `{ id: <uuid>, author: 'user', body, ts: <epoch ms> }`
    - **group への質問・相談の正規動線**: decision section の textarea に書いて group の **Comment** ボタンで pending としてスレッドに積む (レビュー継続、GitHub の pending review コメントと同じ) → SubmitBar の **Comment** で一括送信。積んだ分は `threads` に user message として既に入っているので、comments[] の thread 化マージは「textarea に書き残したまま submit したケース」のフォールバック
    - **ファイル全体への指摘** (設計方針・命名・分割など行に紐づかないもの) は panel header の MessageSquare ボタンから同じ pending 方式で file scope thread に積まれる
+   - **レビュー全体への指摘** は SubmitBar の textarea が review scope thread (`review` キー) への入力になっており、送信時に user message として threads に積まれて届く。`submitNote` には同じ文字列が後方互換で載る (commit メッセージ生成は従来どおり submitNote を読めばよい) が、**返信は review thread に対して行う** (= submitNote はテキスト返信チャネルではない)
 2. **work-dir は維持** (summary.json / diff.patch を再利用)
 3. **Claude が「最後の message が user である全 open thread」の最新 user message を読んで応答内容を判定**:
    - 質問 → answer (回答メッセージを agent message として thread に append)
