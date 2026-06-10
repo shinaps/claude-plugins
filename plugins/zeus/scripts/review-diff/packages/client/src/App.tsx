@@ -382,62 +382,53 @@ export function App({ payload }: Props) {
     return out
   }
 
-  // fillMode は SubmitBar の「Approve & Submit」「Reject & Submit」用。
-  // 未判定 group をどちらかに補完して意思を明示する。指定なしなら未判定はそのまま (null 落とし) で送る。
-  // note は SubmitBar の textarea で書いた全体コメント (任意)。review scope thread の user message として
-  // 積むので Claude が返信でき、会話履歴が UI に残る。submitNote にも同じ文字列を載せる
-  // (SKILL.md の commit メッセージ生成が submitNote を読む後方互換)。
-  // v5: reviewKind ('approve' | 'request-changes' | 'comment') を必須引数として受け取る。
-  //     'comment' のときは decision='comment-reply' に切り替え、Claude が thread に返信する経路に乗る。
-  async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) {
-    if (submitted) return
-    const fillMode = opts?.fillMode
-    const note = opts?.note?.trim() || undefined
-    const reviewKind: ReviewKind = opts?.reviewKind ?? 'approve'
-    const decisions: Record<string, GroupDecision> = {}
-    for (const g of groupsState) {
-      const cur = groupDecisions[g.groupId] ?? null
-      const next = cur ?? (fillMode ?? null)
-      if (next !== null) decisions[g.groupId] = next
-    }
-    const cs = collectComments()
-    // note は送信と同時に review thread へ積む。setThreads を待たずローカルで合成するのは
-    // state 反映前に fetch する race を避けるため (この直後にタブは閉じるので state 更新は不要)。
-    let outThreads = threads
-    if (note) {
-      const key = threadKey({ type: 'review' })
-      const existing = threads[key]
-      const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: note, ts: Date.now() }
-      outThreads = {
-        ...threads,
-        [key]: existing
-          ? { ...existing, messages: [...existing.messages, msg], resolved: false }
-          : { scope: { type: 'review' }, messages: [msg], resolved: false, outdated: false },
-      }
-    }
-    const body: ResultJson = {
-      decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
-      reviewKind,
-      groupDecisions: decisions,
-      // ローカル threads state を送る (initialThreads + 本セッションで Comment ボタンが積んだ pending message)
-      threads: outThreads,
-      comments: cs,
-      ...(note ? { submitNote: note } : {}),
-    }
+  // POST /result → 完了 state 設定 → window.close の共通経路。submit / onRequestContext は
+  // ResultJson の組み立てだけを担い、送信・クローズ・失敗 toast はここに集約する。
+  // close を 300ms 遅らせるのは、完了 state の描画を一瞬見せてから閉じる意図。
+  async function postResult(
+    body: ResultJson,
+    submittedKind: 'submit' | 'comment' | 'regen',
+    failure: { message: string; cleanup?: () => void },
+  ) {
     try {
       await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      setSubmitted(reviewKind === 'comment' ? 'comment' : 'submit')
+      setSubmitted(submittedKind)
       setTimeout(() => {
         try { window.close() } catch { /* noop */ }
       }, 300)
     } catch {
-      setToast('Failed to submit.')
+      failure.cleanup?.()
+      setToast(failure.message)
       setTimeout(() => setToast(null), 3000)
     }
+  }
+
+  // fillMode は SubmitBar の「Approve & Submit」「Reject & Submit」用。
+  // 未判定 group をどちらかに補完して意思を明示する。指定なしなら未判定はそのまま (null 落とし) で送る。
+  // note は SubmitBar の textarea で書いた全体コメント (任意)。review scope thread の user message として
+  // 積むので Claude が返信でき、会話履歴が UI に残る。submitNote にも同じ文字列を載せる
+  // (SKILL.md の commit メッセージ生成が submitNote を読む後方互換)。
+  // reviewKind が 'comment' のときは decision='comment-reply' に切り替え、Claude が thread に返信する経路に乗る。
+  async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) {
+    if (submitted) return
+    const note = opts?.note?.trim() || undefined
+    const reviewKind: ReviewKind = opts?.reviewKind ?? 'approve'
+    const body: ResultJson = {
+      decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
+      reviewKind,
+      groupDecisions: buildDecisions(groupsState, groupDecisions, opts?.fillMode),
+      // ローカル threads state (initialThreads + 本セッションで Comment ボタンが積んだ pending message) に
+      // note を合成して送る。setThreads を待たずローカルで合成するのは、state 反映前に fetch する race を
+      // 避けるため (この直後にタブは閉じるので state 更新は不要)。
+      threads: appendReviewNote(threads, note),
+      comments: collectComments(),
+      ...(note ? { submitNote: note } : {}),
+    }
+    await postResult(body, reviewKind === 'comment' ? 'comment' : 'submit', { message: 'Failed to submit.' })
   }
 
   // context+: 現状 state (group decisions + コメント + line comment drafts) を回収し、
@@ -460,36 +451,22 @@ export function App({ payload }: Props) {
         asIs: p.asIs ? { file: p.asIs.file, ranges: p.asIs.ranges } : undefined,
         toBe: p.toBe ? { file: p.toBe.file, ranges: p.toBe.ranges } : undefined,
       }))
-      const decisions: Record<string, GroupDecision> = {}
-      for (const [k, v] of Object.entries(groupDecisions)) {
-        if (v !== null) decisions[k] = v
-      }
       const trimmedNote = note?.trim() || undefined
       const body: ResultJson = {
         decision: 'regen-group',
         // regen-group は review 全体の決定ではないので reviewKind は 'comment' (= 未確定) で埋める
         reviewKind: 'comment',
-        groupDecisions: decisions,
+        groupDecisions: buildDecisions(groupsState, groupDecisions),
         threads,
         comments: collectComments(),
         regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
       }
-      try {
-        await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        setSubmitted('regen')
-        setTimeout(() => {
-          try { window.close() } catch { /* noop */ }
-        }, 300)
-      } catch {
-        setRegenPending(false)
-        setToast('Failed to request context expansion.')
-        setTimeout(() => setToast(null), 3000)
-      }
+      await postResult(body, 'regen', {
+        message: 'Failed to request context expansion.',
+        // 失敗時は context+ ボタンを復活させて再試行可能にする (成功時はタブごと閉じるので解除不要)
+        cleanup: () => setRegenPending(false),
+      })
     },
     [groupsState, groupDecisions, groupComments, threads, regenPending, submitted, lineCommentHandlers.lineComments],
   )
@@ -807,6 +784,39 @@ export function App({ payload }: Props) {
       ) : null}
     </>
   )
+}
+
+// ResultJson に載せる groupDecisions を組み立てる。未判定 (null) の group は fillMode で補完し、
+// fillMode 未指定なら null のまま落とす (ResultJson に「未決定」は存在しないため)。
+function buildDecisions(
+  groups: AppGroup[],
+  current: Record<string, GroupDecision | null>,
+  fillMode?: GroupDecision,
+): Record<string, GroupDecision> {
+  const out: Record<string, GroupDecision> = {}
+  for (const g of groups) {
+    const next = current[g.groupId] ?? fillMode ?? null
+    if (next !== null) out[g.groupId] = next
+  }
+  return out
+}
+
+// note を review scope thread の user message として合成した threads を返す (note 無しならそのまま)。
+// 既存スレッドへの追記時は resolved を倒す (返信待ちの open スレッドに戻す)。
+function appendReviewNote(
+  threads: Record<string, ThreadSnapshot>,
+  note: string | undefined,
+): Record<string, ThreadSnapshot> {
+  if (!note) return threads
+  const key = threadKey({ type: 'review' })
+  const existing = threads[key]
+  const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: note, ts: Date.now() }
+  return {
+    ...threads,
+    [key]: existing
+      ? { ...existing, messages: [...existing.messages, msg], resolved: false }
+      : { scope: { type: 'review' }, messages: [msg], resolved: false, outdated: false },
+  }
 }
 
 function formatMeta(payload: ClientPayload): string {
