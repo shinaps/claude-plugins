@@ -38,9 +38,6 @@ type Props = {
   // ファイル単位コメント (PanelBlock → PanelHeader へ pass-through)
   fileComments?: FileCommentHandlers
   submitDisabled: boolean
-  // panel 読了マーカ (左 nav の dot click でトグル、視覚アシスト)
-  reviewedPanels: Set<string>
-  onToggleReviewed: (panelId: string) => void
   // グループ間ナビゲーション (左 nav の prev/next 矢印用)
   onJumpToGroupIndex: (targetIndex: number) => void
 } & LineCommentHandlers
@@ -50,7 +47,6 @@ export const GroupSection = memo(function GroupSection({
   onJumpToPanel, onNavResizerPointerDown,
   regenPending, onRequestContext,
   decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, fileComments, submitDisabled,
-  reviewedPanels, onToggleReviewed,
   onJumpToGroupIndex,
   ...lineCommentHandlers
 }: Props) {
@@ -78,17 +74,16 @@ export const GroupSection = memo(function GroupSection({
           onCommentChange={onCommentChange}
           onSubmitComment={onSubmitComment}
           submitDisabled={submitDisabled}
-          reviewedPanels={reviewedPanels}
-          onToggleReviewed={onToggleReviewed}
           onJumpToGroupIndex={onJumpToGroupIndex}
         />
         {/*
           nav-resizer BEM 維持: ::before で grab zone 拡張 (視覚バーと掴み領域の分離) と、
           drag 中の `.dragging` class による accent 色化が globals.css にあるため。
-          視覚バー自体の幅 (4px) と placement (absolute right:0) は utility で十分。
+          -right-1.5 (6px) はバーを grid gap (16px) 内に置き、コンテンツからの視覚余白を
+          左右対称 (nav の padding-right 8px + 2px = 10px / panel 側 16px - 6px = 10px) にするための値。
         */}
         <div
-          className="nav-resizer absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-transparent z-10 transition-colors duration-100 hover:bg-accent"
+          className="nav-resizer absolute -right-1.5 top-0 bottom-0 w-1 cursor-col-resize bg-transparent z-10 transition-colors duration-100 hover:bg-accent"
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize navigation"

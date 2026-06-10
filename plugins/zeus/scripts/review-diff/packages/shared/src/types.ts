@@ -358,6 +358,4 @@ export type ClientPayload = {
   // v5 で新規。editor preset が設定されているか (= EditorLinkTrigger を描画するか)。
   // CR-3: editor command は server 側にしか保持されないので、boolean だけ伝搬する。
   editorAvailable: boolean
-  // panel 読了マーカ (左 nav の dot click でトグルする視覚アシスト)。
-  initialReviewedPanels?: string[]
 }

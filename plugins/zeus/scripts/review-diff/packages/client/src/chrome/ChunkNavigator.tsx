@@ -142,17 +142,60 @@ export function ChunkNavigator({ activeTab }: Props) {
     }
   }, [recompute])
 
+  // ナビゲーション中の「向かっている先」。
+  //   - 連打対応: smooth scroll の途中で findCurrentGlobalChunkIdx すると中間位置の chunk が
+  //     返り、同じ target に何度も向かって進まなくなる。押下中は pendingTarget を基準に進める。
+  //   - 到着補正: content-visibility: auto の section は近づくまで子のレイアウトが確定せず、
+  //     ジャンプ前に測った座標が到着時にはずれていることがある。scrollend で実測し直して補正する。
+  const pendingTargetRef = useRef<number | null>(null)
+  // cv-auto の段階確定で複数回ずれるケースに備えつつ、無限補正ループは防ぐ上限。
+  const correctionLeftRef = useRef(0)
+
+  const scrollToRow = useCallback((el: HTMLElement) => {
+    const top = el.getBoundingClientRect().top + window.scrollY - CHUNK_SCROLL_OFFSET_PX
+    window.scrollTo({ top, behavior: 'smooth' })
+  }, [])
+
   const navigate = useCallback((direction: -1 | 1) => {
     if (dirtyRef.current) refreshRows()
     const rows = rowsCacheRef.current
     if (rows.length === 0) return
-    const cur = findCurrentGlobalChunkIdx(rows)
-    const target = direction === 1 ? cur + 1 : cur === -1 ? -1 : cur - 1
+    const base = pendingTargetRef.current ?? findCurrentGlobalChunkIdx(rows)
+    const target = direction === 1 ? base + 1 : base === -1 ? -1 : base - 1
     if (target < 0 || target >= rows.length) return
-    const el = rows[target]
-    const top = el.getBoundingClientRect().top + window.scrollY - CHUNK_SCROLL_OFFSET_PX
-    window.scrollTo({ top, behavior: 'smooth' })
-  }, [refreshRows])
+    pendingTargetRef.current = target
+    correctionLeftRef.current = 3
+    scrollToRow(rows[target])
+  }, [refreshRows, scrollToRow])
+
+  // scrollend で到着検証。ずれていたら補正再スクロール、収まっていたら pending を解除。
+  // ユーザーが wheel / touch で介入したら追跡をやめる (補正で引き戻さない)。
+  useEffect(() => {
+    function cancelPending() {
+      pendingTargetRef.current = null
+    }
+    function onScrollEnd() {
+      const t = pendingTargetRef.current
+      if (t == null) return
+      const el = rowsCacheRef.current[t]
+      if (!el) { pendingTargetRef.current = null; return }
+      const top = el.getBoundingClientRect().top
+      if (Math.abs(top - CHUNK_SCROLL_OFFSET_PX) > CHUNK_CURRENT_SLOP_PX && correctionLeftRef.current > 0) {
+        correctionLeftRef.current -= 1
+        scrollToRow(el)
+      } else {
+        pendingTargetRef.current = null
+      }
+    }
+    window.addEventListener('scrollend', onScrollEnd)
+    window.addEventListener('wheel', cancelPending, { passive: true })
+    window.addEventListener('touchmove', cancelPending, { passive: true })
+    return () => {
+      window.removeEventListener('scrollend', onScrollEnd)
+      window.removeEventListener('wheel', cancelPending)
+      window.removeEventListener('touchmove', cancelPending)
+    }
+  }, [scrollToRow])
 
   // ↑↓ キーで navigate。input/textarea/contenteditable では default 動作を残す。
   useEffect(() => {

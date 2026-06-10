@@ -25,20 +25,20 @@ import type {
 } from '@zeus/review-diff-shared'
 import type { ThreadMessage, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { threadKey } from '@zeus/review-diff-shared'
-import { TabBar } from './TabBar'
-import { GroupSection } from './GroupSection'
-import { PanelBlock } from './PanelBlock'
-import { SubmitBar } from './SubmitBar'
-import { ChunkNavigator } from './ChunkNavigator'
-import { ActivityView } from './ActivityView'
-import { shouldAutoCollapseFile } from './auto-collapse'
+import { TabBar } from './chrome/TabBar'
+import { GroupSection } from './guide/GroupSection'
+import { PanelBlock } from './guide/PanelBlock'
+import { SubmitBar } from './chrome/SubmitBar'
+import { ChunkNavigator } from './chrome/ChunkNavigator'
+import { ActivityView } from './activity/ActivityView'
+import { shouldAutoCollapseFile } from './guide/auto-collapse'
 
 // Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
 // 「ちょっとした変更でもファイル全部表示」になりがち。閾値を低めに振って俯瞰時の応答性を確保。
 const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
-import { renderMarkdown, escapeHtml } from './markdown'
-import { getToken, lineCommentKey, parseLineCommentKey } from './state'
-import { useLineComments } from './useLineComments'
+import { renderMarkdown, escapeHtml } from './lib/markdown'
+import { getToken, lineCommentKey, parseLineCommentKey } from './lib/state'
+import { useLineComments } from './guide/useLineComments'
 
 const NAV_WIDTH_MIN = 240
 const NAV_WIDTH_MAX = 480
@@ -160,13 +160,6 @@ export function App({ payload }: Props) {
     getThread: (file: string) => threads[threadKey({ type: 'file', file })] ?? null,
     onAdd: addFileComment,
   }), [threads, addFileComment])
-
-  // 読了マーカ (panel 単位): group decision とは別軸の視覚アシスト。
-  // 左 nav の dot を click したら toggle。ResultJson には載せない (= 読了状態は session-local)。
-  // 将来 regen-group の restore に乗せたい場合は payload.initialReviewedPanels を seed する。
-  const [reviewedPanels, setReviewedPanels] = useState<Set<string>>(
-    () => new Set(payload.initialReviewedPanels ?? []),
-  )
 
   const lineCommentHandlers = useLineComments({ lineComments: initialLineCommentsMap })
   // 初期タブは Activity (AI Review Report をまず俯瞰してから Guide で詳細を進める動線)
@@ -323,15 +316,6 @@ export function App({ payload }: Props) {
         return out
       }
       return { ...prev, [id]: body }
-    })
-  }, [])
-
-  const onToggleReviewed = useCallback((panelId: string) => {
-    setReviewedPanels(prev => {
-      const out = new Set(prev)
-      if (out.has(panelId)) out.delete(panelId)
-      else out.add(panelId)
-      return out
     })
   }, [])
 
@@ -536,13 +520,18 @@ export function App({ payload }: Props) {
     // 完了させるための forced sync layout が rAF callback 内で発生し、frame budget を食い潰す。
     // 座標は drag 中変わらないので start でキャッシュすれば flush は純粋に style write だけになる。
     const cachedSectionLeft = section.getBoundingClientRect().left
+    // バーは grid gap 内 (-right-3.5) に浮いているため、pointer 位置をそのまま nav 幅に
+    // すると掴んだ瞬間に十数 px ジャンプする。掴み位置と nav 右端 (= wrapper 右端) の
+    // 差分を引いて「掴んだ場所がそのまま付いてくる」挙動にする。
+    const wrapper = resizer.parentElement
+    const grabDelta = wrapper ? e.clientX - wrapper.getBoundingClientRect().right : 0
     let rafId: number | null = null
     let pendingClientX = 0
     let lastWrittenPx = -1
     function flush() {
       rafId = null
       if (!container) return
-      const next = pendingClientX - cachedSectionLeft
+      const next = pendingClientX - cachedSectionLeft - grabDelta
       const clamped = Math.max(NAV_WIDTH_MIN, Math.min(NAV_WIDTH_MAX, next))
       const rounded = Math.round(clamped)
       // パフォーマンス最適化: 同じ px 値なら setProperty を skip (style recalc を起こさない)。
@@ -677,8 +666,6 @@ export function App({ payload }: Props) {
           onDecisionChange={onDecisionChange}
           onCommentChange={onCommentChange}
           submitDisabled={regenPending}
-          reviewedPanels={reviewedPanels}
-          onToggleReviewed={onToggleReviewed}
           onJumpToGroupIndex={onJumpToGroupIndex}
           {...lineCommentHandlers}
         />

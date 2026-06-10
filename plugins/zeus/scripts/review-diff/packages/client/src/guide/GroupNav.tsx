@@ -20,9 +20,9 @@
 //   見えている panel を active 表示する。
 
 import { useEffect, useState } from 'react'
-import { Plus, Loader2, Circle, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
+import { Plus, Loader2, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
 import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
-import { renderMarkdown } from './markdown'
+import { renderMarkdown } from '../lib/markdown'
 
 type Props = {
   index: number
@@ -49,11 +49,6 @@ type Props = {
   onSubmitComment: () => void
   // regen 中など、Approve/RC ボタンも操作不可にしたい時 true
   submitDisabled: boolean
-  // panel ごとの「読了マーカ」。group decision とは別軸の視覚アシスト。
-  // 左 nav の dot indicator を click で toggle して、ユーザーが「どこまで読んだか」を追えるようにする。
-  // ResultJson には載せない (内部 UI state のみ、regen-group では restore 対象)。
-  reviewedPanels: Set<string>
-  onToggleReviewed: (panelId: string) => void
   // グループ間ナビゲーション。eyebrow の数字横に prev/next 矢印を出して
   // 「次の group へスクロール」をワンクリックでできるようにする。先頭/末尾 group では片側 disabled。
   onJumpToGroupIndex: (targetIndex: number) => void
@@ -63,7 +58,6 @@ export function GroupNav({
   index, total, groupId, title, description, panels, onJumpToPanel,
   regenPending, onRequestContext,
   decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, submitDisabled,
-  reviewedPanels, onToggleReviewed,
   onJumpToGroupIndex,
 }: Props) {
   const num = String(index + 1).padStart(2, '0')
@@ -114,9 +108,10 @@ export function GroupNav({
     'bg-transparent border border-border-soft text-text-dim w-[22px] h-[22px] rounded-[5px] inline-flex items-center justify-center cursor-pointer p-0 transition-colors duration-[120ms] enabled:hover:bg-surface-2 enabled:hover:text-text enabled:hover:border-border disabled:opacity-[0.35] disabled:cursor-not-allowed'
 
   return (
-    // group-nav BEM 維持: sticky + max-height: calc(100vh - 96px) + ::-webkit-scrollbar カスタムが
-    // globals.css にあるため (細い 4px の縦バー)。
-    <aside className="group-nav">
+    // sticky で section 内に追従、最大高は viewport-96px。decision section を mt-auto で
+    // 末尾に貼り付けるため flex-col。1000px 以下では grid 解除 (globals.css の .group-section
+    // media query) に合わせて static に落とす。scrollbar は細い 4px の縦バー。
+    <aside className="sticky top-16 self-start max-h-[calc(100vh-96px)] overflow-y-auto pr-2 flex flex-col max-[1000px]:static max-[1000px]:max-h-none [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-[2px]">
       <header className="pb-[18px] mb-[18px] border-b border-border-soft">
         <div className="flex items-center justify-between mb-3.5 min-h-6">
           <span className="font-mono text-[10px] font-semibold tracking-[0.18em] text-text-dim uppercase">GROUP</span>
@@ -163,7 +158,7 @@ export function GroupNav({
             </span>
           ) : null}
         </div>
-        <h2 className="text-[19px] font-semibold text-text m-0 mb-2.5 tracking-[-0.015em] leading-[1.25]">{title}</h2>
+        <h2 className="text-base font-semibold text-text m-0 mb-2.5 tracking-[-0.015em] leading-[1.25]">{title}</h2>
         {descHtml ? (
           // group-desc BEM 維持: prose 内 typography token の上書き scope として globals.css で使用。
           <div
@@ -256,9 +251,7 @@ export function GroupNav({
               key={p.panelId}
               panel={p}
               active={activePanelId === p.panelId}
-              reviewed={reviewedPanels.has(p.panelId)}
               onJump={onJumpToPanel}
-              onToggleReviewed={onToggleReviewed}
             />
           ))}
         </nav>
@@ -275,7 +268,7 @@ export function GroupNav({
         {thread && thread.messages.length > 0 ? (
           /* 高さ制限なしの全文表示: group スレッドは数往復程度の想定で、
              max-height + スクロールにすると読み返しの体験が悪い */
-          <div className="flex flex-col gap-1.5 rounded-[7px] border border-border-soft bg-surface px-2.5 py-2">
+          <div className="flex flex-col gap-3 rounded-[7px] border border-border-soft bg-surface px-2.5 py-2">
             {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (review スレッドと同じ視覚言語) */}
             {thread.messages.map((m, i) => (
               <div
@@ -287,7 +280,7 @@ export function GroupNav({
                 <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
                   {m.author === 'agent' ? 'Claude' : 'You'}
                 </span>
-                <p className="m-0 text-xs leading-[1.55] text-text whitespace-pre-wrap break-words">{m.body}</p>
+                <p className="m-0 text-sm leading-[1.55] text-text whitespace-pre-wrap break-words">{m.body}</p>
               </div>
             ))}
           </div>
@@ -361,26 +354,20 @@ export function GroupNav({
 }
 
 function PanelItem({
-  panel, active, reviewed, onJump, onToggleReviewed,
+  panel, active, onJump,
 }: {
   panel: RenderedPanel
   active: boolean
-  reviewed: boolean
   onJump: (panelId: string) => void
-  onToggleReviewed: (panelId: string) => void
 }) {
   const asIs = panel.asIs?.file
   const toBe = panel.toBe?.file
   const className = [
     'group-panel-item',
     active ? 'is-active' : '',
-    reviewed ? 'is-reviewed' : '',
   ].filter(Boolean).join(' ')
-  // dot indicator は button として独立配置。クリックで reviewed toggle、
-  // 親 (.group-panel-item) のジャンプとは別アクション (stopPropagation で分離)。
-  //
-  // group-panel-item BEM 維持: ::before の accent rail + .is-active で rail visible 化 + .is-reviewed で
-  // indicator-btn 色変化 (= success 緑) + focus-visible で内側 box-shadow 表示 が globals.css にある。
+  // group-panel-item BEM 維持: ::before の accent rail + .is-active で rail visible 化 +
+  // focus-visible で内側 box-shadow 表示 が globals.css にある。
   // base 見た目 (flex 配置 / radius / font-size) は utility で表現、上記 state は className に残置。
   return (
     <div
@@ -389,34 +376,14 @@ function PanelItem({
     >
       <button
         type="button"
-        className="panel-item-indicator-btn bg-transparent border-0 py-2 pl-2 pr-1 cursor-pointer text-text-dim inline-flex items-start transition-colors duration-[120ms] hover:text-text"
-        onClick={(e) => {
-          e.stopPropagation()
-          onToggleReviewed(panel.panelId)
-        }}
-        title={reviewed ? '読了マークを外す' : '読了マークを付ける'}
-        aria-label={reviewed ? 'Mark as not reviewed' : 'Mark as reviewed'}
-        aria-pressed={reviewed}
-      >
-        {/* panel-item-indicator BEM 維持: .group-panel-item.is-active .panel-item-indicator の
-            color: var(--color-accent) を globals.css でスコープしているため (active 行は dot も accent) */}
-        <span
-          className="panel-item-indicator inline-flex items-center justify-center mt-px text-text-dim shrink-0 transition-colors duration-[120ms]"
-          aria-hidden="true"
-        >
-          {reviewed ? <CheckDotIcon /> : <RingDotIcon />}
-        </span>
-      </button>
-      <button
-        type="button"
-        className="bg-transparent border-0 py-2 pl-1 pr-2.5 text-left cursor-pointer text-text text-xs flex-1 min-w-0 hover:bg-surface-2 hover:rounded-[5px]"
+        className="bg-transparent border-0 py-2 pl-2.5 pr-2.5 text-left cursor-pointer text-text text-xs flex-1 min-w-0 hover:bg-surface-2 hover:rounded-[5px]"
         onClick={() => onJump(panel.panelId)}
         title={panel.intent}
       >
         <span className="flex flex-col gap-[3px] min-w-0">
           {/* panel-intent-line BEM 維持: `.group-panel-item.is-active .panel-intent-line` で text color
               を accent ON 時に上書きする rule が globals.css にあるため。 */}
-          <span className="panel-intent-line font-medium text-text whitespace-normal break-words leading-[1.4] tracking-[-0.005em] transition-colors duration-[120ms]">
+          <span className="panel-intent-line text-sm font-medium text-text whitespace-normal break-words leading-[1.4] tracking-[-0.005em] transition-colors duration-[120ms]">
             {panel.intent}
           </span>
           <span className="text-[10.5px] text-text-dim font-mono flex gap-1 items-center flex-wrap break-all">
@@ -483,10 +450,7 @@ function cssEscape(s: string): string {
 
 // ---------- icon wrappers ----------
 // lucide-react で統一。各 wrapper は size / strokeWidth / 色 (currentColor 経由) のデフォルトを固定。
-//
-// CheckDotIcon は「filled circle に抜き文字 check」というブランド固有表現で、lucide の CircleCheck を
-// fill=currentColor + stroke=background で着色して抜き文字を擬似的に再現する。SpinnerIcon は
-// 旧 .spin BEM class を捨てて utility `animate-spin` (Tailwind 標準) に切替。
+// SpinnerIcon は旧 .spin BEM class を捨てて utility `animate-spin` (Tailwind 標準) に切替。
 
 function PlusIcon() {
   return <Plus size={12} strokeWidth={1.5} aria-hidden />
@@ -496,27 +460,10 @@ function SpinnerIcon() {
   return <Loader2 size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
 }
 
-function RingDotIcon() {
-  return <Circle size={12} strokeWidth={1} aria-hidden />
-}
-
 function ChevronUpIcon() {
   return <ChevronUp size={12} strokeWidth={1.6} aria-hidden />
 }
 
 function ChevronDownIcon() {
   return <ChevronDown size={12} strokeWidth={1.6} aria-hidden />
-}
-
-function CheckDotIcon() {
-  // 「filled circle + 抜き文字 check」というブランド固有メタファのため inline SVG を維持する。
-  // lucide の CircleCheck は svg ルートに fill/stroke を当てると内側 path にも継承されてしまい
-  // open path のチェックが「緑塗りつぶしの V 字」になる仕様 (Icon.mjs が子要素に個別属性を渡さない設計) で、
-  // 「fill 緑の円 + 抜き文字 check stroke」を表現できない。明示的に circle / path を書き分ける必要あり。
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-      <circle cx="6" cy="6" r="5" fill="currentColor" />
-      <path d="M3.6 6.2 5 7.6 8.4 4.2" stroke="var(--color-background)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  )
 }

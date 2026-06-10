@@ -100,7 +100,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
       <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
         {m.author === 'agent' ? 'Claude' : 'You'}
       </span>
-      <p className="m-0 text-xs leading-[1.55] text-text whitespace-pre-wrap break-words font-sans">{m.body}</p>
+      <p className="m-0 text-sm leading-[1.55] text-text whitespace-pre-wrap break-words font-sans">{m.body}</p>
     </div>
   ))
 
@@ -203,7 +203,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
           {hasThread ? (
             <div
               ref={sidebarOpen ? threadScrollRef : undefined}
-              className="flex flex-col gap-1.5 flex-1 min-h-0 overflow-y-auto rounded-md border border-border-soft bg-background px-2.5 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              className="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto rounded-md border border-border-soft bg-background px-2.5 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
             >
               {messageList}
             </div>
@@ -244,7 +244,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
       {hasThread && threadOpen ? (
         <div
           ref={threadScrollRef}
-          className="flex flex-col gap-1.5 max-h-[40vh] overflow-y-auto rounded-md border border-border-soft bg-background px-2.5 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          className="flex flex-col gap-3 max-h-[40vh] overflow-y-auto rounded-md border border-border-soft bg-background px-2.5 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           {messageList}
         </div>
