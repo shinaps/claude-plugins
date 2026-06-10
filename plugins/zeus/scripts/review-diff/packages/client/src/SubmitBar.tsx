@@ -12,7 +12,7 @@
 //   - **レイアウト**: 縦組み (textarea / summary + ボタン行)、幅は w-[460px] に広げて 3 ボタン収納。
 
 import { useState } from 'react'
-import type { ReviewKind } from '@zeus/review-diff-shared'
+import type { ReviewKind, ThreadSnapshot } from '@zeus/review-diff-shared'
 
 type Props = {
   approvedCount: number
@@ -23,9 +23,12 @@ type Props = {
   // reviewKind: review 全体の種別 ('approve' | 'request-changes' | 'comment')。
   onSubmit: (opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) => void
   submitting: boolean
+  // レビュー全体スレッド (scope: review)。textarea がこの thread への入力で、
+  // 過去の note と Claude の返信が会話履歴としてここに表示される。
+  reviewThread?: ThreadSnapshot | null
 }
 
-export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submitting }: Props) {
+export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submitting, reviewThread }: Props) {
   const decided = approvedCount + rcCount
   const undecided = totalGroups - decided
   const ready = !submitting
@@ -56,13 +59,29 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
       role="toolbar"
       aria-label="Submit review"
     >
+      {/* レビュー全体スレッドの会話履歴 (過去の note + Claude の返信)。
+          group / file の会話欄と同じ全文表示。スレッドが無ければ非表示。 */}
+      {reviewThread && reviewThread.messages.length > 0 ? (
+        <div className="flex flex-col gap-1.5 max-h-[40vh] overflow-y-auto rounded-md border border-border-soft bg-background px-2.5 py-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {reviewThread.messages.map((m) => (
+            <div key={m.id} className="flex flex-col gap-0.5">
+              <span className={`text-[10px] font-semibold tracking-[0.05em] uppercase ${m.author === 'agent' ? 'text-accent' : 'text-text-dim'}`}>
+                {m.author === 'agent' ? 'Claude' : 'You'}
+              </span>
+              <p className="m-0 text-xs leading-[1.55] text-text whitespace-pre-wrap break-words font-sans">{m.body}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="Submit に添える全体コメント (任意)"
+        placeholder={reviewThread && reviewThread.messages.length > 0
+          ? 'スレッドに返信 (送信時に追加されます)'
+          : 'レビュー全体へのコメント (送信時にスレッドに追加)'}
         rows={2}
         className="w-full min-h-[44px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-1.5 font-sans text-xs leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
-        aria-label="Optional submit note"
+        aria-label="Review-wide comment"
       />
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-text-muted font-mono tabular-nums truncate mr-auto" title={summary}>

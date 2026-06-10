@@ -595,7 +595,9 @@ const ConversationCard: FC<{
     ? renderLineAnchor(scope.file, scope.line, scope.endLine)
     : scope.type === 'file'
       ? scope.file
-      : `Group · ${groups.find(g => g.groupId === scope.groupId)?.title ?? scope.groupId}`
+      : scope.type === 'review'
+        ? 'Review'
+        : `Group · ${groups.find(g => g.groupId === scope.groupId)?.title ?? scope.groupId}`
 
   return (
     <article
@@ -617,10 +619,12 @@ const ConversationCard: FC<{
           <span className="sr-only">{expanded ? 'Collapse thread' : 'Expand thread'}</span>
         </button>
         <div className="conversation-card-anchor">
-          {/* file / line はファイル系アイコン、group のみ dot */}
+          {/* file / line はファイル系、review は会話系、group は dot のアイコン */}
           {snap.scope.type === 'group'
             ? <CircleDot className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />
-            : <FileCode className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />}
+            : snap.scope.type === 'review'
+              ? <MessagesSquare className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />
+              : <FileCode className="w-3.5 h-3.5" strokeWidth={1.8} aria-hidden />}
           <span className="conversation-card-anchor-label">{anchorLabel}</span>
         </div>
         <div className="conversation-card-meta">

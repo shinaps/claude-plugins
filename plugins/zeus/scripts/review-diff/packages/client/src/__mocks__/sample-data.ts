@@ -92,8 +92,18 @@ export const sampleData: ClientPayload = {
   expandable: true,
   rawPanels: [],
   editorAvailable: false,
-  // group / file スレッド (decision section + panel header の会話履歴表示) の dev 確認用サンプル
+  // group / file / review スレッド (decision section / panel header / SubmitBar の会話履歴表示) の
+  // dev 確認用サンプル
   initialThreads: {
+    'review': {
+      scope: { type: 'review' },
+      messages: [
+        { id: 'm-demo-r1', author: 'user', body: '全体的に OK だけど commit メッセージは英語で', ts: 1750000200000 },
+        { id: 'm-demo-r2', author: 'agent', body: '了解しました。以後この review の commit メッセージは英語で生成します。', ts: 1750000260000, agentAction: { kind: 'answer' } },
+      ],
+      resolved: false,
+      outdated: false,
+    },
     'file:src/utils.ts': {
       scope: { type: 'file', file: 'src/utils.ts' },
       messages: [
