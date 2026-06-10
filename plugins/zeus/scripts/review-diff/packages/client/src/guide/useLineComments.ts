@@ -18,6 +18,35 @@ export type LineTarget = {
   endNumber?: number
 }
 
+// 「コメント削除」の state 遷移の唯一の実装。onDeleteLineComment と onSaveEditLineComment の
+// 空保存 (= 削除と同義) の両方がここを通ることで、削除の振る舞いを変えるときに修正箇所が
+// 1 つで済む。key が存在しないときは prev をそのまま返し、無駄な re-render を起こさない。
+function removeLineCommentAt(
+  prev: Map<string, string[]>,
+  key: string,
+  index: number,
+): Map<string, string[]> {
+  const existing = prev.get(key)
+  if (!existing) return prev
+  const next = new Map(prev)
+  const updated = existing.filter((_, i) => i !== index)
+  if (updated.length === 0) next.delete(key)
+  else next.set(key, updated)
+  return next
+}
+
+// 編集中エントリ (`${key}#${index}`) の除去。cancel / save / delete の全経路で editing から
+// エントリを消す処理が同一であることをここで保証する。
+function removeEditingEntry(
+  prev: Map<string, string>,
+  key: string,
+  index: number,
+): Map<string, string> {
+  const next = new Map(prev)
+  next.delete(`${key}#${index}`)
+  return next
+}
+
 export type LineCommentHandlers = {
   lineComments: Map<string, string[]>
   activeForm: string | null
@@ -71,62 +100,30 @@ export function useLineComments(
     })
   }, [])
   const onCancelEditLineComment = useCallback((key: string, index: number) => {
-    setEditing(prev => {
-      const next = new Map(prev)
-      next.delete(`${key}#${index}`)
-      return next
-    })
+    setEditing(prev => removeEditingEntry(prev, key, index))
   }, [])
   const onDeleteLineComment = useCallback((key: string, index: number) => {
-    setLineComments(prev => {
-      const next = new Map(prev)
-      const existing = next.get(key)
-      if (!existing) return prev
-      const updated = existing.filter((_, i) => i !== index)
-      if (updated.length === 0) next.delete(key)
-      else next.set(key, updated)
-      return next
-    })
-    setEditing(prev => {
-      const next = new Map(prev)
-      next.delete(`${key}#${index}`)
-      return next
-    })
+    setLineComments(prev => removeLineCommentAt(prev, key, index))
+    setEditing(prev => removeEditingEntry(prev, key, index))
   }, [])
   const onSaveEditLineComment = useCallback((key: string, index: number, body: string) => {
     const trimmed = body.trim()
     if (!trimmed) {
-      // 空保存 = 削除と同義
-      setLineComments(prev => {
-        const next = new Map(prev)
-        const existing = next.get(key)
-        if (!existing) return prev
-        const updated = existing.filter((_, i) => i !== index)
-        if (updated.length === 0) next.delete(key)
-        else next.set(key, updated)
-        return next
-      })
-      setEditing(prev => {
-        const next = new Map(prev)
-        next.delete(`${key}#${index}`)
-        return next
-      })
+      // 空保存 = 削除と同義。onDeleteLineComment と同じヘルパーを通すことで振る舞いの一致を保証する
+      setLineComments(prev => removeLineCommentAt(prev, key, index))
+      setEditing(prev => removeEditingEntry(prev, key, index))
       return
     }
     setLineComments(prev => {
-      const next = new Map(prev)
-      const existing = next.get(key)
+      const existing = prev.get(key)
       if (!existing) return prev
+      const next = new Map(prev)
       const updated = existing.slice()
       updated[index] = trimmed
       next.set(key, updated)
       return next
     })
-    setEditing(prev => {
-      const next = new Map(prev)
-      next.delete(`${key}#${index}`)
-      return next
-    })
+    setEditing(prev => removeEditingEntry(prev, key, index))
   }, [])
 
   return useMemo(() => ({
