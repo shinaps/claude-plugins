@@ -8,7 +8,7 @@
 //   - context+ ボタンの regenPending は close-relaunch ループの同時発火防止に必須
 
 import { memo } from 'react'
-import type { RenderedPanel, GroupDecision } from '@zeus/review-diff-shared'
+import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { GroupNav } from './GroupNav'
 import { PanelBlock } from './PanelBlock'
 import { shouldAutoCollapseFile } from './auto-collapse'
@@ -28,8 +28,12 @@ type Props = {
   // group decision + comment
   decision: GroupDecision | null
   comment: string
+  // この group を anchor にした会話スレッド (comment-reply 復帰時の initialThreads 由来)。無ければ null。
+  thread: ThreadSnapshot | null
   onDecisionChange: (groupId: string, next: GroupDecision | null) => void
   onCommentChange: (groupId: string, body: string) => void
+  // group コメントをスレッドに積む (GroupNav の Comment ボタン → App.addGroupComment へ pass-through)
+  onSubmitComment: () => void
   submitDisabled: boolean
   // panel 読了マーカ (左 nav の dot click でトグル、視覚アシスト)
   reviewedPanels: Set<string>
@@ -42,7 +46,7 @@ export const GroupSection = memo(function GroupSection({
   index, total, groupId, title, description, panels,
   onJumpToPanel, onNavResizerPointerDown,
   regenPending, onRequestContext,
-  decision, comment, onDecisionChange, onCommentChange, submitDisabled,
+  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, submitDisabled,
   reviewedPanels, onToggleReviewed,
   onJumpToGroupIndex,
   ...lineCommentHandlers
@@ -66,8 +70,10 @@ export const GroupSection = memo(function GroupSection({
           onRequestContext={onRequestContext}
           decision={decision}
           comment={comment}
+          thread={thread}
           onDecisionChange={onDecisionChange}
           onCommentChange={onCommentChange}
+          onSubmitComment={onSubmitComment}
           submitDisabled={submitDisabled}
           reviewedPanels={reviewedPanels}
           onToggleReviewed={onToggleReviewed}

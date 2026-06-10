@@ -23,6 +23,8 @@ import type {
   ResultJson,
   ReviewKind,
 } from '@zeus/review-diff-shared'
+import type { ThreadMessage, ThreadSnapshot } from '@zeus/review-diff-shared'
+import { threadKey } from '@zeus/review-diff-shared'
 import { TabBar } from './TabBar'
 import { GroupSection } from './GroupSection'
 import { PanelBlock } from './PanelBlock'
@@ -111,6 +113,31 @@ export function App({ payload }: Props) {
     () => payload.initialGroupComments ?? {},
   )
 
+  // 会話スレッド (group / line scope)。GitHub の pending review と同じく、group の Comment ボタンは
+  // ここに user message を「積む」だけでレビューを継続できる。Claude への送信 (= close-relaunch) は
+  // SubmitBar の Comment / Submit に同乗して一括で行う。
+  const [threads, setThreads] = useState<Record<string, ThreadSnapshot>>(
+    () => payload.initialThreads ?? {},
+  )
+
+  // group コメントを pending としてスレッドに積み、textarea をクリアする。
+  // textarea クリアは「同じ本文が submit 時の comments[] にも入って二重 thread 化される」のを防ぐ意図。
+  const addGroupComment = useCallback((groupId: string) => {
+    const body = (groupComments[groupId] ?? '').trim()
+    if (!body) return
+    const key = threadKey({ type: 'group', groupId })
+    const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body, ts: Date.now() }
+    setThreads(prev => {
+      const existing = prev[key]
+      const snap: ThreadSnapshot = existing
+        // 追記時は resolved を倒す (返信待ちの open スレッドに戻す)
+        ? { ...existing, messages: [...existing.messages, msg], resolved: false }
+        : { scope: { type: 'group', groupId }, messages: [msg], resolved: false, outdated: false }
+      return { ...prev, [key]: snap }
+    })
+    setGroupComments(prev => ({ ...prev, [groupId]: '' }))
+  }, [groupComments])
+
   // 読了マーカ (panel 単位): group decision とは別軸の視覚アシスト。
   // 左 nav の dot を click したら toggle。ResultJson には載せない (= 読了状態は session-local)。
   // 将来 regen-group の restore に乗せたい場合は payload.initialReviewedPanels を seed する。
@@ -196,7 +223,7 @@ export function App({ payload }: Props) {
     startTransition(() => setTab(next))
   }, [])
   const [scrollTarget, setScrollTarget] = useState<string | null>(null)
-  const [submitted, setSubmitted] = useState<null | 'submit' | 'regen'>(null)
+  const [submitted, setSubmitted] = useState<null | 'submit' | 'comment' | 'regen'>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   // v5: EditorLinkTrigger から Toast を呼ぶための window グローバルチャネルを設定。
@@ -362,9 +389,8 @@ export function App({ payload }: Props) {
       decision: reviewKind === 'comment' ? 'comment-reply' : 'submit',
       reviewKind,
       groupDecisions: decisions,
-      // v5: threads は ClientPayload の initialThreads を そのまま echo back する (UI 編集は本セッションで未実装、
-      // 後続セッションで useThreads → ThreadRow が完成したら本物の thread state を載せる)。
-      threads: payload.initialThreads ?? {},
+      // ローカル threads state を送る (initialThreads + 本セッションで Comment ボタンが積んだ pending message)
+      threads,
       comments: cs,
       ...(note ? { submitNote: note } : {}),
     }
@@ -374,7 +400,7 @@ export function App({ payload }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      setSubmitted('submit')
+      setSubmitted(reviewKind === 'comment' ? 'comment' : 'submit')
       setTimeout(() => {
         try { window.close() } catch { /* noop */ }
       }, 300)
@@ -414,7 +440,7 @@ export function App({ payload }: Props) {
         // regen-group は review 全体の決定ではないので reviewKind は 'comment' (= 未確定) で埋める
         reviewKind: 'comment',
         groupDecisions: decisions,
-        threads: payload.initialThreads ?? {},
+        threads,
         comments: collectComments(),
         regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
@@ -435,7 +461,7 @@ export function App({ payload }: Props) {
         setTimeout(() => setToast(null), 3000)
       }
     },
-    [groupsState, groupDecisions, groupComments, regenPending, submitted, lineCommentHandlers.lineComments],
+    [groupsState, groupDecisions, groupComments, threads, regenPending, submitted, lineCommentHandlers.lineComments],
   )
 
   // nav resizer (旧 App から流用、CSS variable 直接書き込み + rAF batch)
@@ -508,6 +534,13 @@ export function App({ payload }: Props) {
       </div>
     )
   }
+  if (submitted === 'comment') {
+    return (
+      <div className="px-6 py-20 text-center text-lg text-text w-full">
+        Comment sent. You can close this tab — review will re-open with Claude&apos;s replies.
+      </div>
+    )
+  }
   if (submitted === 'submit') {
     const approved = Object.values(groupDecisions).filter(d => d === 'approved').length
     const rc = Object.values(groupDecisions).filter(d => d === 'request-changes').length
@@ -569,7 +602,7 @@ export function App({ payload }: Props) {
         if (firstPanelId) jumpToPanel(firstPanelId)
       }}
       scriptResults={payload.scriptResults}
-      threads={payload.initialThreads}
+      threads={threads}
     />
   )
 
@@ -592,6 +625,8 @@ export function App({ payload }: Props) {
           onRequestContext={onRequestContext}
           decision={groupDecisions[g.groupId] ?? null}
           comment={groupComments[g.groupId] ?? ''}
+          thread={threads[threadKey({ type: 'group', groupId: g.groupId })] ?? null}
+          onSubmitComment={() => addGroupComment(g.groupId)}
           onDecisionChange={onDecisionChange}
           onCommentChange={onCommentChange}
           submitDisabled={regenPending}
