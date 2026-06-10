@@ -201,8 +201,8 @@ export const Panel = memo(function Panel({
     const container = panelContainerRef.current
     if (!container) return
     let raf = 0
-    // v5.0.1: IntersectionObserver gate を追加。tab reveal 時に 22 panel × per-side × N row の
-    // ResizeObserver が一斉発火して LoAF 1010 の fsl=4745ms を生んでいた (debug-validated.md H1)。
+    // IntersectionObserver で sync をゲートする。ゲートが無いと tab reveal 時に
+    // 22 panel × per-side × N row の ResizeObserver が一斉発火して数秒級の LoAF になる。
     // viewport ± 200px 外の panel は sync を完全 skip することで「同 frame に 22 panel 集中」を防ぐ。
     let isVisible = typeof IntersectionObserver === 'undefined' // SSR / happy-dom 互換 fallback
     const sync = () => {
@@ -253,7 +253,7 @@ export const Panel = memo(function Panel({
     sync()
     const ro = new ResizeObserver(schedule)
     container.querySelectorAll<HTMLElement>('.code-row').forEach((el) => ro.observe(el))
-    // v5.0.1: viewport ±200px に入った瞬間に isVisible を立てて sync をキック。
+    // viewport ±200px に入った瞬間に isVisible を立てて sync をキック。
     // tab-hidden 配下では IO は intersecting=false を返すため自然にゲートが効く。
     // happy-dom (= IntersectionObserver なし) では isVisible 初期値 true なので分岐に入らない。
     let io: IntersectionObserver | null = null

@@ -112,10 +112,9 @@ export function ChunkNavigator({ activeTab }: Props) {
   // panel の collapse/expand で chunk row 集合が変わるので、MutationObserver で構造変化を監視。
   // attribute 変更ではなく childList 変更だけ追う (パフォーマンス考慮)。
   //
-  // v5.0.1: rAF + 50ms debounce を導入。tab 切替時の 22 panel 一斉 attach で childList burst が
+  // rAF + 50ms debounce を挟む。tab 切替時の 22 panel 一斉 attach で childList burst が
   // 起きると 1 callback で recompute() 内の querySelectorAll + N 個の getBoundingClientRect が
-  // 同期実行され、LoAF 1011 の (anon) 5132ms user-callback の主因になっていた
-  // (debug-validated.md H5)。burst を 1 回にまとめることで <100ms に。
+  // 同期実行され、数秒級の LoAF の主因になる。burst を 1 回にまとめることで <100ms に抑える。
   useEffect(() => {
     const root = document.querySelector('[data-app-root]') ?? document.body
     let raf = 0

@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     process.stderr.write(`[review-diff] config load failed (ignored): ${(e as Error).message}\n`)
   }
   const editorAvailable = editorPreset !== null
-  // v5.0.2: config が無い / editor 未設定 / scripts 未設定 のときに stderr に明示的な hint を出す。
+  // config が無い / editor 未設定 / scripts 未設定 のときに stderr に明示的な hint を出す。
   // 「サイレントに機能 off」だとユーザーが editor link / script gate の存在に気付かないため。
   if (!values.config) {
     process.stderr.write('[review-diff] no --config passed.\n')
