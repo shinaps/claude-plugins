@@ -325,25 +325,85 @@ export const Panel = memo(function Panel({
     setDrag(next)
   }, [])
 
+  // カーソル位置 → 対象行 (panel scoped)。別 panel の cell はここで null に落ちる (AC-6)。
+  // セレクタは td でも div でも動くように `[data-side][data-line-number]` で統一。
+  const resolveLineAtPoint = useCallback((
+    clientX: number, clientY: number, expectSide: Side,
+  ): number | null => {
+    // hot-path: cursor 直下に expectSide の cell があれば即返却。
+    // panel 内で expectSide 上をドラッグしている通常ケースをこの分岐で 99% 捌く。
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+    if (el) {
+      const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
+      // panelContainerRef.contains で AC-6 構造的担保: 別 panel の cell は無視
+      if (cell && (!panelContainerRef.current || panelContainerRef.current.contains(cell))) {
+        const sideAttr = cell.dataset.side
+        const side = sideAttr ? attrToSide(sideAttr) : null
+        if (side === expectSide) {
+          const num = cell.dataset.lineNumber
+          const n = num ? Number(num) : NaN
+          if (Number.isFinite(n)) return n
+        }
+      }
+    }
+    // cold-path: cursor が panel 外 / 反対 side / 中央コラム / panel 上下端の外側にいるとき、
+    // expectSide の cell-ln 群を線形探索して cursor Y に最も近い行を選ぶ (clamp 効果)。
+    // drag indicator の onMove と同じ snap ポリシーで、行ハイライトも同じ行に追従する。
+    if (!panelContainerRef.current) return null
+    const sideAttr = sideToAttr(expectSide)
+    const cellLns = panelContainerRef.current.querySelectorAll<HTMLElement>(
+      `.cell-ln[data-side="${sideAttr}"]`,
+    )
+    let closestNum: number | null = null
+    let closestDist = Infinity
+    for (const ln of cellLns) {
+      const num = ln.dataset.lineNumber
+      if (!num) continue
+      const n = Number(num)
+      if (!Number.isFinite(n)) continue
+      const r = ln.getBoundingClientRect()
+      const center = r.top + r.height / 2
+      const dist = Math.abs(clientY - center)
+      if (dist < closestDist) {
+        closestDist = dist
+        closestNum = n
+      }
+    }
+    return closestNum
+  }, [])
+
+  // ドラッグ完了時の選択コミット (唯一のコミット実装)。終了座標を行に解決し (解決不能なら
+  // drag 中の currentNumber にフォールバック)、単一行 or 範囲で onOpenLineForm を呼んで
+  // drag 状態をクリアする。React の onPointerUp と window 保険ハンドラの両経路から呼ばれる
+  // 共通仕様なので、コミット挙動を変えるときはここだけ直せばよい。
+  const commitDragSelection = useCallback((
+    clientX: number, clientY: number, cur: NonNullable<DragState>,
+  ) => {
+    const endNumber = resolveLineAtPoint(clientX, clientY, cur.side) ?? cur.currentNumber
+    const lo = Math.min(cur.startNumber, endNumber)
+    const hi = Math.max(cur.startNumber, endNumber)
+    const elapsed = performance.now() - cur.startedAt
+    const isSingle = lo === hi && elapsed < CLICK_THRESHOLD_MS
+    if (isSingle || lo === hi) {
+      handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo })
+    } else {
+      handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo, endNumber: hi })
+    }
+    setDragBoth(null)
+  }, [resolveLineAtPoint, handlers, panel.panelId, setDragBoth])
+
   // ドラッグ中 Escape キャンセル + window pointerup 保険 (cross-panel drag は完全に弾く)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setDragBoth(null)
     }
+    // pointer capture が外れて React の onPointerUp に届かないケース (panel 外で離した等) でも
+    // drag を必ずコミット / 解消するための window レベル保険。React 経路でコミット済みの
+    // pointerup が bubble してきたときは dragRef が null なので二重コミットしない。
     function onWindowPointerUp(e: PointerEvent) {
       const cur = dragRef.current
       if (!cur) return
-      const endNumber = resolveLineAtPoint(e.clientX, e.clientY, cur.side) ?? cur.currentNumber
-      const lo = Math.min(cur.startNumber, endNumber)
-      const hi = Math.max(cur.startNumber, endNumber)
-      const elapsed = performance.now() - cur.startedAt
-      const isSingle = lo === hi && elapsed < CLICK_THRESHOLD_MS
-      if (isSingle || lo === hi) {
-        handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo })
-      } else {
-        handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo, endNumber: hi })
-      }
-      setDragBoth(null)
+      commitDragSelection(e.clientX, e.clientY, cur)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('pointerup', onWindowPointerUp)
@@ -353,7 +413,7 @@ export const Panel = memo(function Panel({
       window.removeEventListener('pointerup', onWindowPointerUp)
       window.removeEventListener('pointercancel', onWindowPointerUp)
     }
-  }, [setDragBoth, handlers, panel.panelId])
+  }, [setDragBoth, commitDragSelection])
 
   // ドラッグ中の line-snap インジケータ (GitHub PR 風)。
   // 仕様: カーソルが横切っている行の gutter 上 (= 普段 + ボタンが出る位置) に `+` をスナップ表示。
@@ -455,53 +515,6 @@ export const Panel = memo(function Panel({
     return false
   }
 
-  // カーソル位置 → 対象行 (panel scoped)。別 panel の cell はここで null に落ちる (AC-6)。
-  // セレクタは td でも div でも動くように `[data-side][data-line-number]` で統一。
-  function resolveLineAtPoint(
-    clientX: number, clientY: number, expectSide: Side,
-  ): number | null {
-    // hot-path: cursor 直下に expectSide の cell があれば即返却。
-    // panel 内で expectSide 上をドラッグしている通常ケースをこの分岐で 99% 捌く。
-    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
-    if (el) {
-      const cell = el.closest('[data-side][data-line-number]') as HTMLElement | null
-      // panelContainerRef.contains で AC-6 構造的担保: 別 panel の cell は無視
-      if (cell && (!panelContainerRef.current || panelContainerRef.current.contains(cell))) {
-        const sideAttr = cell.dataset.side
-        const side = sideAttr ? attrToSide(sideAttr) : null
-        if (side === expectSide) {
-          const num = cell.dataset.lineNumber
-          const n = num ? Number(num) : NaN
-          if (Number.isFinite(n)) return n
-        }
-      }
-    }
-    // cold-path: cursor が panel 外 / 反対 side / 中央コラム / panel 上下端の外側にいるとき、
-    // expectSide の cell-ln 群を線形探索して cursor Y に最も近い行を選ぶ (clamp 効果)。
-    // drag indicator の onMove と同じ snap ポリシーで、行ハイライトも同じ行に追従する。
-    if (!panelContainerRef.current) return null
-    const sideAttr = sideToAttr(expectSide)
-    const cellLns = panelContainerRef.current.querySelectorAll<HTMLElement>(
-      `.cell-ln[data-side="${sideAttr}"]`,
-    )
-    let closestNum: number | null = null
-    let closestDist = Infinity
-    for (const ln of cellLns) {
-      const num = ln.dataset.lineNumber
-      if (!num) continue
-      const n = Number(num)
-      if (!Number.isFinite(n)) continue
-      const r = ln.getBoundingClientRect()
-      const center = r.top + r.height / 2
-      const dist = Math.abs(clientY - center)
-      if (dist < closestDist) {
-        closestDist = dist
-        closestNum = n
-      }
-    }
-    return closestNum
-  }
-
   function handlePointerDown(
     e: React.PointerEvent<HTMLDivElement>,
     side: Side,
@@ -529,17 +542,7 @@ export const Panel = memo(function Panel({
     if (!cur) return
     if (e.type === 'pointerup' && e.button > 0) return
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* noop */ }
-    const endNumber = resolveLineAtPoint(e.clientX, e.clientY, cur.side) ?? cur.currentNumber
-    const lo = Math.min(cur.startNumber, endNumber)
-    const hi = Math.max(cur.startNumber, endNumber)
-    const elapsed = performance.now() - cur.startedAt
-    const isSingle = lo === hi && elapsed < CLICK_THRESHOLD_MS
-    if (isSingle || lo === hi) {
-      handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo })
-    } else {
-      handlers.onOpenLineForm(panel.panelId, { side: cur.side, number: lo, endNumber: hi })
-    }
-    setDragBoth(null)
+    commitDragSelection(e.clientX, e.clientY, cur)
   }
 
   // panelId に紐付くコメント key を (side, anchor) で逆引き

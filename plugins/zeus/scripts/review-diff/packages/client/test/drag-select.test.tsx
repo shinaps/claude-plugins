@@ -8,9 +8,9 @@
 //     (panel-side-asis / panel-side-tobe で per-side 独立 scroll container を実現するため)
 //   - cross-panel drag は panelContainerRef.contains() で完全に弾かれる (AC-6 構造的担保)
 
-import { render } from '@testing-library/react'
+import { render, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, test, expect, beforeEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from '../src/guide/Panel'
 import type { LineCommentHandlers, LineTarget } from '../src/guide/useLineComments'
@@ -237,5 +237,120 @@ describe('Panel drag select (grid)', () => {
     expect(handlersA.openedCalls[0].target.endNumber).toBeUndefined()
     // p2 側のハンドラは呼ばれない
     expect(handlersB.openedCalls).toHaveLength(0)
+  })
+})
+
+// ドラッグ完了時の選択コミット contract の characterization。
+// 「終了座標 → 行解決 → lo/hi → 単一 or 範囲で onOpenLineForm → drag 状態クリア」が、
+// React の onPointerUp 経路と window 保険ハンドラ経路 (pointer capture が外れて React に
+// pointerup が届かないケースの救済) の両方で同一に成立することを固定する。
+describe('Panel drag commit contract', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    // happy-dom には document.elementsFromPoint が無く、drag 中の pointermove で
+    // drag-indicator effect の onMove が TypeError でクラッシュする。コミット挙動の検証に
+    // indicator は無関係なので空配列 stub で無害化する (行解決は elementFromPoint 側を使う)。
+    ;(document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => []
+  })
+  afterEach(() => {
+    delete (document as Partial<Document>).elementsFromPoint
+  })
+
+  // window レベルの pointerup / pointercancel を直接 dispatch する。
+  // cell を経由しないので React の onPointerUp ハンドラには到達せず、
+  // window 保険ハンドラ単独の挙動を観測できる。
+  function dispatchWindowPointer(type: 'pointerup' | 'pointercancel') {
+    // happy-dom に PointerEvent が無い場合に備えた fallback。ハンドラは clientX/clientY しか読まない
+    const Ctor = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent
+    act(() => {
+      window.dispatchEvent(new Ctor(type, { clientX: 0, clientY: 0, bubbles: true }))
+    })
+  }
+
+  test('React pointerup path: same row commits single-line form exactly once', async () => {
+    const { handlers } = renderPanel()
+    const user = userEvent.setup()
+    const cell = getGutterCell('p1', 'tobe', 2)
+    const orig = document.elementFromPoint
+    document.elementFromPoint = (() => cell) as typeof document.elementFromPoint
+    try {
+      await user.pointer([
+        { target: cell, keys: '[MouseLeft>]' },
+        { target: cell, keys: '[/MouseLeft]' },
+      ])
+    } finally {
+      document.elementFromPoint = orig
+    }
+    // pointerup は React ハンドラ処理後に window 保険ハンドラにも bubble するが、
+    // drag 状態クリア済みなので二重コミットしない (= 1 回だけ)
+    expect(handlers.openedCalls).toEqual([
+      { panelId: 'p1', target: { side: 'toBe', number: 2 } },
+    ])
+    expect(cell.closest('.code-row')).not.toHaveClass('line-selected')
+  })
+
+  test('React pointerup path: different row commits range form (lo/hi normalized)', async () => {
+    const { handlers } = renderPanel()
+    const user = userEvent.setup()
+    const start = getGutterCell('p1', 'tobe', 3)
+    const end = getGutterCell('p1', 'tobe', 1)
+    const orig = document.elementFromPoint
+    document.elementFromPoint = (() => end) as typeof document.elementFromPoint
+    try {
+      // 下の行 (3) から上の行 (1) へ逆方向ドラッグ → lo/hi 正規化で number=1, endNumber=3
+      await user.pointer([
+        { target: start, keys: '[MouseLeft>]' },
+        { target: end },
+        { target: end, keys: '[/MouseLeft]' },
+      ])
+    } finally {
+      document.elementFromPoint = orig
+    }
+    expect(handlers.openedCalls).toEqual([
+      { panelId: 'p1', target: { side: 'toBe', number: 1, endNumber: 3 } },
+    ])
+  })
+
+  test('window fallback path: pointerup outside React handlers still commits range', async () => {
+    const { handlers } = renderPanel()
+    const user = userEvent.setup()
+    const start = getGutterCell('p1', 'tobe', 1)
+    const end = getGutterCell('p1', 'tobe', 3)
+    await user.pointer({ target: start, keys: '[MouseLeft>]' })
+    const orig = document.elementFromPoint
+    document.elementFromPoint = (() => end) as typeof document.elementFromPoint
+    try {
+      dispatchWindowPointer('pointerup')
+    } finally {
+      document.elementFromPoint = orig
+    }
+    expect(handlers.openedCalls).toEqual([
+      { panelId: 'p1', target: { side: 'toBe', number: 1, endNumber: 3 } },
+    ])
+    expect(start.closest('.code-row')).not.toHaveClass('line-selected')
+  })
+
+  test('window fallback path: pointercancel commits single-line and clears drag', async () => {
+    const { handlers } = renderPanel()
+    const user = userEvent.setup()
+    const cell = getGutterCell('p1', 'tobe', 2)
+    await user.pointer({ target: cell, keys: '[MouseLeft>]' })
+    const orig = document.elementFromPoint
+    document.elementFromPoint = (() => cell) as typeof document.elementFromPoint
+    try {
+      dispatchWindowPointer('pointercancel')
+    } finally {
+      document.elementFromPoint = orig
+    }
+    expect(handlers.openedCalls).toEqual([
+      { panelId: 'p1', target: { side: 'toBe', number: 2 } },
+    ])
+    expect(cell.closest('.code-row')).not.toHaveClass('line-selected')
+  })
+
+  test('window fallback path: no-op when no drag is in progress', () => {
+    const { handlers } = renderPanel()
+    dispatchWindowPointer('pointerup')
+    expect(handlers.openedCalls).toHaveLength(0)
   })
 })
