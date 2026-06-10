@@ -52,6 +52,58 @@ function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number
   return `line:${panelId}:${side}:${range}`
 }
 
+// (side, anchor) → コメント key 配列の逆引き Map のキー。
+// producer (buildCommentKeysByAnchor) と consumer (SideRow の lookup) が同じ形式で
+// 組む必要があるため関数に固定する。anchor は range コメントなら終端行 (= CommentRow を出す行)。
+function anchorMapKey(side: Side, anchor: number): string {
+  return `${side}\x1f${anchor}`
+}
+
+// map[mapKey] の配列に commentKey を重複なしで追記する。
+function appendCommentKey(map: Map<string, string[]>, mapKey: string, commentKey: string): void {
+  const commentKeys = map.get(mapKey) ?? []
+  if (!commentKeys.includes(commentKey)) {
+    commentKeys.push(commentKey)
+    map.set(mapKey, commentKeys)
+  }
+}
+
+// panelId に紐付くコメント key を (side, anchor) で逆引きする Map を組む純関数。
+// 含めるのは 3 系統で、後段ほど dedup されて追記される:
+//   1. 確定済みコメント (lineComments の key 群)
+//   2. 入力中フォーム (activeForm) — まだ lineComments に無い新規入力中の行にも CommentRow を出すため
+//   3. 永続化された thread (= 前回 submit + Claude 応答) — 今セッションでコメントしていない行にも
+//      過去スレッドを render するため
+// export はユニットテスト用 (Panel render を介さず Map 構築の contract を直接検証する)。
+export function buildCommentKeysByAnchor(
+  panelId: string,
+  lineCommentKeys: Iterable<string>,
+  activeForm: string | null,
+  threads: Record<string, ThreadSnapshot> | undefined,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  for (const key of lineCommentKeys) {
+    const parsed = parseLineCommentKey(key)
+    if (parsed.panelId !== panelId) continue
+    appendCommentKey(map, anchorMapKey(parsed.side, parsed.endNumber ?? parsed.number), key)
+  }
+  if (activeForm) {
+    const parsed = parseLineCommentKey(activeForm)
+    if (parsed.panelId === panelId) {
+      appendCommentKey(map, anchorMapKey(parsed.side, parsed.endNumber ?? parsed.number), activeForm)
+    }
+  }
+  if (threads) {
+    for (const snap of Object.values(threads)) {
+      if (snap.scope.type !== 'line') continue
+      if (snap.scope.panelId !== panelId) continue
+      const key = lineCommentKey(snap.scope.panelId, snap.scope.side, snap.scope.line, snap.scope.endLine)
+      appendCommentKey(map, anchorMapKey(snap.scope.side, snap.scope.endLine ?? snap.scope.line), key)
+    }
+  }
+  return map
+}
+
 const SHIKI = createShiki()
 
 type FlatRow = {
@@ -539,43 +591,15 @@ export const Panel = memo(function Panel({
   }
 
   // panelId に紐付くコメント key を (side, anchor) で逆引き
-  const commentKeysByAnchor = useMemo(() => {
-    const map = new Map<string, string[]>()
-    for (const key of handlers.lineComments.keys()) {
-      const parsed = parseLineCommentKey(key)
-      if (parsed.panelId !== panel.panelId) continue
-      const anchor = parsed.endNumber ?? parsed.number
-      const mapKey = `${parsed.side}\x1f${anchor}`
-      const arr = map.get(mapKey) ?? []
-      arr.push(key)
-      map.set(mapKey, arr)
-    }
-    if (handlers.activeForm) {
-      const parsed = parseLineCommentKey(handlers.activeForm)
-      if (parsed.panelId === panel.panelId) {
-        const anchor = parsed.endNumber ?? parsed.number
-        const mapKey = `${parsed.side}\x1f${anchor}`
-        const arr = map.get(mapKey) ?? []
-        if (!arr.includes(handlers.activeForm)) arr.push(handlers.activeForm)
-        map.set(mapKey, arr)
-      }
-    }
-    // v5: 永続化された thread (= 前回 submit + Claude 応答) の anchor も含めて CommentRow を render する
-    const threads = typeof window !== 'undefined' ? window.__reviewDiffThreads : undefined
-    if (threads) {
-      for (const snap of Object.values(threads)) {
-        if (snap.scope.type !== 'line') continue
-        if (snap.scope.panelId !== panel.panelId) continue
-        const lk = lineCommentKey(snap.scope.panelId, snap.scope.side, snap.scope.line, snap.scope.endLine)
-        const anchor = snap.scope.endLine ?? snap.scope.line
-        const mapKey = `${snap.scope.side}\x1f${anchor}`
-        const arr = map.get(mapKey) ?? []
-        if (!arr.includes(lk)) arr.push(lk)
-        map.set(mapKey, arr)
-      }
-    }
-    return map
-  }, [handlers.lineComments, handlers.activeForm, panel.panelId])
+  const commentKeysByAnchor = useMemo(
+    () => buildCommentKeysByAnchor(
+      panel.panelId,
+      handlers.lineComments.keys(),
+      handlers.activeForm,
+      typeof window !== 'undefined' ? window.__reviewDiffThreads : undefined,
+    ),
+    [handlers.lineComments, handlers.activeForm, panel.panelId],
+  )
 
   return (
     <div
@@ -722,7 +746,7 @@ function SideRow({
   )
 
   const anchorKeys = cell.line != null
-    ? (commentKeysByAnchor.get(`${side}\x1f${cell.line}`) ?? [])
+    ? (commentKeysByAnchor.get(anchorMapKey(side, cell.line)) ?? [])
     : []
 
   const inRange = isInDragRange(side, cell.line)
