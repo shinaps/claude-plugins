@@ -1,7 +1,7 @@
 ---
 name: diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 stacked PR UI (split mode) でブラウザに開き、group 単位の Approve / Request Changes + コメントで人間ゲートする最終承認スキル。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。context+ ボタンは close-relaunch + state restore モデルで全 group の decision / コメント / 未保存 draft を再起動後に復元。AI による観点別の機械レビュー (zeus プラグインの /zeus:review 等) と責務が違い、こちらは「人間が目で見て承認する」動線
-argument-hint: <なし | PR番号>
+description: 直前の staged diff または既存 PR の diff を Linear 風 stacked PR UI (split mode) でブラウザに開き、group 単位の Approve / Request Changes + コメントで人間ゲートする最終承認スキル。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。context+ ボタンは close-relaunch + state restore モデルで全 group の decision / コメント / 未保存 draft を再起動後に復元。remote 引数で cloudflared Quick Tunnel の公開 URL を発行し、外出先のスマホからもレビューできる (モバイルは unified 表示 + Approve/RC 操作に最適化)。AI による観点別の機械レビュー (zeus プラグインの /zeus:review 等) と責務が違い、こちらは「人間が目で見て承認する」動線
+argument-hint: <なし | PR番号 | remote [PR番号]>
 ---
 
 ## このスキルの位置付け
@@ -19,13 +19,35 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 | 呼び出し | モード | 動作 |
 |---|---|---|
 | `/show-me:diff` | staged | `git diff --cached` をレビュー対象にする |
-| `/show-me:diff 123` | pr | `gh pr diff 123` をレビュー対象にする (PR 番号は整数のみ) |
+| `/show-me:diff 123` | pr | PR #123 をレビュー対象にする (PR 番号は整数のみ) |
+| `/show-me:diff remote` | staged + remote | staged レビューを cloudflared Quick Tunnel の公開 URL で開く |
+| `/show-me:diff remote 123` | pr + remote | PR レビューを公開 URL で開く (`123 remote` の順でも可) |
 | `/show-me:diff <他>` | error | エラー終了 |
 
-引数判定:
-- 引数なし → staged モード
+引数判定: 引数を空白でトークン分割し、各トークンを判定する。
+- トークンなし → staged モード
+- `remote` → リモートモードフラグを立てる (順不同、PR 番号と併用可)
 - `^[0-9]+$` にマッチする → pr モード
-- それ以外 → エラー終了 (`AskUserQuestion` で意図を確認しても良い)
+- それ以外のトークンが 1 つでもあれば → エラー終了 (`AskUserQuestion` で意図を確認しても良い)
+
+### リモートモードの文脈自動判断
+
+`remote` が明示されていなくても、以下のように **ユーザーが CLI ホストのブラウザを開けない文脈** だと
+判断できる場合は remote を自動付与し、「リモート用 URL を発行します」と一言伝えること:
+
+- リモートセッション (claude.ai アプリ等のリモートコントロール) から実行されている
+- ユーザーが「スマホで見たい」「外出先」「ブラウザが開けない」等を発言している
+- このリポジトリで過去に remote 指定でレビューした文脈が続いている
+
+逆に、ローカルの対話セッションでは remote を勝手に付けない (公開 URL を不必要に発行しない)。
+
+### リモートモードの URL 取り扱い (重要)
+
+- REMOTE URL は token を含む。**Claude の会話にのみ投稿し、第三者のメッセンジャー等へ転送しないよう
+  ユーザーに一言添える** (Slack / LINE 等の link preview bot が token 付き URL を fetch して
+  diff 全文 HTML を取得し得るため)
+- Quick Tunnel の URL は **CLI プロセスごとの使い捨て** で、regen-group / comment-reply の
+  close-relaunch 後は必ず新しい URL になる。**(再) 起動のたびに REMOTE URL を会話に投稿し直すこと**
 
 ## ディレクトリ規約
 
@@ -58,7 +80,7 @@ diff から `summary.json` を組み立てる作業はメインエージェン�
 - **Reject 連続 3 回でユーザー確認**: rejectCount ≥ 3 になったら `AskUserQuestion` で「続行 / 中止 / 方針見直し」
 - **regen-group 連続 5 回でユーザー確認**: regenCount ≥ 5 で `AskUserQuestion` (無限再生成防止)
 - **summary 再生成 (validator fail) 連続 3 回でユーザー確認**: summaryRegenCount ≥ 3 で `AskUserQuestion`
-- **CLI に絶対値タイムアウトは無い**: タブが閉じられたら client → server の heartbeat が止まり、CLI が 15 秒以内に自発 exit する設計。Bash は `run_in_background` で起動して TaskOutput で待つので Bash tool の 10 分制約も無関係
+- **CLI に絶対値タイムアウトは無い**: タブが閉じられたら client → server の heartbeat が止まり、CLI が 15 秒以内に自発 exit する設計。Bash は `run_in_background` で起動して TaskOutput で待つので Bash tool の 10 分制約も無関係。remote モードではモバイルブラウザのバックグラウンド停止を誤検知しないよう grace が 10 分 / 初回 ping 待ち (boot grace) が 5 分に延長される — boot grace 内に誰も URL を開かなければ decision='timeout' で exit し、既存の timeout 分岐 (AskUserQuestion) に回収される
 - **不明な点は AskUserQuestion で確認** (回数制限なし)
 
 ## 実行フロー
@@ -78,6 +100,21 @@ PR モード (`<整数>`) の場合は加えて:
 
 ```bash
 gh --version >/dev/null || { echo "gh CLI required for PR mode"; exit 1; }
+```
+
+remote モードの場合は cloudflared の存在を **warn-only** でチェックする (CLI 側にも graceful
+fallback があるが、起動前に分かっていればユーザーに「リモート URL を送る」と約束してから
+覆す事態を避けられる):
+
+```bash
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "[show-me:diff] cloudflared not installed — remote URL cannot be issued." >&2
+  echo "[show-me:diff] Install with: brew install cloudflared (enables remote mode next time)" >&2
+  # エラー終了はしない。--remote は付けたまま続行し、CLI 側の graceful fallback に委ねる。
+  # remote フラグを外して通常ローカルモードに落とすと openUrl + 無期限 heartbeat が走り、
+  # CLI ホストの前に誰もいない remote 文脈では誰も見ないタブが CLI を無期限ハングさせる。
+  # --remote のままなら自動 open は抑止され、接続が無ければ boot timeout で安全に終了する。
+fi
 ```
 
 staged モードでは空 diff チェック:
@@ -494,19 +531,25 @@ CONFIG_ARG=""
 SCRIPT_RESULTS_ARG=""
 [ -f "$WORK_DIR/script-results.json" ] && SCRIPT_RESULTS_ARG="--script-results $WORK_DIR/script-results.json"
 
+# remote モードなら --remote を追加 (cloudflared が Quick Tunnel を立てて公開 URL を発行する)
+REMOTE_ARG=""
+# (スキル引数に remote があった場合のみ) REMOTE_ARG="--remote"
+
 # 通常起動 (初回 or rejectループ)。PR 判定は config 解決と同じく pr-meta.json の存在で行う
 if [ -f "$WORK_DIR/pr-meta.json" ]; then
   BASE_SHA=$(jq -r '.baseRefOid // ""' "$WORK_DIR/pr-meta.json")
   BASE_SHA_ARG=""
   [ -n "$BASE_SHA" ] && BASE_SHA_ARG="--base-sha $BASE_SHA"
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json" $BASE_SHA_ARG $CONFIG_ARG $SCRIPT_RESULTS_ARG
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --pr-meta "$WORK_DIR/pr-meta.json" $BASE_SHA_ARG $CONFIG_ARG $SCRIPT_RESULTS_ARG $REMOTE_ARG
 else
-  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" $CONFIG_ARG $SCRIPT_RESULTS_ARG
+  node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" $CONFIG_ARG $SCRIPT_RESULTS_ARG $REMOTE_ARG
 fi
 
 # regen-group / comment-reply 後の再起動の場合は --restore-state を追加
 # (Phase 6 の regen-group / comment-reply 分岐から自動的にここに戻ってくる)
-node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json" $CONFIG_ARG $SCRIPT_RESULTS_ARG
+# remote モードで始めたレビューは再起動でも $REMOTE_ARG を維持すること — 落とすとローカルモードに
+# なり、外出先のユーザーが新 URL を開けなくなる
+node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --restore-state "$WORK_DIR/restore.json" $CONFIG_ARG $SCRIPT_RESULTS_ARG $REMOTE_ARG
 ```
 
 **起動手順 (メインがやること)**:
@@ -515,17 +558,24 @@ node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --r
 2. 起動後 1〜2 秒待って `.output` を Read し、stderr の `[show-me:diff] URL: ...` を確認
    - URL を出すまでは macOS の `open` で自動的にブラウザが立ち上がるので、通常は URL 取得すら不要
    - ブラウザが起動しない環境 (リモートなど) では URL をユーザーに案内する
+   - **remote モード**: `.output` を最大 30 秒リトライ読みして `[show-me:diff] REMOTE URL: ...` を検出し、
+     **必ずユーザーに投稿する** (タップして開いてもらう URL はこれ)。「このリンクは Claude の会話以外へ
+     転送しないでください」と一言添える。`cloudflared not available — falling back to local mode` が
+     出ていたらフォールバック文をそのまま中継し、ローカル URL を案内する (remote 時は自動 open されない)
 3. **`TaskOutput(task_id, block: true)`** で完了通知を待つ
    - block: true は CLI が exit (= ユーザーが Submit / regen-group / タブ close 検知 timeout) するまで待ち続ける
    - 待ち時間に上限なし。Claude 側で並行して別の作業もできる
 4. 完了したら `.output` ファイル末尾を Read し、最後の `{"decision":...}` 行を JSON.parse
 
 CLI の挙動:
-- macOS では `open` が自動で立ち上がりブラウザに UI が出る
-- stderr に `[show-me:diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
-- ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する
+- macOS では `open` が自動で立ち上がりブラウザに UI が出る (remote モードでは自動 open しない)
+- stderr に `[show-me:diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する。remote モードでは加えて `[show-me:diff] REMOTE URL: https://xxx.trycloudflare.com/?token=...` が出る
+- ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒 (remote は 10 分) 以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"submit"|"timeout"|"regen-group"|"comment-reply", ...}` (合否は groupDecisions の分布から判定)
+- 768px 以下の画面 (スマホ) では split の代わりに unified (単一カラム) 表示になり、group 単位の
+  Approve / Request Changes + コメント入力に最適化される。行コメントの新規作成とエディタリンクは
+  デスクトップ前提のまま (リモートではエディタリンク自体が無効化される)
 
 UI には 2 つの主要タブがある (評価軸は **Guide タブの group decision** のみ):
 - **Guide タブ**: AI が summary.json で指定した group / panel をそのままナラティブ順で表示。Approve / Request Changes と group コメント / 行コメントを付ける本番の評価面
@@ -725,8 +775,12 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
    - `threads`: `result.json.threads` をそのままコピー (会話履歴 + client が合成済みの保存済み行コメント。regen 対象 group の分もクリアしない — クリア対象は decision と textarea draft のみ)
    - `lineCommentDrafts`: そのままコピー
 6. **`Skill('show-me:diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
+   **元の起動が remote だった場合は args の `remote` を必ず維持する** (落とすとローカルモードに
+   なり外出先のユーザーが開けない)。
    - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
    - Phase 5 の CLI 起動に `--restore-state "$WORK_DIR/restore.json"` を追加する
+   - remote モードでは再起動後の **新しい REMOTE URL** (Quick Tunnel は使い捨てなので毎回変わる) を
+     会話に再投稿する
 7. Skill ツールが使えない環境では `AskUserQuestion` で「context を広げた summary.json で再 review するには
    もう一度 /show-me:diff を手動実行してください (restore.json が work-dir に残っているので decision と
    コメントは維持されます)」と告げる。
@@ -769,6 +823,8 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
      --changed-files "$WORK_DIR/apply-changed-files.txt"
    ```
 6. **`Skill('show-me:diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
+   **元の起動が remote だった場合は args の `remote` を必ず維持し、再起動後の新しい REMOTE URL を
+   会話に再投稿する** (regen-group の手順 6 と同じ)。
    - Activity タブの Conversation セクションに agent 返信が反映される
    - group スレッドは Guide タブの該当 group の decision section (textarea の上) にも会話履歴が表示される
    - outdated になったスレッドは Activity タブで折りたたみ表示される

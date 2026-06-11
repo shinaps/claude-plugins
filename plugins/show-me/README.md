@@ -18,8 +18,19 @@ Node 20+ が必要です (同梱 CLI が node20 ターゲット)。CLI は bundl
 |---|---|---|
 | `/show-me:diff` | staged | `git diff --cached` をレビュー対象にする |
 | `/show-me:diff 123` | pr | PR #123 の diff をレビュー対象にする |
+| `/show-me:diff remote` | staged + remote | 公開 URL を発行して外出先のスマホからレビューする |
+| `/show-me:diff remote 123` | pr + remote | PR レビューを公開 URL で開く |
 
 ブラウザに UI が開き、group 単位の Approve / Request Changes、group / ファイル / 行単位のコメント、スレッド返信 (Claude が返信して再起動する comment-reply ループ)、context+ (表示範囲の拡張要求) が使えます。
+
+## リモートモード (スマホレビュー)
+
+`remote` を付けると CLI が [cloudflared](https://github.com/cloudflare/cloudflared) の Quick Tunnel を立て、`https://xxx.trycloudflare.com` の使い捨て URL を発行します。Claude Code をリモートコントロールで実行しているとき、会話に投稿された URL をスマホでタップしてレビューできます。
+
+- **必要なもの**: `brew install cloudflared` (未インストールならローカルモードに自動フォールバック)
+- **モバイル UI**: 768px 以下では split の代わりに unified (単一カラム) 表示になり、group 単位の Approve / Request Changes + コメント入力に最適化されます。行コメントの新規作成とエディタリンクはデスクトップ前提のままです
+- **セキュリティ**: bind は 127.0.0.1 のまま (tunnel が proxy)、認証は推測不能な 32 byte token + ランダムサブドメイン。TLS は Cloudflare が終端します。**URL には token が含まれるため、Claude の会話以外 (メッセンジャー等) へ転送しないでください** — link preview bot が diff 全文を取得し得ます
+- **URL は使い捨て**: context+ やスレッド返信で UI が再起動するたびに新しい URL が会話に投稿されます
 
 ## 生成物
 
