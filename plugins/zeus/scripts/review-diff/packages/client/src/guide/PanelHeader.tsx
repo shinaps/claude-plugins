@@ -8,9 +8,10 @@
 //       - collapsed 状態では onExpand + totalRowsHint → "Show N rows" ボタン
 //     どちらの状態でも panel タイトル + ファイル名は維持され、行数は Show diff ボタンに集約。
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronUp, ChevronDown, MessageSquare } from 'lucide-react'
 import type { RenderedPanel, ThreadSnapshot } from '@zeus/review-diff-shared'
+import { readDraft, writeDraft, removeDraft } from '../lib/drafts'
 
 // ファイル単位コメントの handler 束。App が threads state と addFileComment を束ねて
 // PanelBlock → Panel → PanelHeader へ 1 prop で drill する。
@@ -37,15 +38,32 @@ export function PanelHeader({ panel, onCollapse, onExpand, totalRowsHint, fileCo
   const commentFile = toBeFile ?? asIsFile
   const fileThread = commentFile ? fileComments?.getThread(commentFile) ?? null : null
   const messageCount = fileThread?.messages.length ?? 0
-  // 会話が既にあるならフォームを初期表示で開く (comment-reply 復帰時に返信へ気付けるように)
-  const [formOpen, setFormOpen] = useState(() => messageCount > 0)
-  const [draft, setDraft] = useState('')
+  // draft は sessionStorage に `draft:file-comment:<file>` で永続化する。
+  //   - PanelBlock の collapsed/expanded トグルで PanelHeader はツリー位置が変わって remount され
+  //     (collapsed 時は PanelBlock 直下、expanded 時は Panel 内部)、component state だけでは
+  //     書きかけが消えるため。
+  //   - `draft:` prefix なので App の collectAllDrafts() が無変更で回収し、regen / comment-reply の
+  //     close-relaunch 後に復元が一周する (ThreadReplyForm と同じ契約)。
+  //   - key 第 2 セグメント "file-comment" は行コメント (panelId) / activity-reply と排他で衝突しない。
+  //   - 同一ファイルの PanelHeader は Guide / Diff 両タブに同時 mount され同じ key に書くが、
+  //     draft は file scope thread と同じ per-file 契約とし、インスタンス間のライブ同期はしない (後勝ち)。
+  const draftKey = commentFile ? `draft:file-comment:${commentFile}` : null
+  const [draft, setDraft] = useState(() => (draftKey ? readDraft(draftKey) : ''))
+  useEffect(() => {
+    if (!draftKey) return
+    if (draft === '') removeDraft(draftKey)
+    else writeDraft(draftKey, draft)
+  }, [draft, draftKey])
+  // 会話が既にある、または書きかけ draft があるならフォームを初期表示で開く
+  // (comment-reply 復帰時に返信へ気付け、復元した draft が不可視のまま埋もれない)
+  const [formOpen, setFormOpen] = useState(() => messageCount > 0 || (draftKey ? readDraft(draftKey) !== '' : false))
 
   function submitDraft() {
     const body = draft.trim()
     if (!body || !commentFile || !fileComments) return
     fileComments.onAdd(commentFile, body)
     setDraft('')
+    if (draftKey) removeDraft(draftKey)
   }
 
   return (

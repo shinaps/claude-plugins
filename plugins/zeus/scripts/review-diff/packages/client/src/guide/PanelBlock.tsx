@@ -10,7 +10,7 @@
 // panel ごとの Reviewed チェックは廃止 (group 単位 Approve/Request Changes に統合)。
 // Guide / Diff 両タブで同一の lazy highlight 戦略を使う。
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { RenderedPanel } from '@zeus/review-diff-shared'
 import { Panel } from './Panel'
@@ -33,7 +33,11 @@ export type PanelBlockProps = {
 const ROW_HEIGHT_PX = 22
 const PANEL_HEADER_PX = 56
 
-export function PanelBlock(props: PanelBlockProps) {
+// memo 境界: App の state 変化 (group コメント入力等) で親 GroupSection / DiffTab が再 render
+// されても、panel / fileComments / line handlers が同一参照なら配下の Panel ツリー (数千行の
+// SideRow 群) の reconciliation を丸ごと skip する。threads 変化時は fileComments の参照が
+// 変わるのでここも破れて CommentRow の表示更新が届く (Panel.tsx の commentKeysByAnchor 参照)。
+export const PanelBlock = memo(function PanelBlock(props: PanelBlockProps) {
   const { panel, highlight, defaultCollapsed, fileComments, ...handlers } = props
 
   // segments の row 数合計から panel 高さを推定。これを contain-intrinsic-size に流すことで、
@@ -107,6 +111,11 @@ export function PanelBlock(props: PanelBlockProps) {
   const lazyVisible = useLazyHighlight(blockRef)
   const effectiveHighlight = highlight !== false && lazyVisible
 
+  // inline arrow で渡すと毎 render 新参照になり Panel の memo が破れるため useCallback で固定する
+  // (setOverrideWithTransition 自体は deps なしで安定)。
+  const onExpand = useCallback(() => setOverrideWithTransition('expand'), [setOverrideWithTransition])
+  const onCollapse = useCallback(() => setOverrideWithTransition('collapse'), [setOverrideWithTransition])
+
   if (isCollapsed) {
     // collapsed 状態でも PanelHeader (intent + ファイル名) を維持。
     // 右端の Show diff ボタンに「N rows」を併記し、UX 上「ここに何行ある panel か」が一目で分かる。
@@ -123,7 +132,7 @@ export function PanelBlock(props: PanelBlockProps) {
       >
         <PanelHeader
           panel={panel}
-          onExpand={() => setOverrideWithTransition('expand')}
+          onExpand={onExpand}
           totalRowsHint={totalRows}
           fileComments={fileComments}
         />
@@ -141,14 +150,14 @@ export function PanelBlock(props: PanelBlockProps) {
       <Panel
         panel={panel}
         highlight={effectiveHighlight}
-        onCollapse={() => setOverrideWithTransition('collapse')}
+        onCollapse={onCollapse}
         fileComments={fileComments}
         {...handlers}
       />
     </div>
   )
-}
+})
 
-// 閾値は App.tsx 側 (DIFF_TAB_COLLAPSE_ROW_THRESHOLD) で管理するように移動済み。
-// Guide タブは decision-based + ファイル名 pattern、Diff タブは row 数 + ファイル名 pattern で
-// それぞれ判定する。PanelBlock は defaultCollapsed: boolean を受けるだけのシンプルな contract。
+// 初期 collapsed の閾値判定は呼び出し元の責務: Guide タブ (GroupSection) は decision-based +
+// ファイル名 pattern、Diff タブ (DiffTab の DIFF_TAB_COLLAPSE_ROW_THRESHOLD) は row 数 +
+// ファイル名 pattern。PanelBlock は defaultCollapsed: boolean を受けるだけのシンプルな contract。

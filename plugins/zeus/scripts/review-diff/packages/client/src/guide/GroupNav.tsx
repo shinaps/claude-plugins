@@ -20,10 +20,11 @@
 //   見えている panel を active 表示する。
 
 import { useEffect, useState } from 'react'
-import { Plus, Loader2, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
+import { Plus, LoaderCircle, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
 import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { renderMarkdown } from '../lib/markdown'
 import { basename } from '../lib/path'
+import { cssEscape } from '../lib/css-escape'
 
 type Props = {
   index: number
@@ -47,7 +48,7 @@ type Props = {
   onCommentChange: (groupId: string, body: string) => void
   // group コメントをこの group のスレッドに「積む」(GitHub の pending review コメントと同じ感覚)。
   // 即時送信はせずレビューを継続でき、Claude への送信は SubmitBar の Comment / Submit に同乗する。
-  onSubmitComment: () => void
+  onSubmitComment: (groupId: string) => void
   // regen 中など、Approve/RC ボタンも操作不可にしたい時 true
   submitDisabled: boolean
   // グループ間ナビゲーション。eyebrow の数字横に prev/next 矢印を出して
@@ -179,7 +180,7 @@ export function GroupNav({
         {!ctxExpanded ? (
           <div className="flex justify-start">
             {/* btn-context BEM 維持: .is-pending state による accent 色化が globals.css にあるため。
-                base 見た目は utility。spinner は lucide Loader2 + animate-spin。 */}
+                base 見た目は utility。spinner は lucide LoaderCircle + animate-spin。 */}
             <button
               type="button"
               className={`btn-context inline-flex items-center gap-2 px-3 py-[7px] text-xs font-medium font-sans tracking-[-0.005em] text-text bg-surface-2 border border-border-soft rounded-md cursor-pointer shadow-[0_1px_0_rgba(0,0,0,0.2)] transition-[background,border,color,transform] duration-[120ms] enabled:hover:bg-surface-3 enabled:hover:border-border enabled:hover:text-text enabled:active:translate-y-[0.5px] focus-visible:outline-none focus-visible:border-accent focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-[0.45] disabled:cursor-not-allowed disabled:bg-transparent${regenPending ? ' is-pending' : ''}`}
@@ -319,7 +320,7 @@ export function GroupNav({
             type="button"
             className="btn-decision flex-1 px-2.5 py-1.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={!decisionInteractive || comment.trim() === ''}
-            onClick={onSubmitComment}
+            onClick={() => onSubmitComment(groupId)}
             aria-label="Comment"
             title="コメントをこの group のスレッドに追加 (Claude への送信は右下の Comment / Submit でまとめて)"
           >
@@ -413,35 +414,31 @@ function useScrollSpy(panels: RenderedPanel[]): string | null {
     if (panels.length === 0) return
     const visibility = new Map<string, boolean>()
     const ids = panels.map((p) => p.panelId)
-    const observers: IntersectionObserver[] = []
     const recompute = () => {
       const first = ids.find((id) => visibility.get(id))
       setActiveId(first ?? null)
     }
+    // 単一 IO + 複数 observe: panel ごとに IO を作ると observer インスタンスが panel 数ぶん増える
+    // だけで、閾値設定は全 panel 共通なので 1 つで足りる。
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.panelId
+          if (id) visibility.set(id, entry.isIntersecting)
+        }
+        recompute()
+      },
+      { rootMargin: '-30% 0px -50% 0px', threshold: 0 },
+    )
     for (const id of ids) {
-      const el = document.querySelector(`.panel-block[data-panel-id="${cssEscape(id)}"]`)
-      if (!el) continue
-      const io = new IntersectionObserver(
-        ([entry]) => {
-          if (!entry) return
-          visibility.set(id, entry.isIntersecting)
-          recompute()
-        },
-        { rootMargin: '-30% 0px -50% 0px', threshold: 0 },
-      )
-      io.observe(el)
-      observers.push(io)
+      // .guide-tab スコープ必須: Diff タブにも同一 panelId の .panel-block が存在するため
+      // (App の jumpToRawPanel が .raw-diff-tab でスコープしているのと対称)。
+      const el = document.querySelector(`.guide-tab .panel-block[data-panel-id="${cssEscape(id)}"]`)
+      if (el) io.observe(el)
     }
-    return () => {
-      observers.forEach((io) => io.disconnect())
-    }
+    return () => io.disconnect()
   }, [panels])
   return activeId
-}
-
-function cssEscape(s: string): string {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s)
-  return s.replace(/[^A-Za-z0-9_-]/g, '\\$&')
 }
 
 
@@ -454,7 +451,7 @@ function PlusIcon() {
 }
 
 function SpinnerIcon() {
-  return <Loader2 size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
+  return <LoaderCircle size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
 }
 
 function ChevronUpIcon() {

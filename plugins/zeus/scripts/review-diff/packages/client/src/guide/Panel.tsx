@@ -25,7 +25,8 @@ import { Plus, SquareArrowOutUpRight } from 'lucide-react'
 import type { RenderedPanel, SideBySideRow, Side, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { sideToAttr, attrToSide } from '@zeus/review-diff-shared'
 import { parseLineCommentKey, lineCommentKey, getToken } from '../lib/state'
-import { createShiki } from '../lib/shiki-bundle'
+import { getShiki } from '../lib/shiki-bundle'
+import { escapeHtml } from '../lib/markdown'
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { CommentForm } from './CommentForm'
 import type { LineCommentHandlers } from './useLineComments'
@@ -104,8 +105,6 @@ export function buildCommentKeysByAnchor(
   return map
 }
 
-const SHIKI = createShiki()
-
 type FlatRow = {
   row: SideBySideRow
   segmentIndex: number
@@ -143,18 +142,12 @@ function flattenWithChunks(panel: RenderedPanel): FlatRow[] {
 
 function highlightCode(raw: string, lang: string): string {
   try {
-    const html = SHIKI.codeToHtml(raw, { lang, theme: 'github-dark' })
+    const html = getShiki().codeToHtml(raw, { lang, theme: 'github-dark' })
     const m = html.match(/<code[^>]*>([\s\S]*?)<\/code>/)
     return (m ? m[1] : escapeHtml(raw)).replace(/\n$/, '')
   } catch {
     return escapeHtml(raw)
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  )
 }
 
 type DragState = {
@@ -595,7 +588,8 @@ export const Panel = memo(function Panel({
   // initialThreads の時点で確定しており、セッション中の返信は既存 anchor への append なので
   // Map の再計算は不要。返信本文の表示更新は「App の fileComments useMemo (deps: threads) の
   // 参照変化が Panel の memo を破る → render 時に最新の window mirror を読む」連鎖で届く
-  // (App.tsx の mirror コメント参照)。
+  // (App.tsx の mirror コメント参照)。途中の PanelBlock の memo も同じく fileComments prop の
+  // 参照変化で破れるため、この連鎖は memo 境界を貫通して届く。
   const commentKeysByAnchor = useMemo(
     () => buildCommentKeysByAnchor(
       panel.panelId,

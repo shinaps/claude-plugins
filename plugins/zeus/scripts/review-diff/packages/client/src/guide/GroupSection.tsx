@@ -25,7 +25,7 @@ type Props = {
   onJumpToPanel: (panelId: string) => void
   onNavResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   regenPending: boolean
-  onRequestContext: (groupId: string) => void
+  onRequestContext: (groupId: string, note?: string) => void
   // group decision + comment
   decision: GroupDecision | null
   comment: string
@@ -33,8 +33,10 @@ type Props = {
   thread: ThreadSnapshot | null
   onDecisionChange: (groupId: string, next: GroupDecision | null) => void
   onCommentChange: (groupId: string, body: string) => void
-  // group コメントをスレッドに積む (GroupNav の Comment ボタン → App.addGroupComment へ pass-through)
-  onSubmitComment: () => void
+  // group コメントをスレッドに積む (GroupNav の Comment ボタン → App.addGroupComment へ pass-through)。
+  // groupId 引数渡しなのは、App 側が group ごとに closure を作らず単一の安定参照を全 GroupSection に
+  // 配れるようにするため (inline arrow だと毎 render 新参照になり memo が全壊する)。
+  onSubmitComment: (groupId: string) => void
   // ファイル単位コメント (PanelBlock → PanelHeader へ pass-through)
   fileComments?: FileCommentHandlers
   submitDisabled: boolean
