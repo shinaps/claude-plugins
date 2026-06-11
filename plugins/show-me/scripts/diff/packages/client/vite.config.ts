@@ -43,7 +43,7 @@ export default defineConfig(({ command }) => ({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.tsx'),
-      name: 'ZeusReviewDiff',
+      name: 'ShowMeDiff',
       formats: ['iife'],
       fileName: () => 'index.js',
     },

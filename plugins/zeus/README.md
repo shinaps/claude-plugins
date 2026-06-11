@@ -3,7 +3,7 @@
 公式 `feature-dev` の **上位互換** となる Claude Code プラグイン。
 要件定義 + フィジビリティ調査 + 技術選定 → 計画策定 + 実装 + セルフレビュー → デバッグ → 継続リファクタまでを `spec.md` / `plan.md` を介して連携する 5 スキル構成。
 
-> 人間ゲートの最終承認 UI (旧 `/zeus:review-diff`) は **show-me プラグインの `/show-me:diff` に分離** されました。`/plugin install show-me@shinaps` で導入できます。
+> コミット前の人間ゲート (最終承認 UI) には **show-me プラグインの `/show-me:diff`** を併用できます (`/plugin install show-me@shinaps`)。
 
 **設計の核**:
 - **EnterPlanMode は一切使わない** — `bypassPermissions` モード（リモート実行など）でも全フェーズが走り切る

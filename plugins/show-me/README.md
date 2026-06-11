@@ -39,14 +39,6 @@ Node 20+ が必要です (同梱 CLI が node20 ターゲット)。CLI は bundl
 
 config を作らない場合は初回起動時に誘導が出ます。`.claude/show-me/diff.no-config` を置くと誘導を永続的にスキップします。
 
-## zeus プラグインからの移行
-
-旧 `/zeus:review-diff` (zeus v5.x) はこのプラグインに分離されました。config を使っていた場合は次の 1 コマンドで移行できます:
-
-```bash
-mv .claude/zeus/review-diff.config.json .claude/show-me/diff.config.json
-```
-
 ## CLI 開発 (dogfooding)
 
 claude-plugins リポジトリ内では、ローカルでビルドした `scripts/diff/dist/cli.js` が marketplace キャッシュより優先されます:

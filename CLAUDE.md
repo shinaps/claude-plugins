@@ -131,7 +131,7 @@ fi
 ## 既存プラグイン
 
 - `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / dev / review / debug / refactor-loop の 5 スキル構成
-- `plugins/show-me/` — 人間ゲートの最終承認プラグイン（旧 `/zeus:review-diff` を分離）。`diff` の 1 スキル構成で、Node CLI（React + Hono + Shiki）を `scripts/diff/` に同梱
+- `plugins/show-me/` — 人間ゲートの最終承認プラグイン。`diff` の 1 スキル構成で、Node CLI（React + Hono + Shiki）を `scripts/diff/` に同梱
 
 ## 関連リンク
 
