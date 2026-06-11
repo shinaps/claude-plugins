@@ -26,21 +26,16 @@ import type {
 import { threadKey } from '@zeus/review-diff-shared'
 import { TabBar } from './chrome/TabBar'
 import { GroupSection } from './guide/GroupSection'
-import { PanelBlock } from './guide/PanelBlock'
 import { SubmitBar } from './chrome/SubmitBar'
 import { useChunkKeyNav } from './chrome/useChunkKeyNav'
 import { ActivityView } from './activity/ActivityView'
-import { shouldAutoCollapseFile } from './guide/auto-collapse'
+import { DiffTab } from './diff/DiffTab'
 import { renderMarkdown, escapeHtml } from './lib/markdown'
-import { basename } from './lib/path'
+import { cssEscape } from './lib/css-escape'
 import { getToken } from './lib/state'
 import { appendUserMessage, mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from './lib/merge-threads'
 import { useLineComments } from './guide/useLineComments'
 import { useNavResizer } from './guide/useNavResizer'
-
-// Diff タブで初期 collapsed にする行数の閾値。Guide タブと違って 1 panel = 1 file 全体なので
-// 「ちょっとした変更でもファイル全部表示」になりがち。閾値を低めに振って俯瞰時の応答性を確保。
-const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
 
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
@@ -112,16 +107,29 @@ export function App({ payload }: Props) {
   // Panel の memo を破る」連鎖があるため。fileComments の deps から threads を外すとこの同期が壊れる。
   if (typeof window !== 'undefined') window.__reviewDiffThreads = threads
 
+  // 低頻度 callback (addGroupComment / onRequestContext) が「発火時点の最新 state」を deps なしで
+  // 読むための render 時同期ミラー。state を useCallback の deps に入れると group コメントの
+  // 1 キーストロークごとに callback が再生成され、それを prop に受ける全 GroupSection の memo が
+  // 破れて全 panel 再 render になるため、callback 本体は ref 経由で読む。
+  // 冪等代入なので StrictMode の二重 render / useTransition の中断 render でも安全
+  // (上の __reviewDiffThreads mirror と同じ論法)。
+  const groupCommentsRef = useRef(groupComments)
+  groupCommentsRef.current = groupComments
+  const groupDecisionsRef = useRef(groupDecisions)
+  groupDecisionsRef.current = groupDecisions
+  const threadsRef = useRef(threads)
+  threadsRef.current = threads
+
   // group コメントを pending としてスレッドに積み、textarea をクリアする。
   // textarea クリアは「同じ本文が submit 時の textarea 残量 thread 合成でもう一度積まれて
   // 二重になる」のを防ぐ意図。
   const addGroupComment = useCallback((groupId: string) => {
-    const body = (groupComments[groupId] ?? '').trim()
+    const body = (groupCommentsRef.current[groupId] ?? '').trim()
     if (!body) return
     const scope = { type: 'group' as const, groupId }
     setThreads(prev => appendUserMessage(prev, threadKey(scope), scope, [body]))
     setGroupComments(prev => ({ ...prev, [groupId]: '' }))
-  }, [groupComments])
+  }, [])
 
   // ファイル単位コメント (panel header の MessageSquare ボタン)。group と同じ pending 方式で
   // file scope thread に積む。draft は PanelHeader ローカル state なのでここでは append のみ。
@@ -152,6 +160,10 @@ export function App({ payload }: Props) {
   }), [threads, addFileComment])
 
   const lineCommentHandlers = useLineComments()
+  // lineComments のミラー (上の groupCommentsRef 群と同じ目的)。useLineComments() の戻りを
+  // 参照するため宣言位置だけここに分離している。
+  const lineCommentsRef = useRef(lineCommentHandlers.lineComments)
+  lineCommentsRef.current = lineCommentHandlers.lineComments
   // 初期タブは Activity (AI Review Report をまず俯瞰してから Guide で詳細を進める動線)
   const [tab, setTab] = useState<Tab>('activity')
   // SubmitBar (sidebar variant) の開閉。サイドバーはコンテンツに覆い被さるのではなく
@@ -253,6 +265,11 @@ export function App({ payload }: Props) {
   }, [])
   // 連打防止 + ボタン disable 用フラグ
   const [regenPending, setRegenPending] = useState(false)
+  // 二重 POST /result ガード。submitted は postResult の fetch 解決後にしか立たないため、
+  // in-flight 中の再クリック / auto-submit effect の再発火を同期的に止める ref (即時判定) と、
+  // SubmitBar のボタン disable 用 state (UI 反映) の二段構え。regenPending と同じ役割分担。
+  const submittingRef = useRef(false)
+  const [submitInFlight, setSubmitInFlight] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const tokenRef = useRef<string>(getToken())
@@ -274,11 +291,22 @@ export function App({ payload }: Props) {
 
   useEffect(() => {
     if (!scrollTarget) return
+    // tab ガード: guide pane は prewarm により .tab-hidden (content-visibility: hidden) のまま
+    // DOM に存在しうる。el の有無だけで消化判定すると、Activity からのジャンプで tab 遷移
+    // (transition) が完了する前に隠れた pane へスクロールしてターゲットを失うため、
+    // guide が前面の時だけ消化し、それまで scrollTarget を保持する。
+    if (tab !== 'guide') return
     const sel = `.panel-block[data-panel-id="${cssEscape(scrollTarget)}"]`
     const el = containerRef.current?.querySelector(sel) as HTMLElement | null
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // 未 mount (prewarm 前) なら保持: visitedTabs 変化の再実行で mount 後に消化される
+    if (!el) return
+    // rAF で 1 フレーム待つ: タブ切替時のスクロール位置復元 effect (定義順で先) も rAF で
+    // instant scrollTo するため、rAF の登録順実行保証により「復元 → smooth ジャンプ」の順になる。
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
     setScrollTarget(null)
-  }, [scrollTarget])
+  }, [scrollTarget, tab, visitedTabs])
 
   const onDecisionChange = useCallback((id: string, next: GroupDecision | null) => {
     // ユーザー操作で decision が変わった瞬間に auto-submit を arm する。
@@ -315,9 +343,18 @@ export function App({ payload }: Props) {
     })
   }, [])
 
-  function jumpToPanel(panelId: string) {
+  // useCallback 必須: 全 GroupSection に prop で渡るため、plain function だと App の毎 render で
+  // 新参照になり GroupSection の memo が全壊する (onSubmitComment / onRequestContext と同じ制約)。
+  const jumpToPanel = useCallback((panelId: string) => {
     setScrollTarget(panelId)
-  }
+  }, [])
+
+  // Activity → Guide の group ジャンプ。タブ切替は onTabChange (startTransition 済み) に乗せ、
+  // scroll は上の scrollTarget 保持 effect が guide 前面化後に消化する。
+  const onJumpToGroup = useCallback((_groupId: string, firstPanelId?: string) => {
+    onTabChange('guide')
+    if (firstPanelId) jumpToPanel(firstPanelId)
+  }, [onTabChange, jumpToPanel])
 
   // グループ間ナビゲーション: 左 nav の prev/next 矢印から呼ばれる。
   // index ベースで scrollIntoView を呼ぶ。groupsState の長さでクランプ済み前提だが防御的に。
@@ -361,11 +398,14 @@ export function App({ payload }: Props) {
     failure: { message: string; cleanup?: () => void },
   ) {
     try {
-      await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
+      const res = await fetch(`/result?token=${encodeURIComponent(tokenRef.current)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+      // fetch は 4xx/5xx で reject しないため明示検査する。ここを通すと token 不一致や
+      // server エラーでも「送信成功」表示でタブが閉じ、decision / コメントが回収不能になる。
+      if (!res.ok) throw new Error(`/result ${res.status}`)
       setSubmitted(submittedKind)
       setTimeout(() => {
         try { window.close() } catch { /* noop */ }
@@ -384,7 +424,11 @@ export function App({ payload }: Props) {
   // (SKILL.md の commit メッセージ生成が submitNote を読む後方互換)。
   // reviewKind が 'comment' のときは decision='comment-reply' に切り替え、Claude が thread に返信する経路に乗る。
   async function submit(opts?: { fillMode?: 'approved' | 'request-changes'; note?: string; reviewKind?: ReviewKind }) {
-    if (submitted) return
+    if (submitted || submittingRef.current) return
+    // fetch 解決前の再入 (Submit 連打 / auto-submit effect の再発火) を同期的に遮断する。
+    // 解除は postResult の失敗 cleanup のみ (成功時はタブごと閉じるので解除不要)。
+    submittingRef.current = true
+    setSubmitInFlight(true)
     const note = opts?.note?.trim() || undefined
     const reviewKind: ReviewKind = opts?.reviewKind ?? 'approve'
     const decisionsToSend = buildDecisions(groupsState, groupDecisions, opts?.fillMode)
@@ -412,7 +456,14 @@ export function App({ payload }: Props) {
       // するため余分でも無害。
       lineCommentDrafts: collectAllDrafts(),
     }
-    await postResult(body, reviewKind === 'comment' ? 'comment' : 'submit', { message: 'Failed to submit.' })
+    await postResult(body, reviewKind === 'comment' ? 'comment' : 'submit', {
+      message: 'Failed to submit.',
+      // 失敗時は Submit ボタンを復活させて再試行可能にする
+      cleanup: () => {
+        submittingRef.current = false
+        setSubmitInFlight(false)
+      },
+    })
   }
 
   // context+: 現状 state (group decisions + コメント + line comment drafts) を回収し、
@@ -422,10 +473,11 @@ export function App({ payload }: Props) {
   // note: 「どの context を追加してほしいか」の自由文。SKILL.md 側で AI への指示として活用。
   const onRequestContext = useCallback(
     async (groupId: string, note?: string) => {
-      if (regenPending || submitted) return
+      if (regenPending || submitted || submittingRef.current) return
       const g = groupsState.find(x => x.groupId === groupId)
       if (!g) return
       setRegenPending(true)
+      submittingRef.current = true
       const currentRanges: Array<{
         panelId: string
         asIs?: { file: string; ranges: DisplayRange[] }
@@ -436,30 +488,36 @@ export function App({ payload }: Props) {
         toBe: p.toBe ? { file: p.toBe.file, ranges: p.toBe.ranges } : undefined,
       }))
       const trimmedNote = note?.trim() || undefined
+      const groupCommentsNow = groupCommentsRef.current
       const body: ResultJson = {
         decision: 'regen-group',
         // regen-group は review 全体の決定ではないので reviewKind は 'comment' (= 未確定) で埋める
         reviewKind: 'comment',
-        groupDecisions: buildDecisions(groupsState, groupDecisions),
+        groupDecisions: buildDecisions(groupsState, groupDecisionsRef.current),
         // 保存済み行コメントは thread に合成して送る (restore 後は thread として読み取り専用表示)。
         // group textarea の書き残しは thread 化せず groupComments で送る — regen は「送信」では
         // なく「中断・復元」なので、draft のまま textarea に戻すのが正しい。
-        threads: mergeLineCommentsIntoThreads(threads, lineCommentHandlers.lineComments, panelFileMap),
-        ...(Object.keys(groupComments).length > 0 ? { groupComments } : {}),
+        threads: mergeLineCommentsIntoThreads(threadsRef.current, lineCommentsRef.current, panelFileMap),
+        ...(Object.keys(groupCommentsNow).length > 0 ? { groupComments: groupCommentsNow } : {}),
         regenGroup: { groupId, currentRanges, ...(trimmedNote ? { note: trimmedNote } : {}) },
         lineCommentDrafts: collectAllDrafts(),
       }
       await postResult(body, 'regen', {
         message: 'Failed to request context expansion.',
         // 失敗時は context+ ボタンを復活させて再試行可能にする (成功時はタブごと閉じるので解除不要)
-        cleanup: () => setRegenPending(false),
+        cleanup: () => {
+          setRegenPending(false)
+          submittingRef.current = false
+        },
       })
     },
-    // deps 注: collectAllDrafts / postResult は毎 render 再生成される plain function なので意図的に
-    // 除外する (入れると memo 化が無意味になる)。collectAllDrafts は sessionStorage しか読まず、
-    // postResult は tokenRef (ref) と stable setter のみ捕捉するため、除外しても stale にならない。
-    // mergeLineCommentsIntoThreads はモジュールレベル純関数なので deps 不要。
-    [groupsState, groupDecisions, threads, regenPending, submitted, groupComments, lineCommentHandlers.lineComments, panelFileMap],
+    // deps 注: groupComments / groupDecisions / threads / lineComments は ref ミラー経由で読むため
+    // deps に入れない。state を deps に入れるとキーストロークごとに本 callback が再生成され、
+    // これを prop に受ける全 GroupSection の memo が全壊する (ref は render 時同期代入 + 発火は
+    // 常に render 後のイベントなので stale にならない)。collectAllDrafts / postResult は毎 render
+    // 再生成される plain function だが、sessionStorage / ref / stable setter しか捕捉しないため
+    // 意図的に除外。mergeLineCommentsIntoThreads はモジュールレベル純関数なので deps 不要。
+    [groupsState, regenPending, submitted, panelFileMap],
   )
 
   const onNavResizerPointerDown = useNavResizer(containerRef)
@@ -477,7 +535,9 @@ export function App({ payload }: Props) {
   // 全 group decision が確定した瞬間に submit を自動発火する。
   // reviewKind は groupDecisions の分布から判定 (全 approved → 'approve'、それ以外 → 'request-changes')。
   // 「Comment」だけは明示的にボタンで送る運用 (= 自動 submit には乗らない、note 付きで残せる)。
-  // submit 内で submitted === null ガードがあるので二重発火しない。
+  // 二重発火防止は submit 内の submitted ガード + submittingRef の同期ガードの二段:
+  // submitted は fetch 解決後にしか立たないため、fetch in-flight 中に decision がトグルされて
+  // この effect が再実行されるウィンドウは submittingRef が塞ぐ。
   // restore (= regen-group/comment-reply 復帰) で initial がすでに全埋まりだった場合に意図せず即 submit が
   // 走らないよう、autoSubmitArmedRef でユーザーの操作 (= setDecision を経由した遷移) が一度でも起きるまでは
   // 発火しない仕掛けにする。
@@ -487,7 +547,7 @@ export function App({ payload }: Props) {
   useEffect(() => {
     if (!autoSubmitArmedRef.current) return
     if (!allDecided) return
-    if (submitted || regenPending) return
+    if (submitted || regenPending || submittingRef.current) return
     // 全 approved なら approve、1 つでも RC があれば request-changes 扱い (linear-stack 側で先頭から
     // approved を commit、最初の RC で break する既存ロジックがそのまま走る)
     const reviewKind: ReviewKind = rcCount === 0 ? 'approve' : 'request-changes'
@@ -532,7 +592,7 @@ export function App({ payload }: Props) {
       : 'Diff Review'
 
   // Activity タブ: Editorial Dashboard 風の俯瞰画面。
-  // diff 規模 (Files/Additions/Deletions/Progress) + 言語/レイヤ別 proportional bar + group index で
+  // Hero (diff 規模 + reviewed %) + Pre-flight checks + Overview + group index + Conversation で
   // 「これから何をレビューするか」を 3 秒で把握できるよう設計。JSX 本体は ActivityView に切り出し済み。
   const activityContent = (
     <ActivityView
@@ -544,10 +604,7 @@ export function App({ payload }: Props) {
       groupDecisions={groupDecisions}
       approvedCount={approvedCount}
       rcCount={rcCount}
-      onJumpToGroup={(_groupId, firstPanelId) => {
-        setTab('guide')
-        if (firstPanelId) jumpToPanel(firstPanelId)
-      }}
+      onJumpToGroup={onJumpToGroup}
       scriptResults={payload.scriptResults}
       threads={threads}
       onReplyToThread={addThreadReply}
@@ -556,8 +613,10 @@ export function App({ payload }: Props) {
 
   // Guide タブ: stacked-group レビュー本体 (panel + decision)
   // pb-[200px] は SubmitBar (fixed bottom-6) の上にスクロール余白を確保する意図
+  // guide-tab class は GroupNav の useScrollSpy の querySelector スコープ (Diff タブに同 panelId の
+  // .panel-block が存在するため、Guide pane 配下だけを観測対象にする目印)。
   const guideContent = (
-    <div className="m-0 w-full px-6 pb-[200px] flex-1" ref={containerRef}>
+    <div className="guide-tab m-0 w-full px-6 pb-[200px] flex-1" ref={containerRef}>
       {groupsState.map((g, i) => (
         <GroupSection
           key={g.groupId}
@@ -574,7 +633,7 @@ export function App({ payload }: Props) {
           decision={groupDecisions[g.groupId] ?? null}
           comment={groupComments[g.groupId] ?? ''}
           thread={threads[threadKey({ type: 'group', groupId: g.groupId })] ?? null}
-          onSubmitComment={() => addGroupComment(g.groupId)}
+          onSubmitComment={addGroupComment}
           fileComments={fileComments}
           onDecisionChange={onDecisionChange}
           onCommentChange={onCommentChange}
@@ -586,74 +645,16 @@ export function App({ payload }: Props) {
     </div>
   )
 
-  // Diff タブ: GitHub 風の「ファイル単位 split-side-by-side 差分」を縦積みで表示。
-  // Guide タブの AI グルーピングを介さず、git diff の出力ファイル順にすべて並べる。
-  // PanelBlock は Guide タブと完全同一実装 (lazyHighlight + intrinsic-size + sticky header)。
-  //
-  // 左 sticky nav にファイル一覧 (intent + +N/-M 差分カウント) を配置。
-  // GitHub PR の Files Changed タブと同じ感覚で「全ファイル俯瞰 + クリックで該当ファイルへジャンプ」できる。
-  // 差分カウントは payload.rawPanels の segments を walk して addition/deletion 行数を集計。
+  // Diff タブ: JSX 本体は DiffTab (memo 境界) に切り出し済み。
+  // props はすべて安定参照 (payload 由来 / useCallback / useMemo) なので、App の state 変化では
+  // 再 render されない。
   const diffContent = (
-    // raw-diff-tab BEM 維持 (jumpToRawPanel の querySelector で参照される) + 内側 scope に
-    // `--nav-width: 280px` を設定。grid-template-columns は var(--nav-width) を参照し、内側
-    // .comment-row も同じ var を calc で使うため、280 を 1 箇所だけ書く形にして将来の変更漏れを防ぐ。
-    <div className="raw-diff-tab grid gap-6 px-6 pt-4 pb-20 grid-cols-[var(--nav-width)_minmax(0,1fr)] [--nav-width:280px]">
-      {/* raw-diff-nav BEM 維持: ::-webkit-scrollbar 非表示 rule を globals.css でスコープしているため */}
-      <aside
-        className="raw-diff-nav sticky top-14 self-start max-h-[calc(100vh-80px)] overflow-y-auto pr-1 flex flex-col gap-0.5 [scrollbar-width:none] [-ms-overflow-style:none]"
-        aria-label="Changed files"
-      >
-        {payload.rawPanels.map((p) => {
-          let add = 0
-          let del = 0
-          for (const seg of p.segments) {
-            for (const row of seg.rows) {
-              if (row.toBe.type === 'addition') add++
-              if (row.asIs.type === 'deletion') del++
-            }
-          }
-          return (
-            <button
-              key={p.panelId}
-              type="button"
-              className="grid grid-cols-[1fr_auto] grid-rows-[auto_auto] gap-x-2 px-2.5 py-1.5 bg-transparent border-0 rounded-md text-left text-text font-sans cursor-pointer transition-colors duration-100 hover:bg-surface-2"
-              onClick={() => jumpToRawPanel(p.panelId)}
-              title={p.intent}
-            >
-              <span className="col-start-1 row-start-1 text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap">{basenameFromIntent(p.intent)}</span>
-              <span className="col-start-2 row-start-1 inline-flex gap-1 items-baseline font-mono text-2xs tabular-nums">
-                {add > 0 ? <span className="text-add-fg">+{add}</span> : null}
-                {del > 0 ? <span className="text-del-fg">-{del}</span> : null}
-              </span>
-              <span className="col-span-full row-start-2 text-2xs text-text-dim font-mono overflow-hidden text-ellipsis whitespace-nowrap">{p.intent}</span>
-            </button>
-          )
-        })}
-      </aside>
-      <div className="flex flex-col min-w-0">
-        {payload.rawPanels.map((p) => {
-          // 巨大 panel (build artifact 等) は初期 collapsed で開いてレンダリングコストを抑制。
-          // segments の合計 row 数で判定。
-          let totalRows = 0
-          for (const seg of p.segments) totalRows += seg.rows.length
-          const file = p.toBe?.file ?? p.asIs?.file
-          const isAutoCollapseByPattern = shouldAutoCollapseFile(file)
-          const isAutoCollapseByRows = totalRows > DIFF_TAB_COLLAPSE_ROW_THRESHOLD
-          return (
-            <PanelBlock
-              key={p.panelId}
-              panel={p}
-              defaultCollapsed={isAutoCollapseByPattern || isAutoCollapseByRows}
-              fileComments={fileComments}
-              {...lineCommentHandlers}
-            />
-          )
-        })}
-        {payload.rawPanels.length === 0 ? (
-          <div className="px-6 py-[60px] text-center text-text-dim text-sm leading-normal">No file changes to display.</div>
-        ) : null}
-      </div>
-    </div>
+    <DiffTab
+      rawPanels={payload.rawPanels}
+      fileComments={fileComments}
+      onJumpToRawPanel={jumpToRawPanel}
+      {...lineCommentHandlers}
+    />
   )
 
   return (
@@ -694,7 +695,7 @@ export function App({ payload }: Props) {
         rcCount={rcCount}
         totalGroups={groupsState.length}
         onSubmit={submit}
-        submitting={submitted !== null}
+        submitting={submitted !== null || submitInFlight}
         reviewThread={threads[threadKey({ type: 'review' })] ?? null}
         variant={tab === 'activity' ? 'sidebar' : 'floating'}
         sidebarOpen={sidebarOpen}
@@ -755,15 +756,3 @@ function formatMeta(payload: ClientPayload): string {
   return `${prefix}${payload.summary.mode === 'staged' ? 'staged diff' : 'diff'} · ${payload.allPanels.length} panel${payload.allPanels.length === 1 ? '' : 's'}`
 }
 
-function cssEscape(s: string): string {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(s)
-  return s.replace(/["\\]/g, '\\$&')
-}
-
-// panel の intent 表示用 basename。lib/path の basename と違い、rename 矢印表記
-// "old → new" を new 側 (矢印の後) に分解してから basename を取る。
-function basenameFromIntent(intentOrPath: string): string {
-  const arrowIdx = intentOrPath.indexOf('→')
-  const target = arrowIdx >= 0 ? intentOrPath.slice(arrowIdx + 1).trim() : intentOrPath
-  return basename(target)
-}
