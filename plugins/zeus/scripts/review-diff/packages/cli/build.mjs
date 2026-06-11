@@ -25,10 +25,23 @@ const CLIENT_JS = await readFile(resolve(clientDir, 'dist/index.js'), 'utf8')
 console.log(`client bundle: ${Buffer.byteLength(CLIENT_JS).toLocaleString()} bytes`)
 
 // ---- Step 2: marked / DOMPurify を node_modules から読む
+// require.resolve のサブパス解決には頼らず、パッケージディレクトリ基準で直接 readFile する:
+// marked v18 は exports map がサブパスを公開せず、dompurify は `./package.json` すら公開しないため、
+// `${name}/${rel}` / `${name}/package.json` のどちらの resolve も ERR_PACKAGE_PATH_NOT_EXPORTED に
+// なりうる。UMD ファイル自体は同梱されているので、メインエントリの実パスから
+// `node_modules/<name>/` ディレクトリを逆算して相対パスで読む (exports の制約を受けない)。
+function pkgDirOf(name) {
+  const entry = require.resolve(name)
+  const marker = `node_modules/${name}/`
+  const idx = entry.lastIndexOf(marker)
+  if (idx < 0) throw new Error(`Cannot locate package dir for ${name} (entry: ${entry})`)
+  return entry.slice(0, idx + marker.length)
+}
 async function readLib(name, ...candidates) {
+  const pkgDir = pkgDirOf(name)
   for (const rel of candidates) {
     try {
-      return await readFile(require.resolve(`${name}/${rel}`), 'utf8')
+      return await readFile(resolve(pkgDir, rel), 'utf8')
     } catch {
       /* try next */
     }
