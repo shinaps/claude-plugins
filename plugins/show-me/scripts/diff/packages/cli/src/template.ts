@@ -20,6 +20,7 @@ export function buildHtml(payload: BuildHtmlInput): string {
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${CSS_STRING}</style>
 </head>

@@ -6,7 +6,27 @@
 //   - エスケープは JSON 文字列リテラル内の文字表現を変えるだけで、JSON.parse の結果は不変
 //   - U+2028 / U+2029 は \u エスケープに置換される
 import { describe, expect, test } from 'vitest'
-import { escapeJsonForScript } from '../src/template.js'
+import type { ClientPayload } from '@show-me/diff-shared'
+import { buildHtml, escapeJsonForScript } from '../src/template.js'
+
+describe('buildHtml', () => {
+  test('viewport meta が含まれる (モバイルで自動縮小表示にならない前提)', () => {
+    const payload: ClientPayload = {
+      schemaVersion: 1,
+      summary: { schemaVersion: 1, mode: 'staged', pr: null, overallSummary: '', groups: [] },
+      prMeta: null,
+      project: null,
+      groups: [],
+      allPanels: [],
+      expandable: false,
+      rawPanels: [],
+      editorAvailable: false,
+      remote: false,
+    }
+    const html = buildHtml(payload)
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">')
+  })
+})
 
 describe('escapeJsonForScript', () => {
   test('出力に生の `<` が残らない', () => {

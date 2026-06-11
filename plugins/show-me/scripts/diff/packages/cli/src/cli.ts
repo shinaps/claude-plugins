@@ -46,6 +46,7 @@ import {
 } from '@show-me/diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
+import { startTunnel, type Tunnel } from './tunnel.js'
 import { loadReviewDiffConfig } from './config.js'
 import { runScriptsCommand } from './script-runner.js'
 import { markOutdatedCommand } from './outdated.js'
@@ -53,6 +54,14 @@ import { readRestoreState } from './restore-state.js'
 
 const HEARTBEAT_GRACE_MS = 15 * 1000
 const HEARTBEAT_BOOT_GRACE_MS = 30 * 1000
+// remote モードはモバイルブラウザ前提で grace を大きく取る:
+//   - grace 10 min: スマホはアプリ切替・画面ロックで JS タイマーごと止まり heartbeat が
+//     途絶える。数分の離脱を「タブ閉じ」と誤判定して途中で CLI が死ぬのを防ぎつつ、
+//     放置時には tunnel が確実に閉じるよう有界に保つ
+//   - boot grace 5 min: ローカルの「自動 open 前提 30s」と違い、ユーザーが会話に投稿された
+//     URL に気付いてタップするまでのラグを許容する
+const HEARTBEAT_GRACE_REMOTE_MS = 10 * 60 * 1000
+const HEARTBEAT_BOOT_GRACE_REMOTE_MS = 5 * 60 * 1000
 const HEARTBEAT_POLL_INTERVAL_MS = 3 * 1000
 
 async function main(): Promise<void> {
@@ -83,6 +92,9 @@ async function main(): Promise<void> {
       // v5 PR mode: SKILL.md が gh pr checkout する際に取得する base ref の SHA。
       // 渡されなければ HEAD~1 を仮の base として扱う (= staged モードと同じ挙動)。
       'base-sha': { type: 'string' },
+      // リモートレビューモード: cloudflared Quick Tunnel を立てて公開 URL を発行する。
+      // スマホ等、CLI ホストのブラウザを開けない環境からのレビュー用。
+      remote: { type: 'boolean' },
     },
     strict: false,
   })
@@ -273,6 +285,8 @@ async function main(): Promise<void> {
     rawPanels.push(renderPanel(panel, sources, summary.mode))
   }
 
+  const remote = values.remote === true
+
   // 11. HTML 生成
   const html = buildHtml({
     schemaVersion: 1,
@@ -289,7 +303,10 @@ async function main(): Promise<void> {
     initialThreads: Object.keys(restoreThreads).length > 0 ? restoreThreads : undefined,
     initialReviewKind: restore?.reviewKind,
     scriptResults,
-    editorAvailable,
+    // remote ではエディタリンクを描画しない: tunnel の向こうのレビュアーの手元に
+    // 開くべきエディタは無く、押しても CLI ホスト側のエディタが開くだけで意味がない
+    editorAvailable: editorAvailable && !remote,
+    remote,
   })
 
   const { startServer } = await import('@show-me/diff-server')
@@ -297,14 +314,39 @@ async function main(): Promise<void> {
     html,
     sources,
     expandable,
-    editorPreset,
+    // remote では editor preset を server に渡さない = /editor-open が 503 を返す。
+    // クライアント側の非描画 (editorAvailable=false) とあわせて、リモート越しに
+    // editor command が発火する経路を二段で断つ
+    editorPreset: remote ? null : editorPreset,
+    remote,
   })
 
   process.stderr.write(`[show-me:diff] URL: ${started.url}\n`)
+
+  let tunnel: Tunnel | null = null
+  if (remote) {
+    tunnel = await startTunnel(started.port)
+    if (tunnel) {
+      // 検証許可リストへの注入は URL 配布より必ず先 (server 側 setTunnelHost のコメント参照)
+      started.setTunnelHost(new URL(tunnel.url).host)
+      const token = new URL(started.url).searchParams.get('token') ?? ''
+      process.stderr.write(`[show-me:diff] REMOTE URL: ${tunnel.url}/?token=${token}\n`)
+    } else {
+      process.stderr.write(
+        '[show-me:diff] cloudflared not available — falling back to local mode. Install: brew install cloudflared\n',
+      )
+    }
+    // remote 指定時は tunnel 失敗時も自動 open しない: レビュアーは CLI ホストの前に
+    // いない前提なので、誰も見ないタブが heartbeat を打ち続けて CLI が無期限に
+    // decision を待つハング経路になる。誰も開かなければ boot grace で timeout に落ちる
+  } else {
+    openUrl(started.url)
+  }
   process.stderr.write(`[show-me:diff] waiting for decision (tab close → auto exit via heartbeat)...\n`)
-  openUrl(started.url)
 
   const startedAt = Date.now()
+  const bootGraceMs = remote ? HEARTBEAT_BOOT_GRACE_REMOTE_MS : HEARTBEAT_BOOT_GRACE_MS
+  const graceMs = remote ? HEARTBEAT_GRACE_REMOTE_MS : HEARTBEAT_GRACE_MS
   const timeoutResult: ResultJson = {
     decision: 'timeout',
     reviewKind: 'comment',
@@ -316,13 +358,13 @@ async function main(): Promise<void> {
       const last = started.getLastHeartbeat()
       const now = Date.now()
       if (last === null) {
-        if (now - startedAt < HEARTBEAT_BOOT_GRACE_MS) return
-        process.stderr.write(`[show-me:diff] no initial heartbeat within ${HEARTBEAT_BOOT_GRACE_MS}ms — exiting\n`)
+        if (now - startedAt < bootGraceMs) return
+        process.stderr.write(`[show-me:diff] no initial heartbeat within ${bootGraceMs}ms — exiting\n`)
         clearInterval(interval)
         resolve(timeoutResult)
         return
       }
-      if (now - last > HEARTBEAT_GRACE_MS) {
+      if (now - last > graceMs) {
         process.stderr.write(`[show-me:diff] heartbeat lost for ${Math.round((now - last) / 1000)}s — tab closed, exiting\n`)
         clearInterval(interval)
         resolve(timeoutResult)
@@ -335,6 +377,10 @@ async function main(): Promise<void> {
     started.waitResult(),
     heartbeatLoss,
   ])
+
+  // tunnel は result 確定で役目を終える。process.exit 前に明示 close して公開 URL を即閉じる
+  // (異常終了経路は tunnel.ts が process exit / シグナルの hook で kill を保証する)。
+  tunnel?.close()
 
   try {
     const resultPath = `${dirname(values.summary as string)}/result.json`
