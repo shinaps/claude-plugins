@@ -1,4 +1,4 @@
-// Shiki を 13 言語 + github-dark テーマだけに絞ってバンドルする薄いラッパー。
+// Shiki を主要言語 + github-dark テーマだけに絞ってバンドルする薄いラッパー。
 // 全言語を含めると数 MB に膨れるため、ソースコードで日常的に遭遇するものに限定している。
 // 未対応言語は plaintext にフォールバック (致命的でないため例外を投げず素通し)。
 //
@@ -26,10 +26,19 @@ import css from '@shikijs/langs/css'
 import dockerfile from '@shikijs/langs/dockerfile'
 import githubDark from '@shikijs/themes/github-dark'
 
-export function createShiki(): HighlighterCore {
+function createShiki(): HighlighterCore {
   return createHighlighterCoreSync({
     themes: [githubDark],
     langs: [ts, tsx, js, jsx, json, md, shell, py, go, rust, yaml, html, css, dockerfile],
     engine: createJavaScriptRegexEngine(),
   })
+}
+
+// lazy singleton: grammar 登録 (全言語の正規表現コンパイル) をモジュール評価時
+// (= 初回 paint 前のバンドル評価) に走らせず、初回 highlightCode 呼び出し
+// (= IntersectionObserver で panel が viewport 近接した後) まで遅延して起動を軽くする。
+let singleton: HighlighterCore | null = null
+export function getShiki(): HighlighterCore {
+  if (!singleton) singleton = createShiki()
+  return singleton
 }
