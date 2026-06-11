@@ -14,6 +14,7 @@
 //     されるとカードが再 mount され state が消えるため (sessionStorage なら書きかけが生き残る)。
 
 import { useEffect, useRef, useState } from 'react'
+import { readDraft, writeDraft, removeDraft } from '../lib/drafts'
 
 export type ThreadReplyFormProps = {
   threadKey: string
@@ -75,18 +76,4 @@ export function ThreadReplyForm({ threadKey, onSubmit }: ThreadReplyFormProps) {
       </button>
     </div>
   )
-}
-
-function readDraft(key: string): string {
-  try {
-    return sessionStorage.getItem(key) ?? ''
-  } catch { return '' }
-}
-
-function writeDraft(key: string, body: string): void {
-  try { sessionStorage.setItem(key, body) } catch { /* storage unavailable */ }
-}
-
-function removeDraft(key: string): void {
-  try { sessionStorage.removeItem(key) } catch { /* storage unavailable */ }
 }

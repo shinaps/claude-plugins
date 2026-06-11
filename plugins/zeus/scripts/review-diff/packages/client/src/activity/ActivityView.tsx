@@ -1,9 +1,8 @@
 // Activity タブの content view。
 // 「コードレビューに入る前に diff の規模・構造・進捗を 3 秒で把握する入口画面」というコンセプトで
-// Editorial Dashboard 風に再構築:
-//   - 大型 display number で diff 規模を即座に伝える (Files / Additions / Deletions / Progress)
-//   - 言語・レイヤ別の proportional bar で「この PR は何が中心か」を視覚的に表現 (本タブの差別化点)
-//   - 各 group の decision dot + file chip 列で進捗と影響範囲を一目で
+// Editorial Dashboard 風に構成:
+//   - Hero: 大型 title + meta + reviewed % で「何をどこまでレビューしたか」を即座に伝える
+//   - Pre-flight checks / Overview / Groups (decision dot + file chip 列) / Conversation の縦積み
 //
 // 設計判断:
 //   - Section 単位を eyebrow + 細い divider 線で延々と区切る編集者デザイン (Linear/Vercel 系)
@@ -12,9 +11,11 @@
 //   - 大型 title は tracking-tight で「読み物」より「告知」感を強める
 //
 // 入力は App.tsx から「現状 state を素直に渡す」だけ。ActivityView 自身は state を持たず純粋に表示する。
+// memo 境界: activity pane は初期から常時 mount なので、App の無関係な state 変化 (group コメント
+// 入力等) で Conversation / GroupIndex の再構築が走らないよう props の参照安定を前提に遮断する。
 
 import type { FC, ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import type { GroupDecision, RenderedPanel, ScriptResult, ScriptResultsPayload, ThreadMessage, ThreadSnapshot, AgentAction } from '@zeus/review-diff-shared'
 import {
   Check, X, MinusCircle,
@@ -24,9 +25,7 @@ import {
   CircleDot, CheckCircle2, AlertTriangle,
 } from 'lucide-react'
 import {
-  computeDiffStats,
   groupFiles,
-  type Bucket,
   type FileChangeKind,
   type GroupFileInfo,
 } from './activity-summary'
@@ -61,17 +60,6 @@ export type ActivityViewProps = {
   onReplyToThread: (threadKey: string, body: string) => void
 }
 
-// 段別 bar segment の色サイクル。purple → green → amber → red → cool gray の順で
-// 視覚的にも意味的にも distinct な並び (1 番目が一番強調されるので最大 bucket は accent 色)。
-const SEGMENT_COLORS = [
-  'bg-accent',
-  'bg-add-fg',
-  'bg-warn',
-  'bg-del-fg',
-  'bg-text-muted',
-  'bg-text-dim',
-] as const
-
 // file change kind ごとの chip スタイル。「A / M / D / R」のレターは GitHub の status 列と同じ規約。
 const KIND_META: Record<
   FileChangeKind,
@@ -83,7 +71,7 @@ const KIND_META: Record<
   renamed:  { letter: 'R', chipBg: 'bg-accent-soft', chipText: 'text-accent',    longLabel: 'renamed' },
 }
 
-export const ActivityView: FC<ActivityViewProps> = ({
+export const ActivityView: FC<ActivityViewProps> = memo(({
   title,
   metaHtml,
   overallHtml,
@@ -159,7 +147,7 @@ export const ActivityView: FC<ActivityViewProps> = ({
       </div>
     </div>
   )
-}
+})
 
 // === Hero =====================================================================
 // 上部の「告知」ブロック。editorial 風に eyebrow + 細 divider + 右端に reviewed % を置く。
@@ -196,49 +184,6 @@ const Hero: FC<{
       />
     ) : null}
   </header>
-)
-
-// === Breakdown (Languages / Layers) ==========================================
-// このタブの「差別化点」: bucket を proportional segment bar で表現し、diff 構成を視覚化する。
-// GitHub の language bar に着想を得つつ、単一 PR / diff レベルで使えるよう作り直し。
-
-const BreakdownSection: FC<{ label: string; buckets: ReadonlyArray<Bucket> }> = ({
-  label, buckets,
-}) => (
-  <Section label={label}>
-    {/* bar 本体: rounded-full + inset ring で「楔のような」幾何感を出す。
-        segment 間は左 border (background/50% opacity) で hairline 分割。 */}
-    <div
-      className="flex h-2.5 rounded-full overflow-hidden bg-surface-3 ring-1 ring-inset ring-border-soft"
-      role="img"
-      aria-label={`${label} breakdown`}
-    >
-      {buckets.map((b, i) => (
-        <div
-          key={b.label}
-          className={`${SEGMENT_COLORS[i % SEGMENT_COLORS.length]} transition-[flex-basis] duration-300 ease-out ${i === 0 ? '' : 'border-l border-background/50'}`}
-          style={{ flexBasis: `${b.percent * 100}%` }}
-          title={`${b.label}: ${b.count} files (${Math.round(b.percent * 100)}%)`}
-        />
-      ))}
-    </div>
-    {/* legend chips: bar の色と一致する小さい正方形 + label + count。flex-wrap で広い PR でも収まる */}
-    <ul className="list-none m-0 mt-4 flex flex-wrap gap-x-5 gap-y-2 p-0">
-      {buckets.map((b, i) => (
-        <li
-          key={b.label}
-          className="inline-flex items-center gap-2 text-xs text-text-muted"
-        >
-          <span
-            className={`inline-block w-2 h-2 rounded-[2px] ${SEGMENT_COLORS[i % SEGMENT_COLORS.length]}`}
-            aria-hidden
-          />
-          <span className="text-text font-mono">{b.label}</span>
-          <span className="text-text-dim tabular-nums font-mono">{b.count}</span>
-        </li>
-      ))}
-    </ul>
-  </Section>
 )
 
 // === Section wrapper ==========================================================

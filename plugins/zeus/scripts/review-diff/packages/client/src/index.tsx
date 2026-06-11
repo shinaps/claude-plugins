@@ -74,30 +74,6 @@ try {
   console.warn('[review-diff] LoAF setup failed:', e)
 }
 
-// グローバル pointerdown ロガー: 「ユーザーが何処を押下したか」「React の onPointerDown 経路に
-// 入る前段で阻害されていないか」を観測するため、window レベル (capture phase) で全 pointerdown を
-// ログする。出力例: target=SPAN(.text-token) td-closest=Yes data-side=right data-line=42
-window.addEventListener('pointerdown', (e) => {
-  const t = e.target as HTMLElement | null
-  // <div class="cell-code"/.cell-ln> grid 構造に対応したセレクタ (旧 <table>/<td> ではない)。
-  // [data-side][data-line-number] で gutter / code どちらの cell でも当たる。
-  const codeCell = t?.closest?.('.cell-code[data-side]') as HTMLElement | null
-  const cell = t?.closest?.('[data-side][data-line-number]') as HTMLElement | null
-  const trigger = t?.closest?.('.line-comment-trigger') as HTMLElement | null
-  const elsAtPoint = document.elementsFromPoint(e.clientX, e.clientY)
-    .slice(0, 6)
-    .map((el) => `${el.tagName}.${typeof el.className === 'string' ? el.className.toString().slice(0, 30) : ''}`)
-    .join(' > ')
-  const triggerRect = trigger?.getBoundingClientRect()
-  const cellRect = cell?.getBoundingClientRect()
-  const cellClass = cell?.className
-  const c2 = cellRect ?? { left: 0, top: 0 }
-  const trg2 = triggerRect ?? { left: 0, top: 0 }
-  console.log(
-    `[pd] xy=(${e.clientX | 0},${e.clientY | 0}) target=${t?.tagName}.${(t?.className ?? '').toString().slice(0,40)} cell=${cellClass}@(${c2.left | 0},${c2.top | 0}) inCellCode=${!!codeCell} inTrigger=${!!trigger} trigger@(${trg2.left | 0},${trg2.top | 0}) stack=[${elsAtPoint}]`
-  )
-}, true)
-
 const root = document.getElementById('root')
 if (!root) throw new Error('#root not found')
 

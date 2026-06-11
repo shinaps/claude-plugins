@@ -311,10 +311,10 @@
     padding: 56px 0;
     border-top: 1px solid var(--color-border-soft);
     position: relative;
-    /* v5.0.1: content-visibility: auto を復活。tab 切替で 22 panel 全 paint が LoAF 10s の主因
-       (debug-validated.md H2)。v5.0.0 では sticky redirect 回避のために撤去していたが、
-       CommentRow を portal で document.body に逃がす (Panel.tsx CommentRowPortal) ことで
-       containing block redirect の影響を受けない構造になり、復活可能になった。 */
+    /* content-visibility: auto: tab 切替時の全 panel 一斉 paint (LoAF 数秒級) を防ぐ。
+       cv:auto の暗黙 contain は position: sticky/fixed の containing block を redirect するが、
+       CommentRow は in-flow + transform: translateX(var(--ps-scroll-x)) 方式 (上の .comment-row
+       コメント参照) で containing block に依存しないため共存できる。 */
     content-visibility: auto;
     contain-intrinsic-size: auto 1200px;
     /* group ジャンプ (prev/next 矢印 → scrollIntoView block:'start') でタイトルが常に
