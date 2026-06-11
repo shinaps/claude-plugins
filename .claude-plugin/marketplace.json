@@ -11,8 +11,8 @@
     {
       "name": "zeus",
       "source": "./plugins/zeus",
-      "description": "ultraplan / feature-dev の上位互換となる超深掘り計画+実装+セルフレビュー一気通貫 + 最終承認ゲート + デバッグ + 継続リファクタプラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 技術選定 + 必要ならプロトタイプ実装で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:dev (explorer → architect 初回案 → plan-reviewer が批判 + Critical/Warning を反映した修正版最終 plan までを返す (self-critique 統合、計画フェーズの xhigh 起動 3 回 → 2 回に削減) → **メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 + implementation.md 執筆** → zeus-reviewer → Critical 自動修正 + Warning は確認の上修正、差し戻し時はユーザーに確認しつつ自動再策定。spec からの handoff なら spec が取った explorer 結果を再利用し dev 側で再起動しない (二重 explorer 削減)。実装をメインスレッドで担うことで計画フェーズの文脈と設計判断の WHY をそのまま実装と修正ループに引き継ぐ) → /zeus:review → /zeus:review-diff (panel ベース schema + Linear 風 stacked PR UI でブラウザに staged diff / PR diff を開き、**group 単位の Approve / Request Changes + コメントで人間が最終承認するゲート**。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切る。CLI が asIs/toBe ranges の対称性 + 同一変更行排他原則を検証。context+ ボタンは close-relaunch + state restore モデル) → /zeus:debug (Phase 4.5 で zeus-tech-surveyor + zeus-survey-validator による外部情報深掘り (任意) を実施しライブラリ既知バグ / changelog / 修正パターン / 代替案を踏まえた修正方針を立てられる) → /zeus:refactor-loop (可読性向上が主軸の継続リファクタ無人ループ。zeus-refactor-scout が次の 1 件を返し zeus-refactor-implementer が contract boundary 宣言 → characterization test → 内部実装の大胆変更 → contract 維持検証 → refactor 自動コミット → 次ラウンド)。スキル間 handoff は専用ファイル (旧 plan-handoff.md) を生成せず、各スキルの最終生成物 (spec.md / review-validated.md / debug-validated.md) パスを直接 dev に渡す形で簡素化。設計の核: EnterPlanMode は一切使わず bypassPermissions モード (リモート実行など) でも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認 (回数制限なし)。spec で実現可能性 + 技術選定まで詰めることで dev での差し戻しをほぼゼロにする。12 体の zeus 専用エージェント同梱、6 スキル構成。",
-      "version": "5.8.1",
+      "description": "feature-dev の上位互換となる開発フロープラグイン。/zeus:spec (対話的ヒアリング + 既存実装調査 + フィジビリティ調査 + 技術選定で「ほぼ実現できる」レベルまで仕様を詰める) → /zeus:dev (zeus-explorer → zeus-architect → zeus-plan-reviewer の計画フェーズを経て、メインスレッドが plan.md を直接実装 + 型/lint/test 動作確認 → zeus-reviewer のセルフレビュー → Critical 自動修正まで単一スキルで完走) → /zeus:review (観点別の単独レビュー、確定指摘は /zeus:dev へ橋渡し) → /zeus:debug (バグの根本原因調査 + 外部情報深掘り) → /zeus:refactor-loop (継続リファクタ無人ループ)。設計の核: EnterPlanMode を使わず bypassPermissions モードでも全フェーズが走り切る。不明な論点は AskUserQuestion で必ずユーザーに確認。12 体の zeus 専用エージェント同梱、5 スキル構成。人間ゲートの最終承認 UI (旧 /zeus:review-diff) は show-me プラグインの /show-me:diff に分離 (要 /plugin install show-me@shinaps)。",
+      "version": "6.0.0",
       "author": {
         "name": "shinaps",
         "email": "ryuta@shinaps.jp"
@@ -27,6 +27,28 @@
         "code-review",
         "agents",
         "feature-dev"
+      ]
+    },
+    {
+      "name": "show-me",
+      "source": "./plugins/show-me",
+      "description": "staged diff / PR diff を Linear 風 stacked PR UI でブラウザに開き、人間が目で見て最終承認するゲートプラグイン。/show-me:diff は AI が組んだ「読書順の group / panel ナラティブ」に沿って差分をレビューでき、group 単位の Approve / Request Changes + 行コメント / スレッド返信を受け取る。Submit すると linear stack で先頭から approved group を 1 commit ずつ作成し、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。同梱 Node CLI (React + Hono + Shiki、bundle 済みで Node 20+ のみ要求) が coverage / range symmetry / panel exclusivity を検証。context+ ボタンは close-relaunch + state restore モデルで decision / コメント / 未保存 draft を再起動後に復元。zeus プラグインの旧 /zeus:review-diff を独立させたスタンドアロン構成で、どのリポジトリでもコミット前の人間ゲートとして使える。",
+      "version": "1.0.0",
+      "author": {
+        "name": "shinaps",
+        "email": "ryuta@shinaps.jp"
+      },
+      "homepage": "https://github.com/shinaps/claude-plugins",
+      "repository": "https://github.com/shinaps/claude-plugins",
+      "license": "MIT",
+      "category": "development",
+      "keywords": [
+        "code-review",
+        "diff",
+        "human-in-the-loop",
+        "approval-gate",
+        "stacked-pr",
+        "ui"
       ]
     }
   ]
