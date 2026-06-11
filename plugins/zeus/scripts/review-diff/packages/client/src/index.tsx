@@ -107,7 +107,9 @@ const payload = getPayload()
 // editorAvailable=false なら EditorLinkTrigger は render されない (CR-3: command 漏らさず boolean だけ伝搬)。
 if (typeof window !== 'undefined') {
   window.__reviewDiffEditorAvailable = payload.editorAvailable === true
-  // v5: 永続化済みスレッドを Panel CommentRow / ActivityView Conversation で参照できるよう公開
+  // 永続化済みスレッドを Panel CommentRow が参照できるよう公開。ここは「App 初回 render 前の seed」
+  // であり、以後セッション中の返信は App.tsx の毎 render mirror が同じ変数を上書きして反映する
+  // (App.tsx の threads state 直後のコメント参照)。
   window.__reviewDiffThreads = payload.initialThreads ?? {}
 }
 

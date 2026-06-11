@@ -590,7 +590,12 @@ export const Panel = memo(function Panel({
     commitDragSelection(e.clientX, e.clientY, cur)
   }
 
-  // panelId に紐付くコメント key を (side, anchor) で逆引き
+  // panelId に紐付くコメント key を (side, anchor) で逆引き。
+  // deps に threads (window.__reviewDiffThreads) を含めないのは意図的: thread の anchor 集合は
+  // initialThreads の時点で確定しており、セッション中の返信は既存 anchor への append なので
+  // Map の再計算は不要。返信本文の表示更新は「App の fileComments useMemo (deps: threads) の
+  // 参照変化が Panel の memo を破る → render 時に最新の window mirror を読む」連鎖で届く
+  // (App.tsx の mirror コメント参照)。
   const commentKeysByAnchor = useMemo(
     () => buildCommentKeysByAnchor(
       panel.panelId,

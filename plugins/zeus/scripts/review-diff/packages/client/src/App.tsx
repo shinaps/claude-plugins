@@ -103,6 +103,15 @@ export function App({ payload }: Props) {
     () => payload.initialThreads ?? {},
   )
 
+  // Guide タブの line スレッド表示 (Panel.tsx CommentRow) は prop drilling 回避のため
+  // window.__reviewDiffThreads を render 時に直読する。boot 時の initialThreads スナップショット
+  // (index.tsx) だけだと本セッションで積んだ返信が Guide 側に反映されないため、毎 render で
+  // 最新 threads を mirror する。冪等代入なので StrictMode の二重 render / useTransition の
+  // 中断 render でも安全。
+  // 注意: CommentRow がこれを読み直すのは「fileComments useMemo (deps: threads) の参照変化が
+  // Panel の memo を破る」連鎖があるため。fileComments の deps から threads を外すとこの同期が壊れる。
+  if (typeof window !== 'undefined') window.__reviewDiffThreads = threads
+
   // group コメントを pending としてスレッドに積み、textarea をクリアする。
   // textarea クリアは「同じ本文が submit 時の textarea 残量 thread 合成でもう一度積まれて
   // 二重になる」のを防ぐ意図。
@@ -396,6 +405,12 @@ export function App({ payload }: Props) {
         note,
       ),
       ...(note ? { submitNote: note } : {}),
+      // comment-reply の close-relaunch で未送信 draft (Activity 返信フォーム / 行コメントフォームの
+      // 書きかけ) を restore.json 経由で復元するための回収。SKILL.md の comment-reply 手順は
+      // 「lineCommentDrafts を result.json からそのままコピー」を規定しており、ここで載せないと
+      // 新タブ (= 新 sessionStorage) で書きかけが消える。approve / RC submit ではタブが完全終了
+      // するため余分でも無害。
+      lineCommentDrafts: collectAllDrafts(),
     }
     await postResult(body, reviewKind === 'comment' ? 'comment' : 'submit', { message: 'Failed to submit.' })
   }

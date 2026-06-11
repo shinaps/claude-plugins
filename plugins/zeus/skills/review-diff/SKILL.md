@@ -584,7 +584,7 @@ ResultJson 全体:
     "note": "foo() の caller も見たい"   // 任意。ユーザーが inline textarea で書いた自由文
   },
   "submitNote": "commit メッセージにはこの観点を含めて",  // SubmitBar textarea の全体コメント (任意。同じ文字列が review thread にも user message として入る)
-  "lineCommentDrafts": {      // regen-group の時に restore で活きる、それ以外は無視可
+  "lineCommentDrafts": {      // regen-group / comment-reply の restore で活きる (approve / RC submit では無視可)
     "draft:p1:asis:42": "draft body..."
   }
 }
