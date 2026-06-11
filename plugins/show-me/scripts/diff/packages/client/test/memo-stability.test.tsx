@@ -68,6 +68,7 @@ function makePayload(): ClientPayload {
     expandable: true,
     rawPanels: [],
     editorAvailable: false,
+    remote: false,
   }
 }
 

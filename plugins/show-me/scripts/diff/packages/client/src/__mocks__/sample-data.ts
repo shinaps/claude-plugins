@@ -92,6 +92,7 @@ export const sampleData: ClientPayload = {
   expandable: true,
   rawPanels: [],
   editorAvailable: false,
+  remote: false,
   // group / file / review スレッド (decision section / panel header / SubmitBar の会話履歴表示) の
   // dev 確認用サンプル
   initialThreads: {

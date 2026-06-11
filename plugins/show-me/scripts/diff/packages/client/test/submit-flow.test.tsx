@@ -60,6 +60,7 @@ function makePayload(overrides?: Partial<ClientPayload>): ClientPayload {
     expandable: true,
     rawPanels: [],
     editorAvailable: false,
+    remote: false,
     ...overrides,
   }
 }

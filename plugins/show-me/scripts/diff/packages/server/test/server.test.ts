@@ -101,6 +101,147 @@ test('POST /result with valid token + Origin resolves waitResult (e2e via serve)
   expect(result.groupDecisions).toEqual({ g0: 'approved' })
 })
 
+// ===== remote モード (tunnel host 許可 + brute force 閾値) =====
+
+const TUNNEL_HOST = 'example-tunnel.trycloudflare.com'
+
+test('remote: tunnel host is allowed for Host check once injected', async () => {
+  const { app, token, port } = createTestApp({
+    html: '<p>remote-ok</p>',
+    remote: true,
+    tunnelHost: TUNNEL_HOST,
+  })
+  const res = await app.fetch(
+    new Request(`https://${TUNNEL_HOST}/?token=${token}`, {
+      headers: { Host: TUNNEL_HOST },
+    }),
+  )
+  expect(res.status).toBe(200)
+  expect(await res.text()).toMatch(/remote-ok/)
+
+  // local URL も並行して許可されたまま (追加であって切替ではない)
+  const local = await app.fetch(
+    new Request(`http://127.0.0.1:${port}/?token=${token}`, {
+      headers: { Host: `127.0.0.1:${port}` },
+    }),
+  )
+  expect(local.status).toBe(200)
+
+  // tunnel host 以外の外部ホストは依然 403
+  const evil = await app.fetch(
+    new Request(`https://evil.example.com/?token=${token}`, {
+      headers: { Host: 'evil.example.com' },
+    }),
+  )
+  expect(evil.status).toBe(403)
+})
+
+test('remote: tunnel host is rejected before injection (lazy opt-in)', async () => {
+  const { app, token, setTunnelHost } = createTestApp({ html: '', remote: true })
+  const before = await app.fetch(
+    new Request(`https://${TUNNEL_HOST}/?token=${token}`, {
+      headers: { Host: TUNNEL_HOST },
+    }),
+  )
+  expect(before.status).toBe(403)
+
+  setTunnelHost(TUNNEL_HOST)
+  const after = await app.fetch(
+    new Request(`https://${TUNNEL_HOST}/?token=${token}`, {
+      headers: { Host: TUNNEL_HOST },
+    }),
+  )
+  expect(after.status).toBe(200)
+})
+
+test('non-remote: tunnel host stays rejected (no regression of local-only contract)', async () => {
+  const { app, token } = createTestApp({ html: '' })
+  const res = await app.fetch(
+    new Request(`https://${TUNNEL_HOST}/?token=${token}`, {
+      headers: { Host: TUNNEL_HOST },
+    }),
+  )
+  expect(res.status).toBe(403)
+})
+
+test('remote: POST /result accepts https tunnel Origin, rejects http tunnel Origin', async () => {
+  const { app, token } = createTestApp({
+    html: '',
+    remote: true,
+    tunnelHost: TUNNEL_HOST,
+  })
+  const post = (origin: string) =>
+    app.fetch(
+      new Request(`https://${TUNNEL_HOST}/result?token=${token}`, {
+        method: 'POST',
+        headers: {
+          Host: TUNNEL_HOST,
+          'Content-Type': 'application/json',
+          Origin: origin,
+        },
+        body: JSON.stringify({ decision: 'submit', groupDecisions: {} }),
+      }),
+    )
+  expect((await post(`https://${TUNNEL_HOST}`)).status).toBe(200)
+  // Cloudflare は TLS 終端するので tunnel 経由の Origin は https のみ正当。http は弾く
+  expect((await post(`http://${TUNNEL_HOST}`)).status).toBe(403)
+})
+
+test('non-remote: Origin "https://null" never passes when tunnel host is unset', async () => {
+  const { app, token, port } = createTestApp({ html: '' })
+  const res = await app.fetch(
+    new Request(`http://127.0.0.1:${port}/result?token=${token}`, {
+      method: 'POST',
+      headers: {
+        Host: `127.0.0.1:${port}`,
+        'Content-Type': 'application/json',
+        Origin: 'https://null',
+      },
+      body: JSON.stringify({ decision: 'submit', groupDecisions: {} }),
+    }),
+  )
+  expect(res.status).toBe(403)
+})
+
+test('brute force threshold: local fires at 20, remote survives 21 and fires at 1000', async () => {
+  // local: 20 回の token 失敗で onBruteForce 発火
+  let localFired = 0
+  const local = createTestApp({ html: '', onBruteForce: () => { localFired++ } })
+  for (let i = 0; i < 20; i++) {
+    await local.app.fetch(
+      new Request(`http://127.0.0.1:${local.port}/?token=wrong`, {
+        headers: { Host: `127.0.0.1:${local.port}` },
+      }),
+    )
+  }
+  expect(localFired).toBeGreaterThanOrEqual(1)
+
+  // remote: 21 回では発火せず、1000 回で発火 (公開 URL のクローラー誤爆を防ぐ緩和)
+  let remoteFired = 0
+  const remote = createTestApp({
+    html: '',
+    remote: true,
+    tunnelHost: TUNNEL_HOST,
+    onBruteForce: () => { remoteFired++ },
+  })
+  for (let i = 0; i < 21; i++) {
+    await remote.app.fetch(
+      new Request(`https://${TUNNEL_HOST}/?token=wrong`, {
+        headers: { Host: TUNNEL_HOST },
+      }),
+    )
+  }
+  expect(remoteFired).toBe(0)
+  for (let i = 0; i < 979; i++) {
+    await remote.app.fetch(
+      new Request(`https://${TUNNEL_HOST}/?token=wrong`, {
+        headers: { Host: TUNNEL_HOST },
+      }),
+    )
+  }
+  expect(remoteFired).toBeGreaterThanOrEqual(1)
+})
+
 // POST /result で decision='regen-group' を素通しで受け取れることを確認する。
 // server 側は decision の値に依らず ResultJson を resolve するだけなので、shape の
 // passthrough と CLI 側で分岐できることを担保するためのテスト。

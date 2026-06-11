@@ -1,10 +1,25 @@
-// 127.0.0.1 限定の HTTP サーバー (Hono + @hono/node-server)。
-// 同一 PC 上で動く別ユーザーやプロセスからの覗き見だけを脅威モデルにし、4 層で防御する:
+// 127.0.0.1 bind の HTTP サーバー (Hono + @hono/node-server)。脅威モデルは 2 系統:
+//
+// [local モード (デフォルト)]
+//   同一 PC 上で動く別ユーザーやプロセスからの覗き見を脅威モデルにし、4 層で防御する:
 //   1. listen を 127.0.0.1 に固定 (localhost 別名や :: 経由を弾く)
 //   2. Host ヘッダを 127.0.0.1:<port> と完全一致でチェック (DNS rebinding 対策)
 //   3. 32 byte ランダム token を URL クエリで毎リクエスト検証
 //   4. POST /result では Origin ヘッダも検証 (CSRF 対策)
-// 加えて token 検証失敗が 20 回貯まったらプロセスごと落として brute force 試行を断つ。
+//   token 検証失敗が 20 回貯まったらプロセスごと落として brute force 試行を断つ。
+//
+// [remote モード (opt-in)]
+//   cloudflared Quick Tunnel が 127.0.0.1:<port> へ proxy し、https://xxx.trycloudflare.com の
+//   公開 URL からスマホ等で開く。bind は 127.0.0.1 のまま (層 1 不変) で、層 2 / 4 に
+//   setTunnelHost() で遅延注入された tunnel host を「追加許可」する (切替ではない —
+//   cloudflared が落ちた時のローカル縮退先を残すため 127.0.0.1 も引き続き許可)。
+//   TLS は Cloudflare が終端し、実質の認証は「推測不能な 32 byte token + ランダムサブドメイン」。
+//   brute force 閾値は 1000 に緩和する: 公開 URL はクローラー等の token 無しアクセスを受けるため、
+//   20 のままだと無関係なアクセス 20 回でレビューセッションが自爆する DoS ベクタになる
+//   (32 byte hex token に対して 1000 回の試行では推測不能なので、hammering 遮断の目的は保たれる)。
+//   残余リスク: token 入り URL を第三者サービス (メッセンジャー等) へ転送すると、その
+//   link preview bot が GET / を fetch して diff 全文 HTML を取得し得る。これはサーバー側では
+//   防げないため、SKILL.md が「URL は Claude 会話以外へ転送しない」運用警告でカバーする。
 //
 // context+ は close-relaunch + state restore モデルで動く。ブラウザは POST /result に
 // decision='regen-group' を送って window.close() するだけ。SSE / event bus / 別 token
@@ -27,6 +42,8 @@ import { serve, type ServerType } from '@hono/node-server'
 import type { EditorPreset, ResultJson } from '@show-me/diff-shared'
 
 const MAX_TOKEN_FAILURES = 20
+// remote モードの brute force 閾値 (緩和理由は冒頭の脅威モデルコメント参照)
+const MAX_TOKEN_FAILURES_REMOTE = 1000
 const RESULT_SETTLE_MS = 200 // POST のレスポンスを返し切ってから resolve するまでの猶予
 const MAX_BODY = 1 * 1024 * 1024 // 1 MiB。コメント全部入れてもこれを超えないはず
 
@@ -52,6 +69,11 @@ export type CreateAppOptions = {
   // v5: editor preset を server 側のみで保持する。クライアントには editorAvailable: boolean だけ
   // を払い出し、command 文字列はサーバを抜けない (CR-3)。null の場合は /editor-open は 503 で返す。
   editorPreset?: EditorPreset | null
+  // remote モード (brute force 閾値の切替に使う)。詳細は冒頭の脅威モデルコメント参照。
+  remote?: boolean
+  // cloudflared tunnel の host (例: 'xxx.trycloudflare.com')。tunnel URL は cloudflared 起動後に
+  // しか判明しないため、getPort() と同じ遅延参照で受け取る。null の間は local URL のみ許可。
+  getTunnelHost?: () => string | null
 }
 
 export function createApp(opts: CreateAppOptions): Hono {
@@ -59,6 +81,8 @@ export function createApp(opts: CreateAppOptions): Hono {
   const sources: SourcesMap = opts.sources ?? new Map()
   const editorPreset: EditorPreset | null = opts.editorPreset ?? null
   const onBruteForce = opts.onBruteForce ?? (() => setTimeout(() => process.exit(1), 50))
+  const getTunnelHost = opts.getTunnelHost ?? (() => null)
+  const maxTokenFailures = opts.remote ? MAX_TOKEN_FAILURES_REMOTE : MAX_TOKEN_FAILURES
 
   let failCount = 0
   const app = new Hono()
@@ -89,10 +113,16 @@ export function createApp(opts: CreateAppOptions): Hono {
     c.header('Cache-Control', 'no-store, no-cache, must-revalidate')
   })
 
-  // 2. Host header 検証 (127.0.0.1:<port> のみ allow、DNS rebinding / localhost 別名対策)
+  // 2. Host header 検証 (DNS rebinding / localhost 別名対策)。
+  // 127.0.0.1:<port> に加え、remote モードで tunnel host が確定していればそれも許可する
+  // (OR 判定 = 追加であって切替ではない。冒頭の脅威モデルコメント参照)。
   const hostCheck: MiddlewareHandler = async (c, next) => {
     const host = c.req.header('host') ?? ''
-    if (host !== `127.0.0.1:${getPort()}`) {
+    const tunnelHost = getTunnelHost()
+    const allowed =
+      host === `127.0.0.1:${getPort()}`
+      || (tunnelHost != null && host === tunnelHost)
+    if (!allowed) {
       return c.text('forbidden', 403)
     }
     await next()
@@ -103,7 +133,7 @@ export function createApp(opts: CreateAppOptions): Hono {
   const tokenCheck: MiddlewareHandler = async (c, next) => {
     if (c.req.query('token') !== token) {
       failCount++
-      if (failCount >= MAX_TOKEN_FAILURES) {
+      if (failCount >= maxTokenFailures) {
         onBruteForce()
       }
       return c.text('forbidden', 403)
@@ -121,7 +151,12 @@ export function createApp(opts: CreateAppOptions): Hono {
   const originCheck: MiddlewareHandler = async (c, next) => {
     if (c.req.method === 'GET' || c.req.method === 'HEAD') return next()
     const origin = c.req.header('origin') ?? ''
-    if (origin !== `http://127.0.0.1:${getPort()}`) {
+    const tunnelHost = getTunnelHost()
+    // tunnel 経由は Cloudflare が TLS 終端するため Origin は必ず https になる
+    const allowed =
+      origin === `http://127.0.0.1:${getPort()}`
+      || (tunnelHost != null && origin === `https://${tunnelHost}`)
+    if (!allowed) {
       return c.text('forbidden', 403)
     }
     await next()
@@ -246,6 +281,8 @@ export type StartServerOptions = {
   expandable?: boolean
   // v5: editor preset (server 側でのみ保持、CR-3)
   editorPreset?: EditorPreset | null
+  // remote モード (brute force 閾値を緩和し、setTunnelHost で tunnel host を後付け許可できる)
+  remote?: boolean
 }
 export type StartedServer = {
   url: string
@@ -254,11 +291,15 @@ export type StartedServer = {
   // 最後にブラウザから /heartbeat が来た時刻 (Date.now() 形式)。CLI 側で「タブが閉じられたか」を
   // 検知するために poll する。未受信の場合は null (初回 ping が来るまでの猶予期間)。
   getLastHeartbeat: () => number | null
+  // cloudflared 起動後に判明した tunnel host を Host / Origin 検証の許可リストへ注入する。
+  // 注入前に tunnel URL が配布されることはない (CLI は setTunnelHost してから URL を出力する)
+  // ため、検証すり抜けの競合ウィンドウは存在しない。
+  setTunnelHost: (host: string) => void
   close: () => void
 }
 
 export async function startServer(opts: StartServerOptions): Promise<StartedServer> {
-  const { html, sources, editorPreset } = opts
+  const { html, sources, editorPreset, remote } = opts
   const token = randomBytes(32).toString('hex')
 
   let resolveResult!: (r: ResultJson) => void
@@ -269,6 +310,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
   // serve() callback で実 port が判明するまで getPort() の参照先を遅延しておく。
   let port = 0
   let lastHeartbeatAt: number | null = null
+  // tunnel host も port と同じ遅延注入 (cloudflared 起動後に setTunnelHost で確定する)
+  let tunnelHost: string | null = null
 
   let server: ServerType
   const app = createApp({
@@ -284,6 +327,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
       lastHeartbeatAt = Date.now()
     },
     editorPreset,
+    remote,
+    getTunnelHost: () => tunnelHost,
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -312,6 +357,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartedServ
     port,
     waitResult: () => resultPromise,
     getLastHeartbeat: () => lastHeartbeatAt,
+    setTunnelHost: (host) => {
+      tunnelHost = host
+    },
     close: () => {
       try { server.close() } catch { /* noop */ }
     },
@@ -324,25 +372,36 @@ export type CreateTestAppResult = {
   app: Hono
   token: string
   port: number
+  // startServer の setTunnelHost と同じ遅延注入をテストで再現するための setter
+  setTunnelHost: (host: string) => void
 }
 export function createTestApp({
   html,
   port = 12345,
   sources,
+  remote,
+  tunnelHost = null,
+  onBruteForce,
 }: {
   html: string
   port?: number
   sources?: SourcesMap
+  remote?: boolean
+  tunnelHost?: string | null
+  onBruteForce?: () => void
 }): CreateTestAppResult {
   const token = randomBytes(32).toString('hex')
+  let currentTunnelHost = tunnelHost
   const app = createApp({
     html,
     token,
     getPort: () => port,
     sources,
-    // テストでは brute force しないので exit を抑止 (ガード自体は本番で機能する)。
-    onBruteForce: () => { /* noop in tests */ },
+    remote,
+    getTunnelHost: () => currentTunnelHost,
+    // テストでは brute force でプロセスを落とさない (閾値テストは onBruteForce 差し替えで観測する)。
+    onBruteForce: onBruteForce ?? (() => { /* noop in tests */ }),
     onResult: () => { /* tests use the e2e path for the resolve case */ },
   })
-  return { app, token, port }
+  return { app, token, port, setTunnelHost: (host) => { currentTunnelHost = host } }
 }

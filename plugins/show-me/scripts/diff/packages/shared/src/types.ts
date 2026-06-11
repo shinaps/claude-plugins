@@ -359,4 +359,8 @@ export type ClientPayload = {
   // v5 で新規。editor preset が設定されているか (= EditorLinkTrigger を描画するか)。
   // CR-3: editor command は server 側にしか保持されないので、boolean だけ伝搬する。
   editorAvailable: boolean
+  // リモートレビューモード (cloudflared tunnel 経由でスマホ等から開く) か。
+  // editorAvailable と同じ boolean-only 伝搬: クライアントには「リモートかどうか」だけ伝え、
+  // tunnel URL や token の扱いはすべて CLI / server 側に閉じる。
+  remote: boolean
 }
