@@ -36,7 +36,7 @@ describe('basename', () => {
     expect(basename('a/b c/d.ts')).toBe('d.ts')
   })
 
-  test('エッジ: rename 矢印表記は分解しない (App.tsx の basenameFromIntent とは別契約)', () => {
+  test('エッジ: rename 矢印表記は分解しない (DiffTab.tsx の basenameFromIntent とは別契約)', () => {
     expect(basename('old.ts → new.ts')).toBe('old.ts → new.ts')
   })
 })

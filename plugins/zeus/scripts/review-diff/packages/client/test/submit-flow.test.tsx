@@ -235,6 +235,43 @@ describe('submit (SubmitBar 経由)', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
     expect(closeSpy).not.toHaveBeenCalled()
   })
+
+  test('HTTP エラー (非 2xx) 時: 成功扱いにせず toast を出し、タブを閉じない', async () => {
+    const user = userEvent.setup()
+    // fetch は 4xx/5xx で reject しないため、resolve だが ok=false のレスポンスで失敗経路を検証する
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 })
+    render(<App payload={makePayload()} />)
+
+    await openSidebar(user)
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+
+    expect(await screen.findByText('Failed to submit.')).toBeInTheDocument()
+    expect(screen.queryByText(/Review submitted/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(closeSpy).not.toHaveBeenCalled()
+  })
+
+  test('fetch in-flight 中の再 submit は遮断され POST /result は 1 回しか飛ばない', async () => {
+    const user = userEvent.setup()
+    // 解決を手動制御する deferred で in-flight 状態を作る
+    let resolveFetch: (v: { ok: boolean }) => void = () => {}
+    fetchMock.mockImplementationOnce(
+      () => new Promise<{ ok: boolean }>((resolve) => { resolveFetch = resolve }),
+    )
+    render(<App payload={makePayload()} />)
+
+    await openSidebar(user)
+    const approve = screen.getByRole('button', { name: 'Approve' })
+    await user.click(approve)
+    // in-flight 中: ボタンは disabled になり、pointer-events 越しの再発火も submittingRef が止める
+    expect(approve).toBeDisabled()
+    await user.click(approve)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    resolveFetch({ ok: true })
+    await waitFor(() => expect(closeSpy).toHaveBeenCalled(), { timeout: 1500 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('完了画面 (submitted state)', () => {
