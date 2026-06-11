@@ -562,9 +562,17 @@ node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --r
      **必ずユーザーに投稿する** (タップして開いてもらう URL はこれ)。「このリンクは Claude の会話以外へ
      転送しないでください」と一言添える。`cloudflared not available — falling back to local mode` が
      出ていたらフォールバック文をそのまま中継し、ローカル URL を案内する (remote 時は自動 open されない)
-3. **`TaskOutput(task_id, block: true)`** で完了通知を待つ
-   - block: true は CLI が exit (= ユーザーが Submit / regen-group / タブ close 検知 timeout) するまで待ち続ける
-   - 待ち時間に上限なし。Claude 側で並行して別の作業もできる
+   - **REMOTE URL はターンの最終テキストメッセージとして単独で投稿し、同一ターンで後続のツール
+     (TaskOutput 等) を呼ばずにターンを終える**。ツール呼び出しの間に挟まれたテキストはチャットに
+     表示されないことがあり、ユーザーに URL が届かない (Bash の生出力を見せるだけでも不可 —
+     ユーザーがタップできる形でメッセージ本文に貼る)
+3. CLI の完了を待つ
+   - **remote モード**: 手順 2 で URL 投稿と同時にターンを終えているので、background task の
+     完了通知 (task-notification) が来るまで待つ。ブロッキングの TaskOutput はターンを
+     終えられなくなるため使わない
+   - **ローカルモード**: **`TaskOutput(task_id, block: true)`** で完了通知を待つ。block: true は
+     CLI が exit (= ユーザーが Submit / regen-group / タブ close 検知 timeout) するまで待ち続ける。
+     待ち時間に上限なし。Claude 側で並行して別の作業もできる
 4. 完了したら `.output` ファイル末尾を Read し、最後の `{"decision":...}` 行を JSON.parse
 
 CLI の挙動:
@@ -780,7 +788,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
    - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
    - Phase 5 の CLI 起動に `--restore-state "$WORK_DIR/restore.json"` を追加する
    - remote モードでは再起動後の **新しい REMOTE URL** (Quick Tunnel は使い捨てなので毎回変わる) を
-     会話に再投稿する
+     会話に再投稿する (Phase 5 手順 2 と同じく、ターンの最終テキストメッセージとして単独で投稿する)
 7. Skill ツールが使えない環境では `AskUserQuestion` で「context を広げた summary.json で再 review するには
    もう一度 /show-me:diff を手動実行してください (restore.json が work-dir に残っているので decision と
    コメントは維持されます)」と告げる。
