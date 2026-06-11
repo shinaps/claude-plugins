@@ -87,8 +87,9 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
     onSubmit({ fillMode, note: trimmed || undefined, reviewKind })
   }
 
+  // max-[768px]:py-2.5 はタッチターゲットを 44px 級に引き上げるモバイル補正
   const BTN_BASE =
-    'px-3 py-1.5 border rounded-md cursor-pointer text-xs font-semibold font-sans whitespace-nowrap transition-[filter,background] duration-[120ms] enabled:hover:brightness-[1.08] disabled:bg-surface-3 disabled:text-text-dim disabled:cursor-not-allowed disabled:border-border'
+    'px-3 py-1.5 max-[768px]:py-2.5 border rounded-md cursor-pointer text-xs font-semibold font-sans whitespace-nowrap transition-[filter,background] duration-[120ms] enabled:hover:brightness-[1.08] disabled:bg-surface-3 disabled:text-text-dim disabled:cursor-not-allowed disabled:border-border'
 
   const messageList = messages.map((m, i) => (
     <div
@@ -178,7 +179,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
             視覚上は「覆い被さる」のではなく「レイアウトを押し出す」開き方になる。
             shadow は意図的に付けない (floating 側と同じ方針)。 */}
         <aside
-          className={`fixed top-[46px] right-0 bottom-0 z-40 flex flex-col gap-2 p-3 w-[420px] bg-surface border-l border-border transition-transform duration-200 ease-out ${
+          className={`fixed top-[46px] right-0 bottom-0 z-40 flex flex-col gap-2 p-3 w-[420px] max-[768px]:w-full bg-surface border-l border-border transition-transform duration-200 ease-out ${
             sidebarOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
           role="complementary"
@@ -220,8 +221,9 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
   return (
     // shadow は意図的に付けない: 高輝度モニターで暗色 shadow の halo が滲んで見えるため、
     // 浮遊要素の区切りは border のみで表現する。
+    // モバイルでは固定幅 460px が画面をほぼ覆い尽くすため、左右 12px の全幅 bottom sheet に切り替える
     <div
-      className="fixed bottom-6 right-6 z-40 flex flex-col gap-2 p-3 w-[460px] bg-surface border border-border rounded-xl"
+      className="fixed bottom-6 right-6 z-40 flex flex-col gap-2 p-3 w-[460px] max-[768px]:left-3 max-[768px]:right-3 max-[768px]:bottom-3 max-[768px]:w-auto bg-surface border border-border rounded-xl"
       role="toolbar"
       aria-label="Submit review"
     >

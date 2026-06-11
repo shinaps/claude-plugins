@@ -24,13 +24,15 @@ const DIFF_TAB_COLLAPSE_ROW_THRESHOLD = 200
 export type DiffTabProps = {
   rawPanels: ReadonlyArray<RenderedPanel>
   fileComments?: FileCommentHandlers
+  // 単一カラム unified 表示 (PanelBlock → Panel へ pass-through)
+  unified?: boolean
   onJumpToRawPanel: (panelId: string) => void
 } & LineCommentHandlers
 
 type PanelStats = { add: number; del: number; totalRows: number }
 
 export const DiffTab = memo(function DiffTab(props: DiffTabProps) {
-  const { rawPanels, fileComments, onJumpToRawPanel, ...lineCommentHandlers } = props
+  const { rawPanels, fileComments, unified, onJumpToRawPanel, ...lineCommentHandlers } = props
 
   // 差分カウント (+N/-M) と行数 (collapsed 判定用) を 1 パスで集計。
   // rawPanels は payload 由来で不変なので実質 mount 時 1 回だけ走る。
@@ -56,10 +58,12 @@ export const DiffTab = memo(function DiffTab(props: DiffTabProps) {
     // raw-diff-tab BEM 維持 (App の jumpToRawPanel の querySelector で参照される) + 内側 scope に
     // `--nav-width: 280px` を設定。grid-template-columns は var(--nav-width) を参照し、内側
     // .comment-row も同じ var を calc で使うため、280 を 1 箇所だけ書く形にして将来の変更漏れを防ぐ。
-    <div className="raw-diff-tab grid gap-6 px-6 pt-4 pb-20 grid-cols-[var(--nav-width)_minmax(0,1fr)] [--nav-width:280px]">
+    // max-[1000px]: group-section と同じ閾値でファイル nav を縦積みに解除する (モバイル / 狭幅)。
+    // max-[768px]:pb-[260px] は SubmitBar の bottom sheet ぶんの余白 (App.tsx guide-tab と同じ理由)。
+    <div className="raw-diff-tab grid gap-6 px-6 pt-4 pb-20 grid-cols-[var(--nav-width)_minmax(0,1fr)] [--nav-width:280px] max-[1000px]:grid-cols-1 max-[768px]:pb-[260px]">
       {/* raw-diff-nav BEM 維持: ::-webkit-scrollbar 非表示 rule を globals.css でスコープしているため */}
       <aside
-        className="raw-diff-nav sticky top-14 self-start max-h-[calc(100vh-80px)] overflow-y-auto pr-1 flex flex-col gap-0.5 [scrollbar-width:none] [-ms-overflow-style:none]"
+        className="raw-diff-nav sticky top-14 self-start max-h-[calc(100vh-80px)] overflow-y-auto pr-1 flex flex-col gap-0.5 [scrollbar-width:none] [-ms-overflow-style:none] max-[1000px]:static max-[1000px]:max-h-none"
         aria-label="Changed files"
       >
         {rawPanels.map((p) => {
@@ -96,6 +100,7 @@ export const DiffTab = memo(function DiffTab(props: DiffTabProps) {
             <PanelBlock
               key={p.panelId}
               panel={p}
+              unified={unified}
               defaultCollapsed={isAutoCollapseByPattern || isAutoCollapseByRows}
               fileComments={fileComments}
               {...lineCommentHandlers}

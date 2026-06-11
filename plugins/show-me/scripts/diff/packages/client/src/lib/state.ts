@@ -36,9 +36,17 @@ export function startHeartbeat(): () => void {
   // 初回は即時、その後 5 秒間隔。CLI 側 boot grace 30s 内に届けば「初回 ping 来た」扱いで安心。
   send()
   const interval = window.setInterval(send, 5000)
+  // モバイルブラウザ (特に iOS Safari) はバックグラウンドで setInterval ごと止めるため、
+  // 復帰した瞬間に 1 発撃って「タブはまだ生きている」を最速で CLI に伝える。
+  // デスクトップでも害は無い (重複 ping は server 側で last-seen の上書きになるだけ)。
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') send()
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
   return () => {
     stopped = true
     window.clearInterval(interval)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
   }
 }
 

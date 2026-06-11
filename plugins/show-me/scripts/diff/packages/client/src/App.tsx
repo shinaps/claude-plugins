@@ -36,6 +36,7 @@ import { getToken } from './lib/state'
 import { appendUserMessage, mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from './lib/merge-threads'
 import { useLineComments } from './guide/useLineComments'
 import { useNavResizer } from './guide/useNavResizer'
+import { useMediaQuery } from './lib/useMediaQuery'
 
 type Props = { payload: ClientPayload }
 type Tab = 'activity' | 'guide' | 'diff'
@@ -527,6 +528,11 @@ export function App({ payload }: Props) {
 
   const onNavResizerPointerDown = useNavResizer(containerRef)
 
+  // 768px 以下では split の各列が ~187px になり読めないため unified (単一カラム) に切り替える。
+  // breakpoint の判定理由と JS 判定にする理由は useMediaQuery のコメント参照。
+  // 既存の 1000px (GroupNav 縦積み) とは役割が違うので別の値を切っている。
+  const unified = useMediaQuery('(max-width: 768px)')
+
   // ↑↓ キーの「次/前の変更箇所」ジャンプ。Guide / Diff のみ有効 (Activity ではキーを奪わない)。
   // 旧 ChunkNavigator (左下 floating UI) は GroupNav の decision ボタンに被る構造問題で廃止し、
   // キーボード機能だけを残した (useChunkKeyNav 冒頭コメント参照)。
@@ -560,17 +566,23 @@ export function App({ payload }: Props) {
   }, [allDecided, rcCount, submitted, regenPending])
 
   // done state: 全画面センター寄せの完了メッセージ。
+  // remote では window.close() が効かず (script で開いた tab ではない)、relaunch 後の URL も
+  // 毎回変わる (Quick Tunnel の使い捨て URL) ため、「新しい URL が会話に来る」ことを伝える。
   if (submitted === 'regen') {
     return (
       <div className="px-6 py-20 text-center text-lg text-text w-full">
-        Requesting context expansion. You can close this tab — review will re-open with the expanded panels.
+        {payload.remote
+          ? 'Requesting context expansion. A new review URL will be posted in the Claude conversation — tap it to continue.'
+          : 'Requesting context expansion. You can close this tab — review will re-open with the expanded panels.'}
       </div>
     )
   }
   if (submitted === 'comment') {
     return (
       <div className="px-6 py-20 text-center text-lg text-text w-full">
-        Comment sent. You can close this tab — review will re-open with Claude&apos;s replies.
+        {payload.remote
+          ? 'Comment sent. A new review URL will be posted in the Claude conversation — tap it to continue.'
+          : 'Comment sent. You can close this tab — review will re-open with Claude’s replies.'}
       </div>
     )
   }
@@ -621,7 +633,9 @@ export function App({ payload }: Props) {
   // guide-tab class は GroupNav の useScrollSpy の querySelector スコープ (Diff タブに同 panelId の
   // .panel-block が存在するため、Guide pane 配下だけを観測対象にする目印)。
   const guideContent = (
-    <div className="guide-tab m-0 w-full px-6 pb-[200px] flex-1" ref={containerRef}>
+    // max-[768px]:pb-[260px]: モバイルでは SubmitBar が全幅 bottom sheet (高さ ~150-220px) になり
+    // 最終 group の decision UI を恒久的に覆うため、sheet ぶんのスクロール余白を底に確保する
+    <div className="guide-tab m-0 w-full px-6 pb-[200px] max-[768px]:pb-[260px] flex-1" ref={containerRef}>
       {groupsState.map((g, i) => (
         <GroupSection
           key={g.groupId}
@@ -644,6 +658,7 @@ export function App({ payload }: Props) {
           onCommentChange={onCommentChange}
           submitDisabled={regenPending}
           onJumpToGroupIndex={onJumpToGroupIndex}
+          unified={unified}
           {...lineCommentHandlers}
         />
       ))}
@@ -657,6 +672,7 @@ export function App({ payload }: Props) {
     <DiffTab
       rawPanels={payload.rawPanels}
       fileComments={fileComments}
+      unified={unified}
       onJumpToRawPanel={jumpToRawPanel}
       {...lineCommentHandlers}
     />
@@ -680,7 +696,7 @@ export function App({ payload }: Props) {
           隠すのではなく、レイアウトごと狭めて全文が読める状態を保つ。 */}
       {visitedTabs.has('activity') ? (
         <div
-          className={`tab-pane transition-[margin] duration-200 ease-out${tab === 'activity' ? '' : ' tab-hidden'}${
+          className={`tab-pane transition-[margin] duration-200 ease-out max-[768px]:mr-0 max-[768px]:pb-[240px]${tab === 'activity' ? '' : ' tab-hidden'}${
             tab === 'activity' && sidebarOpen ? ' mr-[420px]' : ''
           }`}
         >

@@ -318,7 +318,7 @@ export function GroupNav({
               レビューは継続する。decision も確定しない。 */}
           <button
             type="button"
-            className="btn-decision flex-1 px-2.5 py-1.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-decision flex-1 px-2.5 py-1.5 max-[768px]:py-2.5 border border-border bg-transparent text-text rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={!decisionInteractive || comment.trim() === ''}
             onClick={() => onSubmitComment(groupId)}
             aria-label="Comment"
@@ -329,7 +329,7 @@ export function GroupNav({
           {/* Request Changes (ghost 赤) */}
           <button
             type="button"
-            className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 border bg-transparent text-del-fg border-[rgba(248,113,113,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(248,113,113,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
+            className={`btn-decision btn-rc flex-1 px-2.5 py-1.5 max-[768px]:py-2.5 border bg-transparent text-del-fg border-[rgba(248,113,113,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(248,113,113,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'request-changes' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'request-changes'}
             aria-label="Request changes"
@@ -341,7 +341,7 @@ export function GroupNav({
           {/* Approve (ghost 緑) */}
           <button
             type="button"
-            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 border bg-transparent text-add-fg border-[rgba(74,222,128,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(74,222,128,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
+            className={`btn-decision btn-approve flex-1 px-2.5 py-1.5 max-[768px]:py-2.5 border bg-transparent text-add-fg border-[rgba(74,222,128,0.5)] rounded-[7px] cursor-pointer transition-colors duration-[120ms] enabled:hover:bg-[rgba(74,222,128,0.12)] disabled:opacity-50 disabled:cursor-not-allowed${decision === 'approved' ? ' is-selected' : ''}`}
             disabled={!decisionInteractive}
             aria-pressed={decision === 'approved'}
             aria-label="Approve"
