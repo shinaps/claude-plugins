@@ -2,10 +2,11 @@ import type { ThreadMessage, ThreadSnapshot } from '@zeus/review-diff-shared'
 import { threadKey } from '@zeus/review-diff-shared'
 import { parseLineCommentKey } from './state'
 
-// UI の pending 層 (useLineComments の Map / group textarea の書き残し) を ThreadSnapshot に
-// ローカル合成する純関数群。送信チャネルは threads に一本化されており、ここが pending 層と
-// wire format の境界になる。setState を介さず送信直前に合成するのは、state 反映前に fetch が
-// 走る race を構造的に避けるため (appendReviewNote と同じパターン)。
+// thread への user message 合成を担う純関数群。送信チャネルは threads に一本化されており、
+// ここが pending 層 (useLineComments の Map / group textarea の書き残し) と wire format の
+// 境界になる。merge 系は setState を介さず送信直前に合成する (state 反映前に fetch が走る
+// race を構造的に避けるため)。appendUserMessage は単体でも export し、App の setThreads 更新
+// (Comment ボタンの pending 積み / Activity タブのスレッド返信) でも同じ規約を共有する。
 
 function userMessage(body: string): ThreadMessage {
   return { id: crypto.randomUUID(), author: 'user', body, ts: Date.now() }
@@ -13,7 +14,7 @@ function userMessage(body: string): ThreadMessage {
 
 // thread へ user message を積む。既存 thread には append しつつ resolved を倒す
 // (返信待ちの open スレッドに戻す)。無ければ新規 thread を作る。
-function appendUserMessage(
+export function appendUserMessage(
   threads: Record<string, ThreadSnapshot>,
   key: string,
   scope: ThreadSnapshot['scope'],

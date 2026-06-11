@@ -21,7 +21,6 @@ import type {
   RenderedPanel,
   ResultJson,
   ReviewKind,
-  ThreadMessage,
   ThreadSnapshot,
 } from '@zeus/review-diff-shared'
 import { threadKey } from '@zeus/review-diff-shared'
@@ -35,7 +34,7 @@ import { shouldAutoCollapseFile } from './guide/auto-collapse'
 import { renderMarkdown, escapeHtml } from './lib/markdown'
 import { basename } from './lib/path'
 import { getToken } from './lib/state'
-import { mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from './lib/merge-threads'
+import { appendUserMessage, mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from './lib/merge-threads'
 import { useLineComments } from './guide/useLineComments'
 import { useNavResizer } from './guide/useNavResizer'
 
@@ -110,16 +109,8 @@ export function App({ payload }: Props) {
   const addGroupComment = useCallback((groupId: string) => {
     const body = (groupComments[groupId] ?? '').trim()
     if (!body) return
-    const key = threadKey({ type: 'group', groupId })
-    const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body, ts: Date.now() }
-    setThreads(prev => {
-      const existing = prev[key]
-      const snap: ThreadSnapshot = existing
-        // 追記時は resolved を倒す (返信待ちの open スレッドに戻す)
-        ? { ...existing, messages: [...existing.messages, msg], resolved: false }
-        : { scope: { type: 'group', groupId }, messages: [msg], resolved: false, outdated: false }
-      return { ...prev, [key]: snap }
-    })
+    const scope = { type: 'group' as const, groupId }
+    setThreads(prev => appendUserMessage(prev, threadKey(scope), scope, [body]))
     setGroupComments(prev => ({ ...prev, [groupId]: '' }))
   }, [groupComments])
 
@@ -128,14 +119,19 @@ export function App({ payload }: Props) {
   const addFileComment = useCallback((file: string, body: string) => {
     const trimmed = body.trim()
     if (!trimmed) return
-    const key = threadKey({ type: 'file', file })
-    const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: trimmed, ts: Date.now() }
+    const scope = { type: 'file' as const, file }
+    setThreads(prev => appendUserMessage(prev, threadKey(scope), scope, [trimmed]))
+  }, [])
+
+  // Activity タブの Conversation カードからのスレッド返信。既存スレッドへの append 専用で、
+  // scope はスレッド自身から引く (新規スレッド作成は group / file / line それぞれの正規動線が担う)。
+  const addThreadReply = useCallback((key: string, body: string) => {
+    const trimmed = body.trim()
+    if (!trimmed) return
     setThreads(prev => {
       const existing = prev[key]
-      const snap: ThreadSnapshot = existing
-        ? { ...existing, messages: [...existing.messages, msg], resolved: false }
-        : { scope: { type: 'file', file }, messages: [msg], resolved: false, outdated: false }
-      return { ...prev, [key]: snap }
+      if (!existing) return prev
+      return appendUserMessage(prev, key, existing.scope, [trimmed])
     })
   }, [])
 
@@ -721,15 +717,8 @@ function appendReviewNote(
   note: string | undefined,
 ): Record<string, ThreadSnapshot> {
   if (!note) return threads
-  const key = threadKey({ type: 'review' })
-  const existing = threads[key]
-  const msg: ThreadMessage = { id: crypto.randomUUID(), author: 'user', body: note, ts: Date.now() }
-  return {
-    ...threads,
-    [key]: existing
-      ? { ...existing, messages: [...existing.messages, msg], resolved: false }
-      : { scope: { type: 'review' }, messages: [msg], resolved: false, outdated: false },
-  }
+  const scope = { type: 'review' as const }
+  return appendUserMessage(threads, threadKey(scope), scope, [note])
 }
 
 function formatMeta(payload: ClientPayload): string {
