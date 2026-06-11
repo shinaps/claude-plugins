@@ -39,6 +39,8 @@ type Props = {
   onSubmitComment: (groupId: string) => void
   // ファイル単位コメント (PanelBlock → PanelHeader へ pass-through)
   fileComments?: FileCommentHandlers
+  // 単一カラム unified 表示 (PanelBlock → Panel へ pass-through)
+  unified?: boolean
   submitDisabled: boolean
   // グループ間ナビゲーション (左 nav の prev/next 矢印用)
   onJumpToGroupIndex: (targetIndex: number) => void
@@ -48,7 +50,7 @@ export const GroupSection = memo(function GroupSection({
   index, total, groupId, title, description, panels,
   onJumpToPanel, onNavResizerPointerDown,
   regenPending, onRequestContext,
-  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, fileComments, submitDisabled,
+  decision, comment, thread, onDecisionChange, onCommentChange, onSubmitComment, fileComments, unified, submitDisabled,
   onJumpToGroupIndex,
   ...lineCommentHandlers
 }: Props) {
@@ -103,6 +105,7 @@ export const GroupSection = memo(function GroupSection({
             <PanelBlock
               key={p.panelId}
               panel={p}
+              unified={unified}
               defaultCollapsed={isCollapseDefault}
               fileComments={fileComments}
               {...lineCommentHandlers}

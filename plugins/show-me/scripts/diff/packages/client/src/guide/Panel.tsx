@@ -25,10 +25,11 @@ import { Plus, SquareArrowOutUpRight } from 'lucide-react'
 import type { RenderedPanel, SideBySideRow, Side, ThreadSnapshot } from '@show-me/diff-shared'
 import { sideToAttr, attrToSide } from '@show-me/diff-shared'
 import { parseLineCommentKey, lineCommentKey, getToken } from '../lib/state'
-import { getShiki } from '../lib/shiki-bundle'
 import { escapeHtml } from '../lib/markdown'
+import { highlightCode } from '../lib/highlight-code'
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
-import { CommentForm } from './CommentForm'
+import { CommentRow, anchorMapKey, appendCommentKey, sortAnchorKeys } from './CommentRow'
+import { UnifiedBody } from './UnifiedBody'
 import type { LineCommentHandlers } from './useLineComments'
 
 // v5: window 経由で editorAvailable と editor-open Toast コールバックを受け渡す。
@@ -43,29 +44,6 @@ declare global {
     __reviewDiffEditorAvailable?: boolean
     __reviewDiffShowToast?: (msg: string) => void
     __reviewDiffThreads?: Record<string, ThreadSnapshot>
-  }
-}
-
-// v5: line scope の lineCommentKey から threadKey (= "line:<panelId>:<side>:<line>[:<endLine>]") を作る。
-// payload.initialThreads の key と一致する形式。
-function lineKeyToThreadKey(panelId: string, side: 'asIs' | 'toBe', line: number, endLine?: number): string {
-  const range = endLine != null && endLine !== line ? `${line}:${endLine}` : `${line}`
-  return `line:${panelId}:${side}:${range}`
-}
-
-// (side, anchor) → コメント key 配列の逆引き Map のキー。
-// producer (buildCommentKeysByAnchor) と consumer (SideRow の lookup) が同じ形式で
-// 組む必要があるため関数に固定する。anchor は range コメントなら終端行 (= CommentRow を出す行)。
-function anchorMapKey(side: Side, anchor: number): string {
-  return `${side}\x1f${anchor}`
-}
-
-// map[mapKey] の配列に commentKey を重複なしで追記する。
-function appendCommentKey(map: Map<string, string[]>, mapKey: string, commentKey: string): void {
-  const commentKeys = map.get(mapKey) ?? []
-  if (!commentKeys.includes(commentKey)) {
-    commentKeys.push(commentKey)
-    map.set(mapKey, commentKeys)
   }
 }
 
@@ -140,16 +118,6 @@ function flattenWithChunks(panel: RenderedPanel): FlatRow[] {
   return flat
 }
 
-function highlightCode(raw: string, lang: string): string {
-  try {
-    const html = getShiki().codeToHtml(raw, { lang, theme: 'github-dark' })
-    const m = html.match(/<code[^>]*>([\s\S]*?)<\/code>/)
-    return (m ? m[1] : escapeHtml(raw)).replace(/\n$/, '')
-  } catch {
-    return escapeHtml(raw)
-  }
-}
-
 type DragState = {
   side: Side
   startNumber: number
@@ -159,6 +127,8 @@ type DragState = {
 export type PanelProps = {
   panel: RenderedPanel
   highlight?: boolean
+  // 単一カラム unified 表示 (モバイル / 狭幅ウィンドウ)。false なら従来の split。
+  unified?: boolean
   // PanelHeader 右に Hide diff ボタンを出すための callback。
   // PanelBlock 側で「userOverride='collapse' 状態に切替」をハンドル。
   onCollapse?: () => void
@@ -169,6 +139,7 @@ export type PanelProps = {
 export const Panel = memo(function Panel({
   panel,
   highlight = true,
+  unified = false,
   onCollapse,
   fileComments,
   ...handlers
@@ -191,6 +162,10 @@ export const Panel = memo(function Panel({
   // min-height として書き戻して同期する。requestAnimationFrame で coalesce してレイアウト
   // スラッシングを防ぐ。
   useLayoutEffect(() => {
+    // unified では左右が無いので行高同期は不要。deps に unified を含めるのは、画面回転や
+    // リサイズで実行時に unified⇄split が切り替わったとき effect を付け直すため
+    // (ガードだけだと split 復帰後に同期が一切動かないまま固まる)。
+    if (unified) return
     const container = panelContainerRef.current
     if (!container) return
     let raf = 0
@@ -272,7 +247,7 @@ export const Panel = memo(function Panel({
         el.style.minHeight = ''
       })
     }
-  }, [panel.segments])
+  }, [panel.segments, unified])
 
   // v5: panel-side の実 clientWidth を CSS variable --ps-width に書き出し、
   // .comment-row が `width: var(--ps-width)` で参照する。
@@ -287,6 +262,8 @@ export const Panel = memo(function Panel({
   // CSS variable をセットする。viewport / nav width / scrollbar gutter / grid gap などの影響を
   // 全て吸収できる (実 clientWidth は計算誤差ゼロ)。
   useLayoutEffect(() => {
+    // unified では UnifiedBody が自前で --ps-width を書くため不要 (deps の unified は行高同期と同じ理由)
+    if (unified) return
     const container = panelContainerRef.current
     if (!container) return
     const sides = container.querySelectorAll<HTMLElement>('.panel-side')
@@ -306,7 +283,7 @@ export const Panel = memo(function Panel({
       ro.observe(el)
     })
     return () => ro.disconnect()
-  }, [])
+  }, [unified])
 
   // 左右スクロール同期: per-side が独立 overflow-x:auto なので、片側を横スクロールすると
   // 反対側は動かない。ユーザー要望で「赤と緑のスクロールが同期」= 1 panel 内では
@@ -318,6 +295,8 @@ export const Panel = memo(function Panel({
   // 新実装: scroll event は drop せず latest scrollLeft を rAF にバッチ保留 → frame 単位で apply。
   // 再帰防止は「dst が src と同値なら skip」で取る (sync 直後の反対側 scroll event は no-op)。
   useLayoutEffect(() => {
+    // unified では mirror すべき反対 side が無い (deps の unified は行高同期と同じ理由)
+    if (unified) return
     const container = panelContainerRef.current
     if (!container) return
     const asis = container.querySelector<HTMLElement>('.panel-side-asis')
@@ -361,7 +340,7 @@ export const Panel = memo(function Panel({
       asis.removeEventListener('scroll', onAsis)
       tobe.removeEventListener('scroll', onTobe)
     }
-  }, [])
+  }, [unified])
 
   const setDragBoth = useCallback((next: DragState) => {
     dragRef.current = next
@@ -610,17 +589,26 @@ export const Panel = memo(function Panel({
       {panel.sourcesUnavailable ? (
         <SourcesUnavailableBanner info={panel.sourcesUnavailable} />
       ) : null}
-      <SplitBody
-        panel={panel}
-        flat={flat}
-        highlight={highlight}
-        commentKeysByAnchor={commentKeysByAnchor}
-        handlers={handlers}
-        isInDragRange={isInDragRange}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-      />
+      {unified ? (
+        <UnifiedBody
+          panel={panel}
+          highlight={highlight}
+          commentKeysByAnchor={commentKeysByAnchor}
+          handlers={handlers}
+        />
+      ) : (
+        <SplitBody
+          panel={panel}
+          flat={flat}
+          highlight={highlight}
+          commentKeysByAnchor={commentKeysByAnchor}
+          handlers={handlers}
+          isInDragRange={isInDragRange}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        />
+      )}
       {/* ドラッグ中の line-snap インジケータ。`+` を hover 行の gutter 中央にスナップ表示し、
           普段の + ボタンと同じ場所で「いま範囲選択中の行」を視認化。
           perf-fix: panel-block に content-visibility: auto を当てたことで暗黙的に
@@ -840,17 +828,6 @@ function SideRow({
   )
 }
 
-function sortAnchorKeys(keys: string[]): string[] {
-  return [...keys].sort((a, b) => {
-    const pa = parseLineCommentKey(a)
-    const pb = parseLineCommentKey(b)
-    const ra = pa.endNumber != null ? 0 : 1
-    const rb = pb.endNumber != null ? 0 : 1
-    if (ra !== rb) return ra - rb
-    return pa.number - pb.number
-  })
-}
-
 // v5: panel から開く対象ファイル名を解決する。toBe 側は panel.toBe.file、asIs 側は panel.asIs.file。
 function getEditorTarget(panel: RenderedPanel, side: Side): string | null {
   if (side === 'toBe') return panel.toBe?.file ?? null
@@ -943,111 +920,6 @@ function LineTrigger({
   )
 }
 
-function CommentRow({
-  lineKey, panel, handlers,
-}: {
-  lineKey: string
-  panel: RenderedPanel
-  handlers: LineCommentHandlers
-}): React.ReactElement | null {
-  const parsed = parseLineCommentKey(lineKey)
-  const savedList = handlers.lineComments.get(lineKey)
-  const hasSaved = !!savedList && savedList.length > 0
-  const formOpen = handlers.activeForm === lineKey
-  // v5: 永続化された thread (= 前回 submit + Claude 応答) を取得して全 message を時系列で表示する
-  const threadKey = lineKeyToThreadKey(panel.panelId, parsed.side, parsed.number, parsed.endNumber)
-  const persistedThread = (typeof window !== 'undefined' ? window.__reviewDiffThreads : undefined)?.[threadKey]
-  const persistedMessages = persistedThread?.messages ?? []
-  const hasPersisted = persistedMessages.length > 0
-  if (!hasSaved && !formOpen && !hasPersisted) return null
-
-  const label =
-    parsed.endNumber != null && parsed.endNumber !== parsed.number
-      ? `行 ${parsed.number}-${parsed.endNumber}`
-      : `行 ${parsed.number}`
-
-  // word-wrap (overflow-wrap: anywhere) で panel 幅を超える長文 message を強制改行する。
-  // 親の comment-row は width calc で固定 (CSS)、その中の messages を breakable に。
-  // overflow-hidden + min-w-0 + max-w-full で「panel-side の overflow-x: auto に flex item が
-  // 横スクロールを生まないよう」固定する (CommentForm の textarea や長文 message が起点だった)。
-  const thread = (
-    <div
-      className="flex flex-col gap-2 pl-14 pr-4 py-2.5 font-sans text-sm leading-[1.5] min-w-0 max-w-full overflow-hidden"
-      data-side={sideToAttr(parsed.side)}
-    >
-      <div className="font-mono text-2xs text-text-dim tracking-[0.04em] uppercase">{label}</div>
-      {/* v5: persistedMessages を user / agent 別バブルで時系列順に表示 */}
-      {persistedMessages.map((msg) => (
-        <div
-          key={msg.id}
-          className={
-            msg.author === 'agent'
-              ? 'thread-message thread-message-agent border-l-[3px] border-accent bg-surface-2 rounded-r-md px-3 py-2 min-w-0 max-w-full [overflow-wrap:anywhere] [word-break:break-word]'
-              : 'thread-message thread-message-user border-l-[3px] border-border bg-surface rounded-r-md px-3 py-2 min-w-0 max-w-full [overflow-wrap:anywhere] [word-break:break-word]'
-          }
-        >
-          <div className="text-3xs uppercase tracking-wider text-text-dim mb-1">
-            {msg.author === 'agent' ? 'Claude' : 'You'}
-          </div>
-          <div className="whitespace-pre-wrap">{msg.body}</div>
-        </div>
-      ))}
-      {/* 本セッションで追加された saved comments (= 次の submit に乗る draft) */}
-      {savedList?.map((body, i) => (
-        <SavedComment
-          key={`${lineKey}-${i}`}
-          lineKey={lineKey}
-          index={i}
-          body={body}
-          editingBody={handlers.editing.get(`${lineKey}#${i}`)}
-          onStartEdit={handlers.onStartEditLineComment}
-          onCancelEdit={handlers.onCancelEditLineComment}
-          onSaveEdit={handlers.onSaveEditLineComment}
-          onDelete={handlers.onDeleteLineComment}
-        />
-      ))}
-      {formOpen ? (
-        <CommentForm
-          panelId={panel.panelId}
-          side={parsed.side}
-          number={parsed.number}
-          endNumber={parsed.endNumber}
-          onSave={(body) =>
-            handlers.onAddLineComment(
-              panel.panelId,
-              { side: parsed.side, number: parsed.number, endNumber: parsed.endNumber },
-              body,
-            )
-          }
-          onCancel={handlers.onCloseLineForm}
-        />
-      ) : null}
-      {/* v5: 既存スレッドがあるが入力欄が閉じている場合、Reply ボタンを 1 つ置く (= 自然に返信を続けられる) */}
-      {hasPersisted && !formOpen ? (
-        <button
-          type="button"
-          className="self-start mt-1 px-2.5 py-1 text-xs text-text-muted border border-border rounded-md hover:bg-surface-2 cursor-pointer"
-          onClick={() => handlers.onOpenLineForm(panel.panelId, { side: parsed.side, number: parsed.number, endNumber: parsed.endNumber })}
-        >
-          Reply
-        </button>
-      ) : null}
-    </div>
-  )
-
-  // in-flow (= code-row 直後の通常フロー) で描画する。縦方向はコードと一体でスクロールし、
-  // 行間に高さも確保される (= コードに「埋め込まれた」見え方)。
-  // 横方向は transform: translateX(var(--ps-scroll-x)) で panel-side の visible 左端に固定
-  // (globals.css .comment-row、変数は Panel の横スクロールハンドラが panel-side に書く)。
-  // position: fixed + portal にしない理由: フローから抜けるとコメントが行間に空間を確保できず
-  // 下の行に被さる上、スクロール追従が rAF 1 frame 遅れて「ふわふわ浮いて見える」ため。
-  return (
-    <div className="comment-row" data-comment-side={sideToAttr(parsed.side)}>
-      <div className="p-0">{thread}</div>
-    </div>
-  )
-}
-
 // I-4: panel source unavailable のバナー。kind に応じて文言を変える。
 function SourcesUnavailableBanner({ info }: { info: NonNullable<RenderedPanel['sourcesUnavailable']> }) {
   const text = info.kind === 'pr-fetch-failed'
@@ -1071,91 +943,3 @@ function SourcesUnavailableBanner({ info }: { info: NonNullable<RenderedPanel['s
   )
 }
 
-function SavedComment({
-  lineKey, index, body, editingBody,
-  onStartEdit, onCancelEdit, onSaveEdit, onDelete,
-}: {
-  lineKey: string
-  index: number
-  body: string
-  editingBody: string | undefined
-  onStartEdit: (key: string, index: number, body: string) => void
-  onCancelEdit: (key: string, index: number) => void
-  onSaveEdit: (key: string, index: number, body: string) => void
-  onDelete: (key: string, index: number) => void
-}) {
-  const isEditing = editingBody !== undefined
-  const [draft, setDraft] = useState(editingBody ?? body)
-  const ref = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(editingBody ?? body)
-      ref.current?.focus()
-    }
-  }, [isEditing, editingBody, body])
-
-  // comment-bubble BEM 維持: `:hover .comment-actions { opacity: 1 }` 起動の scope selector が
-  // globals.css にある + is-editing は外側からの状態指定 hook 用に残す (現在は padding 切替に使用)。
-  if (isEditing) {
-    return (
-      <div className="comment-bubble is-editing relative bg-surface border border-border-soft rounded-lg px-3 py-2.5 text-text text-sm leading-normal">
-        <textarea
-          ref={ref}
-          className="w-full min-h-[70px] resize-none overflow-y-auto field-sizing-content bg-background text-text border border-border rounded-md px-2.5 py-2 font-sans text-sm leading-[1.5] outline-none transition-colors duration-100 focus:border-accent"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault()
-              onSaveEdit(lineKey, index, draft)
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              onCancelEdit(lineKey, index)
-            }
-          }}
-        />
-        <div className="flex justify-end gap-1.5 mt-2">
-          <button
-            type="button"
-            className="px-3 py-1 border border-border rounded-md text-xs font-medium font-sans cursor-pointer bg-transparent text-text-muted hover:bg-surface-3 hover:text-text transition-colors duration-100"
-            onClick={() => onCancelEdit(lineKey, index)}
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            className="px-3 py-1 border border-accent bg-accent rounded-md text-xs font-medium font-sans cursor-pointer text-white hover:brightness-[1.08] transition-[filter,background] duration-100"
-            onClick={() => onSaveEdit(lineKey, index, draft)}
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    )
-  }
-  return (
-    <div className="comment-bubble relative bg-surface border border-border-soft rounded-lg px-4 py-3 text-text text-sm leading-normal">
-      <div className="whitespace-pre-wrap break-words">{body}</div>
-      {/* comment-actions BEM 維持: comment-bubble:hover/focus-within で opacity を 1 に切り替える
-          scope selector が globals.css にあるため。base の opacity:0 と placement は utility で表現。 */}
-      <div className="comment-actions absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-100">
-        <button
-          type="button"
-          className="bg-transparent border border-border text-text-muted text-2xs px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:bg-surface-3 hover:text-text"
-          onClick={() => onStartEdit(lineKey, index, body)}
-        >
-          編集
-        </button>
-        <button
-          type="button"
-          className="bg-transparent border border-border text-text-muted text-2xs px-2 py-0.5 rounded-[5px] cursor-pointer font-sans transition-colors duration-100 hover:text-danger hover:border-[rgba(248,113,113,0.4)]"
-          onClick={() => {
-            if (confirm('このコメントを削除しますか？')) onDelete(lineKey, index)
-          }}
-        >
-          削除
-        </button>
-      </div>
-    </div>
-  )
-}

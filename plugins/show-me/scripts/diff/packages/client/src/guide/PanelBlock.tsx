@@ -21,6 +21,8 @@ import type { LineCommentHandlers } from './useLineComments'
 export type PanelBlockProps = {
   panel: RenderedPanel
   highlight?: boolean
+  // 単一カラム unified 表示 (Panel に pass-through)
+  unified?: boolean
   // 初期 collapsed 状態。ユーザーが Show diff を押すと expand 可能。
   // defaultCollapsed の値変更には反応しない (= mount 後に group decision が変わっても collapsed 状態は維持)。
   defaultCollapsed?: boolean
@@ -38,7 +40,7 @@ const PANEL_HEADER_PX = 56
 // SideRow 群) の reconciliation を丸ごと skip する。threads 変化時は fileComments の参照が
 // 変わるのでここも破れて CommentRow の表示更新が届く (Panel.tsx の commentKeysByAnchor 参照)。
 export const PanelBlock = memo(function PanelBlock(props: PanelBlockProps) {
-  const { panel, highlight, defaultCollapsed, fileComments, ...handlers } = props
+  const { panel, highlight, unified, defaultCollapsed, fileComments, ...handlers } = props
 
   // segments の row 数合計から panel 高さを推定。これを contain-intrinsic-size に流すことで、
   // cv:auto の placeholder が 500px 固定 (CSS default) ではなく、各 panel に正確な値になる。
@@ -150,6 +152,7 @@ export const PanelBlock = memo(function PanelBlock(props: PanelBlockProps) {
       <Panel
         panel={panel}
         highlight={effectiveHighlight}
+        unified={unified}
         onCollapse={onCollapse}
         fileComments={fileComments}
         {...handlers}
