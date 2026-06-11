@@ -30,6 +30,7 @@ import {
   type FileChangeKind,
   type GroupFileInfo,
 } from './activity-summary'
+import { ThreadReplyForm } from './ThreadReplyForm'
 import { basename } from '../lib/path'
 
 // Activity タブの group 行で必要な最小限の info だけ受ける (App.tsx の AppGroup と互換)。
@@ -55,6 +56,9 @@ export type ActivityViewProps = {
   scriptResults?: ScriptResultsPayload
   // v5: スレッド全集合。Conversation セクションに集約表示 (active / resolved / outdated を分類)。
   threads?: Record<string, ThreadSnapshot>
+  // Conversation カードからのスレッド返信。App の threads state に user message を
+  // pending として積む (送信は SubmitBar の Comment / Submit に同乗)。
+  onReplyToThread: (threadKey: string, body: string) => void
 }
 
 // 段別 bar segment の色サイクル。purple → green → amber → red → cool gray の順で
@@ -91,6 +95,7 @@ export const ActivityView: FC<ActivityViewProps> = ({
   onJumpToGroup,
   scriptResults,
   threads,
+  onReplyToThread,
 }) => {
   // review スレッド (レビュー全体コメント) は Conversation 一覧に出さない:
   // SubmitBar の sidebar / floating パネルが専用の表示場所なので、ここにも出すと二重になる。
@@ -147,7 +152,7 @@ export const ActivityView: FC<ActivityViewProps> = ({
 
           {conversationThreads && Object.keys(conversationThreads).length > 0 ? (
             <Section label={`Conversation · ${Object.keys(conversationThreads).length}`}>
-              <ConversationList threads={conversationThreads} groups={groups} rawPanels={rawPanels} />
+              <ConversationList threads={conversationThreads} groups={groups} rawPanels={rawPanels} onReplyToThread={onReplyToThread} />
             </Section>
           ) : null}
         </div>
@@ -396,7 +401,8 @@ const ConversationList: FC<{
   threads: Record<string, ThreadSnapshot>
   groups: ReadonlyArray<ActivityGroup>
   rawPanels: ReadonlyArray<RenderedPanel>
-}> = ({ threads, groups, rawPanels }) => {
+  onReplyToThread: (threadKey: string, body: string) => void
+}> = ({ threads, groups, rawPanels, onReplyToThread }) => {
   // v5: resolve / reopen の local override state。
   // 完全な永続化 (submit 経由で restore.json に書き戻し) は useThreads 本格実装 (R-1) で対応。
   // 現状は close-relaunch を超えると消えるが、Activity タブ内では即座に反映される。
@@ -405,6 +411,18 @@ const ConversationList: FC<{
     Object.prototype.hasOwnProperty.call(resolveOverrides, key) ? resolveOverrides[key] : snap.resolved
   const toggleResolved = (key: string, current: boolean) =>
     setResolveOverrides(prev => ({ ...prev, [key]: !current }))
+  // 返信は App state 側で thread の resolved を false に戻す (appendUserMessage の規約)。
+  // local override が true のまま残ると「返信したのに resolved 表示のまま」になるため、
+  // override を破棄して App state に従わせる。
+  const handleReply = (key: string, body: string) => {
+    onReplyToThread(key, body)
+    setResolveOverrides(prev => {
+      if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
 
   const entries = useMemo(() => Object.entries(threads), [threads])
   const active = entries.filter(([k, t]) => !effectiveResolved(k, t) && !t.outdated)
@@ -445,6 +463,7 @@ const ConversationList: FC<{
           rawPanels={rawPanels}
           resolved={effectiveResolved(key, snap)}
           onToggleResolved={() => toggleResolved(key, effectiveResolved(key, snap))}
+          onReply={(body) => handleReply(key, body)}
         />
       ))}
       {inactive.length > 0 ? (
@@ -474,6 +493,7 @@ const ConversationList: FC<{
             rawPanels={rawPanels}
             resolved={isResolved}
             onToggleResolved={() => toggleResolved(key, isResolved)}
+            onReply={(body) => handleReply(key, body)}
           />
         )
       }) : null}
@@ -489,7 +509,8 @@ const ConversationCard: FC<{
   rawPanels: ReadonlyArray<RenderedPanel>
   resolved: boolean
   onToggleResolved: () => void
-}> = ({ threadKey, snap, variant, groups, rawPanels, resolved, onToggleResolved }) => {
+  onReply: (body: string) => void
+}> = ({ threadKey, snap, variant, groups, rawPanels, resolved, onToggleResolved, onReply }) => {
   const [expanded, setExpanded] = useState(variant === 'active')
   const sectionId = `conversation-card-${threadKey.replace(/[^A-Za-z0-9_-]/g, '_')}`
 
@@ -584,21 +605,28 @@ const ConversationCard: FC<{
       ) : null}
 
       {expanded ? (
-        <ol
-          id={sectionId}
-          role="region"
-          aria-label="Thread messages"
-          className="col-start-2 relative mt-1 pt-2 pb-1 pl-0 list-none border-t border-dashed border-border-soft before:content-[''] before:absolute before:left-[11px] before:top-7 before:bottom-4 before:w-px before:bg-border-soft"
-        >
-          {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (各スレッド表示と同じ視覚言語) */}
-          {snap.messages.map((msg, i) => (
-            <ConversationMessage
-              key={msg.id}
-              msg={msg}
-              highlight={msg.author === 'agent' && i === snap.messages.length - 1}
-            />
-          ))}
-        </ol>
+        <>
+          <ol
+            id={sectionId}
+            role="region"
+            aria-label="Thread messages"
+            className="col-start-2 relative mt-1 pt-2 pb-1 pl-0 list-none border-t border-dashed border-border-soft before:content-[''] before:absolute before:left-[11px] before:top-7 before:bottom-4 before:w-px before:bg-border-soft"
+          >
+            {/* 最後の message が Claude の返信なら新着としてパルスで注目喚起する (各スレッド表示と同じ視覚言語) */}
+            {snap.messages.map((msg, i) => (
+              <ConversationMessage
+                key={msg.id}
+                msg={msg}
+                highlight={msg.author === 'agent' && i === snap.messages.length - 1}
+              />
+            ))}
+          </ol>
+          {/* timeline 末尾の返信フォーム (GitHub PR conversation と同じ配置)。
+              resolved / outdated でも表示する: outdated はアンカーコードが変わった事実の表示で
+              あって会話継続を妨げる理由にならない (返信で resolved は open に戻るが outdated
+              フラグは維持され、Outdated badge が状態を説明する)。 */}
+          <ThreadReplyForm threadKey={threadKey} onSubmit={onReply} />
+        </>
       ) : null}
     </article>
   )

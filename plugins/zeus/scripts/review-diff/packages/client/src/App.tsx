@@ -530,6 +530,7 @@ export function App({ payload }: Props) {
       }}
       scriptResults={payload.scriptResults}
       threads={threads}
+      onReplyToThread={addThreadReply}
     />
   )
 
