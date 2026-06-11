@@ -68,7 +68,7 @@ claude-plugins/
 
 ## Node CLI 同梱スキルの規約
 
-スキルが Node CLI を必要とする場合（例: `/zeus:review-diff`）は、以下を守る。
+スキルが Node CLI を必要とする場合（例: `/show-me:diff`）は、以下を守る。
 
 ### バンドル成果物を commit する
 - `dist/cli.js` を **git commit する**（postinstall ビルドはユーザー環境で破綻するため）
@@ -111,16 +111,16 @@ fi
 
 ## コミット時の規約（dogfooding）
 
-このリポジトリ内で **Claude が `git commit` を作成する前** に、必ず `/zeus:review-diff` を起動して人間の承認を得ること。
+このリポジトリ内で **Claude が `git commit` を作成する前** に、必ず `/show-me:diff` を起動して人間の承認を得ること。
 
 ### 手順
 1. 変更ファイルを `git add` で staging
-2. `/zeus:review-diff` を起動 → ブラウザでレビュー
+2. `/show-me:diff` を起動 → ブラウザでレビュー
 3. **Approve** を受け取ってから `git commit` 実行
-4. **Reject** ならコメントを反映 → 再度 staging → `/zeus:review-diff` で再 review
+4. **Reject** ならコメントを反映 → 再度 staging → `/show-me:diff` で再 review
 
 ### 理由
-- このリポジトリ自体が `/zeus:review-diff` の開発元なので、自分たちで使って UX のフィードバックを得る
+- このリポジトリ自体が `/show-me:diff` の開発元なので、自分たちで使って UX のフィードバックを得る
 - AI が勝手に commit を量産する事態を防ぎ、人間ゲートが入る
 - レビュー UI で気付いた改善要望が即フィードバックとなり、自己強化ループになる
 
@@ -130,7 +130,8 @@ fi
 
 ## 既存プラグイン
 
-- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / tech-survey / dev / review / review-diff / debug / refactor-loop の 7 スキル構成。`review-diff` は Node CLI（React + Hono + Shiki）を `scripts/review-diff/` に同梱
+- `plugins/zeus/` — feature-dev 上位互換の開発フロープラグイン。spec / dev / review / debug / refactor-loop の 5 スキル構成
+- `plugins/show-me/` — 人間ゲートの最終承認プラグイン（旧 `/zeus:review-diff` を分離）。`diff` の 1 スキル構成で、Node CLI（React + Hono + Shiki）を `scripts/diff/` に同梱
 
 ## 関連リンク
 
