@@ -55,32 +55,43 @@ export function validatePanelExclusivity(params: {
 }): ExclusivityReport {
   const { changes, groups } = params
 
-  // changedLineMap: (file, side) → Set<line>
-  // asIs 側は oldPath (rename) を優先、なければ path を使う (coverage-validator と同じ規約)。
-  //   rename + 内容変更で AI が typo して asIs.file = newPath (= path) と書いた場合、coverage-validator が
-  //   先に rename suggestion 付きで弾く設計だが、典型外のケース (例: 別 panel が同 newPath を carry) で
-  //   coverage が素通りした時に exclusivity だけが silently pass しないよう、newPath 側にも同じ
-  //   changed-lines を alias として登録しておく (defense-in-depth)。
+  // canonical path 解決: asIs 側は oldPath (rename)、toBe 側は newPath (= path) に正規化する。
+  // panel が rename を oldPath/newPath どちらの表記で書いても同一 (file, side) キーに収斂させる
+  // ことで、表記ゆれ越しの重複 claim (g0 が old.ts L5 / g1 が new.ts L5) を確実に conflict 検出する。
+  // owner を panel 宣言値のまま別キーに分けると、この重複が素通りして extract-group-patch が
+  // 同一 deletion を二重抽出 → 2 commit 目の git apply が失敗する。
+  //
+  // 2 パス構築の理由: 1 つの diff に「old → new の rename」と「old の新規再作成」が同居した場合、
+  // alias (old→new) が再作成側の identity (old→old) を潰すと再作成ファイルへの claim が
+  // 誤正規化されるため、identity を必ず優先する。
+  const canonAsIs = new Map<string, string>()
+  const canonToBe = new Map<string, string>()
+  for (const c of changes) {
+    const asIsFile = c.oldPath ?? c.path
+    canonAsIs.set(asIsFile, asIsFile)
+    canonToBe.set(c.path, c.path)
+  }
+  for (const c of changes) {
+    if (c.oldPath && c.oldPath !== c.path) {
+      if (!canonAsIs.has(c.path)) canonAsIs.set(c.path, c.oldPath)
+      if (!canonToBe.has(c.oldPath)) canonToBe.set(c.oldPath, c.path)
+    }
+  }
+  const canonical = { asIs: canonAsIs, toBe: canonToBe }
+
+  // changedLineMap: (canonical file, side) → Set<line>
   const changedLineMap = new Map<string, Set<number>>()
   for (const c of changes) {
     const asIsFile = c.oldPath ?? c.path
     if (c.asIsChangedLines.size > 0) {
       changedLineMap.set(key(asIsFile, 'asIs'), c.asIsChangedLines)
-      // rename ペアなら newPath 側にも alias
-      if (c.oldPath && c.oldPath !== c.path) {
-        changedLineMap.set(key(c.path, 'asIs'), c.asIsChangedLines)
-      }
     }
     if (c.toBeChangedLines.size > 0) {
       changedLineMap.set(key(c.path, 'toBe'), c.toBeChangedLines)
-      // rename ペアなら oldPath 側にも alias
-      if (c.oldPath && c.oldPath !== c.path) {
-        changedLineMap.set(key(c.oldPath, 'toBe'), c.toBeChangedLines)
-      }
     }
   }
 
-  // ownerMap: (file, side) → (line → Owner)
+  // ownerMap: (canonical file, side) → (line → Owner)
   // 2 段構成にしているのは「(file, side) ごとに小さい Map に分割すれば
   // 大規模 diff でも line 単位の lookup が O(1) で済む」のと、ownerMap 全体走査が不要なため。
   const ownerMap = new Map<string, Map<number, Owner>>()
@@ -88,8 +99,8 @@ export function validatePanelExclusivity(params: {
 
   for (const g of groups) {
     for (const p of g.panels) {
-      checkSide(p, 'asIs', g, ownerMap, changedLineMap, conflicts)
-      checkSide(p, 'toBe', g, ownerMap, changedLineMap, conflicts)
+      checkSide(p, 'asIs', g, ownerMap, changedLineMap, canonical, conflicts)
+      checkSide(p, 'toBe', g, ownerMap, changedLineMap, canonical, conflicts)
     }
   }
 
@@ -102,11 +113,14 @@ function checkSide(
   group: GroupInput,
   ownerMap: Map<string, Map<number, Owner>>,
   changedLineMap: Map<string, Set<number>>,
+  canonical: { asIs: Map<string, string>; toBe: Map<string, string> },
   conflicts: ExclusivityConflict[],
 ): void {
   const ps = side === 'asIs' ? panel.asIs : panel.toBe
   if (!ps) return
-  const file = ps.file
+  // panel 宣言値を canonical path に解決してから owner 照合する (conflict.file も canonical 値で報告)。
+  // diff に存在しないファイルへの言及は解決できず宣言値のまま → changedLines 不在で early return。
+  const file = canonical[side].get(ps.file) ?? ps.file
   const k = key(file, side)
   const changedLines = changedLineMap.get(k)
   if (!changedLines || changedLines.size === 0) return

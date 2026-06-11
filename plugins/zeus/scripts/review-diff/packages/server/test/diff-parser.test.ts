@@ -88,3 +88,23 @@ test('parseDiff: language inference (typescript)', () => {
   const files = parseDiff(readFileSync(fixturePath('simple.diff'), 'utf8'))
   expect(files[0].language).toBe('typescript')
 })
+
+test('parseDiff: mode-only change (chmod) → hasStructuralChange=true, no content change', () => {
+  // chmod のみの staged diff。chunks が無く oldMode/newMode だけが付く。
+  // hasStructuralChange が立たないと coverage-validator がファイル言及ゼロでも素通りする。
+  const diff = [
+    'diff --git a/f.sh b/f.sh',
+    'old mode 100644',
+    'new mode 100755',
+    '',
+  ].join('\n')
+  const files = parseDiff(diff)
+  expect(files.length).toBe(1)
+  const f = files[0]
+  expect(f.path).toBe('f.sh')
+  expect(f.status).toBe('modified')
+  expect(f.hasContentChange).toBe(false)
+  expect(f.hasStructuralChange).toBe(true)
+  expect(f.eolOnlyChange).toBe(false)
+  expect(f.hunks).toEqual([])
+})

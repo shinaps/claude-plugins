@@ -168,3 +168,35 @@ test('7. EOL-only change → ok=true, warnings populated', () => {
   expect(r.warnings[0]).toContain('EOL-only')
   expect(r.warnings[0]).toContain('a.ts')
 })
+
+test('mode-only change: panel 言及なし → structural-only miss', () => {
+  // chmod のみの変更は変更行ゼロだが、commit から落とさないために
+  // 最低 1 panel のファイル言及を coverage で強制する (SKILL.md の表明どおり)。
+  const change = makeChange({
+    path: 'f.sh',
+    hasContentChange: false,
+    hasStructuralChange: true,
+  })
+  const r = validateCoverage({ changes: [change], panels: [] })
+  expect(r.ok).toBe(false)
+  expect(r.misses.length).toBe(1)
+  expect(r.misses[0].file).toBe('f.sh')
+  expect(r.misses[0].lines).toEqual([])
+  // mode-only は rename ではないので renameSuggestion は付かない
+  expect(r.misses[0].renameSuggestion).toBeUndefined()
+})
+
+test('mode-only change: panel がファイル言及していれば ok', () => {
+  const change = makeChange({
+    path: 'f.sh',
+    hasContentChange: false,
+    hasStructuralChange: true,
+  })
+  const panel: Panel = {
+    panelId: 'p1',
+    intent: 'chmod',
+    toBe: { file: 'f.sh', ranges: [{ start: 1, end: 1 }] },
+  }
+  const r = validateCoverage({ changes: [change], panels: [panel] })
+  expect(r.ok).toBe(true)
+})

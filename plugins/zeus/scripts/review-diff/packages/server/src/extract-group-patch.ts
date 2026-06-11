@@ -44,6 +44,9 @@ type AnyFile = {
   pathBefore?: string
   pathAfter?: string
   chunks?: AnyChunk[]
+  // mode 変更 (chmod) 時に付く。mode-only は ChangedFile + 空 chunks + oldMode/newMode で返る。
+  oldMode?: string
+  newMode?: string
 }
 
 export type ExtractGroupPatchInput = {
@@ -118,17 +121,68 @@ export function extractGroupPatch(input: ExtractGroupPatchInput): ExtractGroupPa
       }
     }
 
-    // 空 patch (group がこの file の変更行を一切 claim していない) は skip
-    if (hunks.length === 0 && file.type !== 'RenamedFile') continue
-    // rename-only (内容変更なし) の group claim 判定:
-    //   - file.type === 'RenamedFile' で hunks 空 → rename だけ commit する用途 (現状未対応)
-    //   - hunks 空 + rename でもない → 完全 skip
+    // structural ownership: rename / mode 変更 / new-file の構造ヘッダは git index に 1 回しか
+    // 適用できない。linear-stack では「このファイルを最初に commit する group (owner)」だけが
+    // 構造ヘッダを carry し、後続 group (follower) は newPath ベースの通常 diff として emit する。
+    // owner 判定を誤って両 group が rename ヘッダを出すと、2 commit 目の apply が
+    // 「oldPath: does not exist in index」で必ず失敗する。
+    const contentChanged = fileHasChangedLines(file)
+    const modeChanged = file.oldMode != null && file.newMode != null && file.oldMode !== file.newMode
+    // DeletedFile は ownership 対象外: 「deleted file mode」の正しい所有者は最後に削除し切る
+    // group になり所有権が逆転するため、分割削除は別設計が必要 (現状未対応)。
+    const isStructural = file.type === 'RenamedFile' || file.type === 'AddedFile' || modeChanged
 
-    out.push(formatFileHeader(file, hunks.length > 0))
+    if (hunks.length === 0) {
+      // 内容変更があるファイルの変更行を claim していない group (context-only 言及) は
+      // 何も emit しない。構造ヘッダは変更行を claim した owner group 側で carry される。
+      if (contentChanged || !isStructural) continue
+      // structural-only ファイル (rename-only / mode-only): 変更行が無く claim ベースの
+      // 所有権が決まらないため、最初に言及した group が構造変更を commit する。
+      const priorMentioned =
+        priorClaims.asIs.has(oldPath) || priorClaims.asIs.has(path) ||
+        priorClaims.toBe.has(oldPath) || priorClaims.toBe.has(path)
+      if (priorMentioned) continue
+      out.push(formatFileHeader(file, { hasBody: false, carryStructural: true }))
+      continue
+    }
+
+    const carryStructural = isStructural &&
+      !priorClaimsAnyChangedLine(file, priorAsIsLines, priorToBeLines)
+    out.push(formatFileHeader(file, { hasBody: true, carryStructural }))
     for (const h of hunks) out.push(h)
   }
 
   return { ok: true, patch: out.join('') }
+}
+
+// file の diff に Added/Deleted 行が 1 つでもあるか (= 内容変更の有無)。
+// structural-only (rename-only / mode-only) との分岐判定に使う。
+function fileHasChangedLines(file: AnyFile): boolean {
+  for (const chunk of file.chunks ?? []) {
+    for (const ch of chunk.changes ?? []) {
+      if (ch.type === 'AddedLine' || ch.type === 'DeletedLine') return true
+    }
+  }
+  return false
+}
+
+// 先行 group が file の変更行を 1 行でも claim 済みか。
+// false = 自 group がこのファイルの最初の claim 者 (= structural ownership を持つ)。
+// priorClaims の range は context 行も含むが、ここでは diff の実変更行
+// (DeletedLine.lineBefore / AddedLine.lineAfter) との交差だけを見るので、
+// context-only 言及の先行 group を owner と誤判定しない。
+function priorClaimsAnyChangedLine(
+  file: AnyFile,
+  priorAsIsLines: Set<number>,
+  priorToBeLines: Set<number>,
+): boolean {
+  for (const chunk of file.chunks ?? []) {
+    for (const ch of chunk.changes ?? []) {
+      if (ch.type === 'DeletedLine' && ch.lineBefore != null && priorAsIsLines.has(ch.lineBefore)) return true
+      if (ch.type === 'AddedLine' && ch.lineAfter != null && priorToBeLines.has(ch.lineAfter)) return true
+    }
+  }
+  return false
 }
 
 // groups の panels が claim する行集合を file 単位に集約する。
@@ -182,6 +236,10 @@ function collectBlocksForChunk(
   const blocks: Block[] = []
   // 現在組み立て中の block。null = 未開始。
   let cur: Block | null = null
+  // 直前に block へ push した claimed 行の側。"\ No newline at end of file" (MessageLine) は
+  // 直前の +/- 行に従属するマーカーなので、この state で帰属先 (beforeLines/afterLines) を決める。
+  // chunk を跨ぐマーカーは diff 仕様上存在しないため、chunk ローカル変数でリークを構造的に防ぐ。
+  let lastClaimedSide: 'before' | 'after' | null = null
   // cursor: hunk header から推定する before/after 行の位置 (block 内で参照)
   let beforeCursor = chunk.fromFileRange?.start ?? 1
   let afterCursor = chunk.toFileRange?.start ?? 1
@@ -202,13 +260,25 @@ function collectBlocksForChunk(
   for (const ch of chunk.changes ?? []) {
     if (ch.type === 'UnchangedLine') {
       flush()
+      lastClaimedSide = null
       if (ch.lineBefore != null) lastContextBefore = ch.lineBefore
       beforeCursor = (ch.lineBefore ?? beforeCursor) + 1
       afterCursor = (ch.lineAfter ?? afterCursor) + 1
       continue
     }
     if (ch.type === 'MessageLine') {
-      // "\ No newline at end of file" 等の info メッセージ。block には含めない。
+      // "\ No newline at end of file" は直前の +/- 行に従属するマーカー。これを落とすと
+      // git apply --recount が黙って改行付きで適用し、EOF 改行なしファイルの commit 内容が
+      // staged と乖離する (apply は成功するため気付けない silent corruption)。
+      // 直前行を claim していない場合 (他 group 所有で skip 済み) はその行自体が
+      // この patch に無いので、マーカーも載せない (所有 group の patch 側に載る)。
+      // parse-git-diff は content を trim 済みで返すため "\ " + content で行を再構成する
+      // (git apply は先頭の "\" しか見ないので文言差は無害)。
+      if (cur && lastClaimedSide === 'before') {
+        cur.beforeLines.push(`\\ ${ch.content}\n`)
+      } else if (cur && lastClaimedSide === 'after') {
+        cur.afterLines.push(`\\ ${ch.content}\n`)
+      }
       continue
     }
     if (ch.type === 'DeletedLine') {
@@ -216,6 +286,7 @@ function collectBlocksForChunk(
       const claimed = asIsLines.has(before)
       if (!claimed) {
         flush()
+        lastClaimedSide = null
         // 先行 group 以外の削除行は committed-prefix index にまだ残っているため、
         // これ以降の new 側行番号は full-diff 座標より 1 行下にずれる。
         if (!prior.asIsLines.has(before)) state.afterOffset += 1
@@ -232,6 +303,7 @@ function collectBlocksForChunk(
         cur.beforeStart = before
       }
       cur.beforeLines.push(`-${ch.content}\n`)
+      lastClaimedSide = 'before'
       beforeCursor = before + 1
       continue
     }
@@ -240,6 +312,7 @@ function collectBlocksForChunk(
       const claimed = toBeLines.has(after)
       if (!claimed) {
         flush()
+        lastClaimedSide = null
         // 先行 group 以外の追加行は committed-prefix index にまだ存在しないため、
         // これ以降の new 側行番号は full-diff 座標より 1 行上にずれる。
         if (!prior.toBeLines.has(after)) state.afterOffset -= 1
@@ -247,16 +320,24 @@ function collectBlocksForChunk(
         continue
       }
       if (!cur) {
+        const afterStart = after + state.afterOffset
         cur = {
           // beforeStart: 既に block 内に deletion がある場合は元の beforeStart、
-          // 純粋 addition で先頭なら直前の context 行の lineBefore (= 挿入アンカー)
-          beforeStart: lastContextBefore,
-          afterStart: after + state.afterOffset,
+          // 純粋 addition で先頭なら直前の context 行の lineBefore (= 挿入アンカー)。
+          //
+          // anchor 0 の特別扱い: git apply は old 側開始行 0 の hunk を match_beginning
+          // (ファイル先頭への挿入を強制) として扱う。新規ファイル diff は context 行を
+          // 持たず lastContextBefore が常に 0 のため、後続 group の挿入 (afterStart > 1)
+          // が先頭に化けて内容が壊れる。位置決め自体は new 側 afterStart が担うので、
+          // 実際の先頭挿入 (afterStart = 1) 以外は afterStart - 1 を anchor にする。
+          beforeStart: lastContextBefore === 0 && afterStart > 1 ? afterStart - 1 : lastContextBefore,
+          afterStart,
           beforeLines: [],
           afterLines: [],
         }
       }
       cur.afterLines.push(`+${ch.content}\n`)
+      lastClaimedSide = 'after'
       afterCursor = after + 1
       continue
     }
@@ -267,42 +348,55 @@ function collectBlocksForChunk(
 
 // `@@ -<beforeStart>,<beforeCount> +<afterStart>,<afterCount> @@\n` + body
 function formatHunk(b: Block): string {
-  const beforeCount = b.beforeLines.length
-  const afterCount = b.afterLines.length
+  // beforeLines/afterLines には "\ No newline at end of file" マーカー行が混ざるため、
+  // ヘッダの行数カウントは実際の -/+ 行だけを数える (マーカーは "\" 始まりで誤判定しない)。
+  const beforeCount = b.beforeLines.filter((l) => l.startsWith('-')).length
+  const afterCount = b.afterLines.filter((l) => l.startsWith('+')).length
   // pure-addition (beforeCount=0) で beforeStart は anchor 行 (insertion 直前の context 行) を使う
   // unified diff のお作法。git apply --unidiff-zero --recount で吸収される。
   const header = `@@ -${b.beforeStart},${beforeCount} +${b.afterStart},${afterCount} @@\n`
   return header + b.beforeLines.join('') + b.afterLines.join('')
 }
 
-// ファイル header (`diff --git a/X b/Y`、rename header、index、---/+++)。
-// 内容変更がある場合 (hasBody=true) のみ index / ---/+++ を出力する。
-function formatFileHeader(file: AnyFile, hasBody: boolean): string {
+// ファイル header (`diff --git a/X b/Y`、rename/mode/new-file header、---/+++)。
+//   - carryStructural=true (owner): rename from/to・old/new mode・new file mode を出力する。
+//     mode 行は rename 行より前 (git の実出力順)。
+//   - carryStructural=false (follower): owner の commit で index は既に newPath / 新 mode に
+//     なっているため、`diff --git a/path b/path` + 通常 ---/+++ のみ。oldPath を参照すると
+//     「does not exist in index」で apply が落ちるので一切使わない。
+// 内容変更がある場合 (hasBody=true) のみ --- / +++ を出力する。
+function formatFileHeader(file: AnyFile, opts: { hasBody: boolean; carryStructural: boolean }): string {
   const path = file.pathAfter ?? file.path ?? file.pathBefore ?? ''
   const oldPath = file.pathBefore ?? path
+  const headerOldPath = opts.carryStructural ? oldPath : path
+  const modeChanged = file.oldMode != null && file.newMode != null && file.oldMode !== file.newMode
   const lines: string[] = []
-  lines.push(`diff --git a/${oldPath} b/${path}\n`)
-  if (file.type === 'RenamedFile') {
+  lines.push(`diff --git a/${headerOldPath} b/${path}\n`)
+  if (opts.carryStructural && modeChanged) {
+    lines.push(`old mode ${file.oldMode}\n`)
+    lines.push(`new mode ${file.newMode}\n`)
+  }
+  if (opts.carryStructural && file.type === 'RenamedFile') {
     // similarity index は元の patch から取れないので省略。git apply は無くても通る。
     lines.push(`rename from ${oldPath}\n`)
     lines.push(`rename to ${path}\n`)
   }
-  if (file.type === 'AddedFile') {
+  if (opts.carryStructural && file.type === 'AddedFile') {
     lines.push('new file mode 100644\n')
   } else if (file.type === 'DeletedFile') {
     lines.push('deleted file mode 100644\n')
   }
   // hasBody=true なら --- / +++ ヘッダが必要 (hunks の前提)。
-  // rename-only (hasBody=false) の場合は省略可。
-  if (hasBody) {
-    if (file.type === 'AddedFile') {
+  // structural-only (hasBody=false) の場合は省略可。
+  if (opts.hasBody) {
+    if (opts.carryStructural && file.type === 'AddedFile') {
       lines.push('--- /dev/null\n')
       lines.push(`+++ b/${path}\n`)
     } else if (file.type === 'DeletedFile') {
       lines.push(`--- a/${oldPath}\n`)
       lines.push('+++ /dev/null\n')
     } else {
-      lines.push(`--- a/${oldPath}\n`)
+      lines.push(`--- a/${headerOldPath}\n`)
       lines.push(`+++ b/${path}\n`)
     }
   }

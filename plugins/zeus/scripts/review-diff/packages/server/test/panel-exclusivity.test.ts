@@ -207,3 +207,90 @@ test('5. asIs 側でも変更行 (deletion) が複数 group に分かれてい�
   expect(r.conflicts[0].side).toBe('asIs')
   expect(r.conflicts[0].line).toBe(5)
 })
+
+test('6. rename 表記ゆれ (asIs を oldPath/newPath で別表記) でも同一物理行の重複 claim を検出', () => {
+  // g0 は規約どおり asIs.file = oldPath、g1 は表記ゆれで asIs.file = newPath を書いたケース。
+  // canonical 化が無いと ownerMap のキーが分かれて素通りし、extract-group-patch が
+  // 同一 deletion を両 group の patch に二重抽出して 2 commit 目の apply が壊れる。
+  const change = makeChange({
+    path: 'new.ts',
+    oldPath: 'old.ts',
+    status: 'renamed',
+    asIsChangedLines: new Set([2]),
+    hasContentChange: true,
+    hasStructuralChange: true,
+  })
+  const groupA = {
+    groupId: 'g0',
+    title: 'A',
+    panels: [
+      {
+        panelId: 'p1',
+        intent: 'A',
+        asIs: { file: 'old.ts', ranges: [{ start: 2, end: 2 }] },
+      } as Panel,
+    ],
+  }
+  const groupB = {
+    groupId: 'g1',
+    title: 'B',
+    panels: [
+      {
+        panelId: 'p2',
+        intent: 'B',
+        asIs: { file: 'new.ts', ranges: [{ start: 2, end: 2 }] },
+      } as Panel,
+    ],
+  }
+  const r = validatePanelExclusivity({
+    changes: [change],
+    groups: [groupA, groupB],
+  })
+  expect(r.ok).toBe(false)
+  expect(r.conflicts.length).toBe(1)
+  expect(r.conflicts[0].file).toBe('old.ts') // canonical (asIs = oldPath) で報告
+  expect(r.conflicts[0].side).toBe('asIs')
+  expect(r.conflicts[0].line).toBe(2)
+})
+
+test('7. rename 表記ゆれ (toBe を oldPath で書いた) でも重複 claim を検出', () => {
+  const change = makeChange({
+    path: 'new.ts',
+    oldPath: 'old.ts',
+    status: 'renamed',
+    toBeChangedLines: new Set([5]),
+    hasContentChange: true,
+    hasStructuralChange: true,
+  })
+  const groupA = {
+    groupId: 'g0',
+    title: 'A',
+    panels: [
+      {
+        panelId: 'p1',
+        intent: 'A',
+        toBe: { file: 'new.ts', ranges: [{ start: 5, end: 5 }] },
+      } as Panel,
+    ],
+  }
+  const groupB = {
+    groupId: 'g1',
+    title: 'B',
+    panels: [
+      {
+        panelId: 'p2',
+        intent: 'B',
+        toBe: { file: 'old.ts', ranges: [{ start: 5, end: 5 }] },
+      } as Panel,
+    ],
+  }
+  const r = validatePanelExclusivity({
+    changes: [change],
+    groups: [groupA, groupB],
+  })
+  expect(r.ok).toBe(false)
+  expect(r.conflicts.length).toBe(1)
+  expect(r.conflicts[0].file).toBe('new.ts') // canonical (toBe = newPath) で報告
+  expect(r.conflicts[0].side).toBe('toBe')
+  expect(r.conflicts[0].line).toBe(5)
+})

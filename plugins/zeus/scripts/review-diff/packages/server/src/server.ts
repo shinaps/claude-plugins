@@ -20,19 +20,11 @@ import { spawn } from 'node:child_process'
 import * as path from 'node:path'
 import { Hono } from 'hono'
 import { compress } from 'hono/compress'
+import { bodyLimit } from 'hono/body-limit'
+import { secureHeaders } from 'hono/secure-headers'
 import type { MiddlewareHandler } from 'hono'
 import { serve, type ServerType } from '@hono/node-server'
 import type { EditorPreset, ResultJson } from '@zeus/review-diff-shared'
-
-const SECURITY_HEADERS: Record<string, string> = {
-  'Cache-Control': 'no-store, no-cache, must-revalidate',
-  'Referrer-Policy': 'no-referrer',
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  // inline 化された script/style だけを許可。外部リソースは一切ロードできない。
-  'Content-Security-Policy':
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'",
-}
 
 const MAX_TOKEN_FAILURES = 20
 const RESULT_SETTLE_MS = 200 // POST のレスポンスを返し切ってから resolve するまでの猶予
@@ -71,10 +63,30 @@ export function createApp(opts: CreateAppOptions): Hono {
   let failCount = 0
   const app = new Hono()
 
-  // 1. セキュリティヘッダ (全レスポンスに付与)
+  // 1. セキュリティヘッダ (全レスポンスに付与)。Hono 標準の secureHeaders に寄せる。
+  // HSTS は http://127.0.0.1 配信ではブラウザが無視する (HTTPS 限定の仕様) ため無効化。
+  app.use(
+    '*',
+    secureHeaders({
+      xFrameOptions: 'DENY',
+      referrerPolicy: 'no-referrer',
+      strictTransportSecurity: false,
+      // inline 化された script/style だけを許可。外部リソースは一切ロードできない。
+      contentSecurityPolicy: {
+        defaultSrc: ["'none'"],
+        scriptSrc: ["'unsafe-inline'"],
+        styleSrc: ["'unsafe-inline'"],
+        imgSrc: ['data:'],
+        connectSrc: ["'self'"],
+        formAction: ["'none'"],
+      },
+    }),
+  )
+  // Cache-Control は secureHeaders の守備範囲外なのでここだけ手動で付与する
+  // (token 入り URL のレスポンスをディスクキャッシュに残させない)。
   app.use('*', async (c, next) => {
     await next()
-    for (const [k, v] of Object.entries(SECURITY_HEADERS)) c.header(k, v)
+    c.header('Cache-Control', 'no-store, no-cache, must-revalidate')
   })
 
   // 2. Host header 検証 (127.0.0.1:<port> のみ allow、DNS rebinding / localhost 別名対策)
@@ -121,10 +133,7 @@ export function createApp(opts: CreateAppOptions): Hono {
   app.use('*', compress())
 
   // GET / → HTML を返す
-  app.get('/', (c) => {
-    c.header('Content-Type', 'text/html; charset=utf-8')
-    return c.body(html)
-  })
+  app.get('/', (c) => c.html(html))
 
   // GET /heartbeat → ブラウザから 5 秒間隔で打たれる「タブ生存通知」。
   // CLI 側は最終 ping から N 秒 (gracePeriod) 経過したら「タブ close」と判断して exit する設計。
@@ -157,9 +166,7 @@ export function createApp(opts: CreateAppOptions): Hono {
     // 末尾改行で 1 つ余分な空文字列が出るパターンを許容しつつ、
     // 範囲超過は 400 で明示する (UI 側にバグがあった時に気付けるように)。
     if (end > lines.length) return c.text('range out of bounds', 400)
-    const slice = lines.slice(start - 1, end).join('\n')
-    c.header('Content-Type', 'text/plain; charset=utf-8')
-    return c.body(slice)
+    return c.text(lines.slice(start - 1, end).join('\n'))
   })
 
   // POST /result → JSON 受信 → 200 を返し切ってから resolve (ブラウザに描画余地を残す)
@@ -167,14 +174,12 @@ export function createApp(opts: CreateAppOptions): Hono {
   // decision='regen-group' もここで受け取る。CLI 側は decision を見ずに
   // ResultJson をそのまま resolve するので、SKILL.md が JSON.parse で分岐する設計。
   // approve / reject と同じ close-relaunch ルートで動くので endpoint 追加不要。
-  app.post('/result', async (c) => {
-    // body size ガード: Content-Length が無いリクエストでも、生バッファを直接読んで上限超過なら 413。
-    // c.req.json() に渡す前に上限を実測する。
-    const buf = await readBodyWithLimit(c.req.raw, MAX_BODY)
-    if (buf === null) return c.text('payload too large', 413)
+  // body size ガードは Hono 標準の bodyLimit に委譲。Content-Length が無いリクエストでも
+  // ストリームを実測カウントして上限超過なら 413 を返す。
+  app.post('/result', bodyLimit({ maxSize: MAX_BODY }), async (c) => {
     let json: ResultJson
     try {
-      json = JSON.parse(buf.toString('utf8')) as ResultJson
+      json = await c.req.json<ResultJson>()
     } catch {
       return c.text('bad json', 400)
     }
@@ -188,12 +193,10 @@ export function createApp(opts: CreateAppOptions): Hono {
   //   - body: { path: string, line: number }
   //   - shell escape を厳格に行い、cwd を明示し、relative path は cwd 基準で resolve
   //   - 子プロセスを detached + unref で完全に切り離す (CLI exit 後も editor は生きる)
-  app.post('/editor-open', async (c) => {
-    const buf = await readBodyWithLimit(c.req.raw, 4 * 1024)
-    if (buf === null) return c.text('payload too large', 413)
+  app.post('/editor-open', bodyLimit({ maxSize: 4 * 1024 }), async (c) => {
     let payload: { path?: unknown; line?: unknown }
     try {
-      payload = JSON.parse(buf.toString('utf8')) as { path?: unknown; line?: unknown }
+      payload = await c.req.json<{ path?: unknown; line?: unknown }>()
     } catch {
       return c.text('bad json', 400)
     }
@@ -233,26 +236,6 @@ export function createApp(opts: CreateAppOptions): Hono {
 // 安全な引数になる。`$`, `;`, `&&`, `|`, space, newline すべて含めて 1 トークンとして扱われる。
 function shellEscape(s: string): string {
   return `'${s.replaceAll(`'`, `'\\''`)}'`
-}
-
-async function readBodyWithLimit(req: Request, max: number): Promise<Buffer | null> {
-  const reader = req.body?.getReader()
-  if (!reader) return Buffer.alloc(0)
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    if (value) {
-      total += value.byteLength
-      if (total > max) {
-        try { await reader.cancel() } catch { /* noop */ }
-        return null
-      }
-      chunks.push(value)
-    }
-  }
-  return Buffer.concat(chunks.map((u) => Buffer.from(u)))
 }
 
 export type StartServerOptions = {

@@ -382,3 +382,113 @@ test('6. 存在しない group index → error', () => {
   expect(r.ok).toBe(false)
   expect(r.error).toContain('group not found')
 })
+
+// === structural ownership (rename / mode は owner group のみが carry) ==========
+
+const RENAME_SPLIT_DIFF = `diff --git a/old.ts b/new.ts
+similarity index 80%
+rename from old.ts
+rename to new.ts
+index 1111111..2222222 100644
+--- a/old.ts
++++ b/new.ts
+@@ -2,1 +2,1 @@
+-L2
++X2
+@@ -9,1 +9,1 @@
+-L9
++Y9
+`
+
+test('S1. rename 分割: follower の patch は rename を再宣言せず newPath ベースの通常ヘッダになる', () => {
+  const summary = makeSummary([
+    {
+      title: 'g0',
+      description: '',
+      panels: [
+        {
+          panelId: 'p1',
+          intent: 'X',
+          asIs: { file: 'old.ts', ranges: [{ start: 2, end: 2 }] },
+          toBe: { file: 'new.ts', ranges: [{ start: 2, end: 2 }] },
+        },
+      ],
+    },
+    {
+      title: 'g1',
+      description: '',
+      panels: [
+        {
+          panelId: 'p2',
+          intent: 'Y',
+          asIs: { file: 'old.ts', ranges: [{ start: 9, end: 9 }] },
+          toBe: { file: 'new.ts', ranges: [{ start: 9, end: 9 }] },
+        },
+      ],
+    },
+  ])
+  const g0 = extractGroupPatch({ summary, diffText: RENAME_SPLIT_DIFF, groupId: 'g0' })
+  expect(g0.ok).toBe(true)
+  expect(g0.patch).toContain('rename from old.ts')
+  expect(g0.patch).toContain('--- a/old.ts')
+
+  const g1 = extractGroupPatch({ summary, diffText: RENAME_SPLIT_DIFF, groupId: 'g1' })
+  expect(g1.ok).toBe(true)
+  // owner (g0) の commit 後、index に old.ts は存在しないため follower は newPath のみ参照する
+  expect(g1.patch).toContain('diff --git a/new.ts b/new.ts')
+  expect(g1.patch).not.toContain('rename from')
+  expect(g1.patch).toContain('--- a/new.ts')
+  expect(g1.patch).toContain('+++ b/new.ts')
+})
+
+test('S2. mode + 内容変更の分割: mode 行 (old/new mode) は owner のみが carry する', () => {
+  const MODE_CONTENT_DIFF = `diff --git a/f.sh b/f.sh
+old mode 100644
+new mode 100755
+index 1111111..2222222
+--- a/f.sh
++++ b/f.sh
+@@ -2,1 +2,1 @@
+-L2
++X2
+@@ -9,1 +9,1 @@
+-L9
++Y9
+`
+  const summary = makeSummary([
+    {
+      title: 'g0',
+      description: '',
+      panels: [
+        {
+          panelId: 'p1',
+          intent: 'X',
+          asIs: { file: 'f.sh', ranges: [{ start: 2, end: 2 }] },
+          toBe: { file: 'f.sh', ranges: [{ start: 2, end: 2 }] },
+        },
+      ],
+    },
+    {
+      title: 'g1',
+      description: '',
+      panels: [
+        {
+          panelId: 'p2',
+          intent: 'Y',
+          asIs: { file: 'f.sh', ranges: [{ start: 9, end: 9 }] },
+          toBe: { file: 'f.sh', ranges: [{ start: 9, end: 9 }] },
+        },
+      ],
+    },
+  ])
+  const g0 = extractGroupPatch({ summary, diffText: MODE_CONTENT_DIFF, groupId: 'g0' })
+  expect(g0.ok).toBe(true)
+  expect(g0.patch).toContain('old mode 100644')
+  expect(g0.patch).toContain('new mode 100755')
+
+  const g1 = extractGroupPatch({ summary, diffText: MODE_CONTENT_DIFF, groupId: 'g1' })
+  expect(g1.ok).toBe(true)
+  expect(g1.patch).not.toContain('old mode')
+  expect(g1.patch).not.toContain('new mode')
+  expect(g1.patch).toContain("+Y9")
+})

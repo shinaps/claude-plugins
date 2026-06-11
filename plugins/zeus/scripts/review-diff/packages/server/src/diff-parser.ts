@@ -42,6 +42,11 @@ type AnyFile = {
   pathBefore?: string
   pathAfter?: string
   chunks?: AnyChunk[]
+  // mode-only 変更 (chmod) は ChangedFile + 空 chunks + oldMode/newMode で返る。
+  // hasStructuralChange の判定材料 (mode 変更は行を持たないため、これを見ないと
+  // coverage-validator がファイル言及ゼロでも silently pass してしまう)。
+  oldMode?: string
+  newMode?: string
 }
 
 // =====================================================================
@@ -149,8 +154,11 @@ function fileToChange(f: AnyFile): FileChange {
 
   const hasContentChange = additions > 0 || deletions > 0
   const eolOnlyChange = !hasContentChange && sawMessageOnlyChunk
-  // rename / binary は構造変更フラグも立てる (binary は上で early return 済)
-  const hasStructuralChange = status === 'renamed' || status === 'binary'
+  // rename / binary / mode 変更 (chmod) は構造変更フラグも立てる (binary は上で early return 済)。
+  // mode-only は変更行ゼロなので、このフラグが無いと coverage-validator の structural-only
+  // パスに乗らず、panel 言及ゼロでも検証を素通りしてしまう。
+  const modeChanged = f.oldMode != null && f.newMode != null && f.oldMode !== f.newMode
+  const hasStructuralChange = status === 'renamed' || status === 'binary' || modeChanged
 
   return {
     path, oldPath, status, language,
