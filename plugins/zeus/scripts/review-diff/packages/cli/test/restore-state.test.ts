@@ -129,3 +129,85 @@ test('v2 threads win over v1 comments with the same key', () => {
   expect(out!.threads!['group:g1'].messages[0].body).toBe('from v2')
   expect(out!.threads!['group:g1'].resolved).toBe(true)
 })
+
+// ---- readRestoreState: v2 経路の defensive validation ----
+
+test('v2 threads with invalid scope are dropped, valid ones survive', () => {
+  const p = join(tmp, 'v2-invalid-scope.json')
+  writeFileSync(p, JSON.stringify({
+    schemaVersion: 2,
+    threads: {
+      ok: {
+        scope: { type: 'group', groupId: 'g1' },
+        messages: [],
+        resolved: false,
+        outdated: false,
+      },
+      noType: { scope: { groupId: 'g1' }, messages: [], resolved: false, outdated: false },
+      badSide: {
+        scope: { type: 'line', panelId: 'p1', side: 'left', file: 'a.ts', line: 1 },
+        messages: [],
+        resolved: false,
+        outdated: false,
+      },
+      unknownType: { scope: { type: 'mystery' }, messages: [], resolved: false, outdated: false },
+    },
+  }))
+  const out = readRestoreState(p)
+  expect(Object.keys(out!.threads ?? {})).toEqual(['ok'])
+})
+
+test('v2 review-scope thread is accepted (unlike v1 migration which rejects review)', () => {
+  const p = join(tmp, 'v2-review.json')
+  writeFileSync(p, JSON.stringify({
+    schemaVersion: 2,
+    threads: {
+      review: {
+        scope: { type: 'review' },
+        messages: [{ id: 'm1', author: 'user', body: 'overall note', ts: 1 }],
+        resolved: false,
+        outdated: false,
+      },
+    },
+  }))
+  const out = readRestoreState(p)
+  expect(out!.threads!['review'].scope).toEqual({ type: 'review' })
+})
+
+test('invalid agentAction is dropped while the message itself survives', () => {
+  const p = join(tmp, 'v2-agent-action.json')
+  writeFileSync(p, JSON.stringify({
+    schemaVersion: 2,
+    threads: {
+      t: {
+        scope: { type: 'group', groupId: 'g1' },
+        messages: [
+          { id: 'm1', author: 'agent', body: 'bad kind', ts: 1, agentAction: { kind: 'mystery' } },
+          { id: 'm2', author: 'agent', body: 'bad files', ts: 2, agentAction: { kind: 'apply', files: 'oops' } },
+          { id: 'm3', author: 'agent', body: 'good', ts: 3, agentAction: { kind: 'answer' } },
+        ],
+        resolved: false,
+        outdated: false,
+      },
+    },
+  }))
+  const out = readRestoreState(p)
+  const msgs = out!.threads!['t'].messages
+  expect(msgs).toHaveLength(3)
+  expect(msgs[0].agentAction).toBeUndefined()
+  expect(msgs[1].agentAction).toBeUndefined()
+  expect(msgs[2].agentAction).toEqual({ kind: 'answer' })
+})
+
+test('lineCommentDrafts survives only string values and rejects arrays', () => {
+  const p1 = join(tmp, 'drafts-mixed.json')
+  writeFileSync(p1, JSON.stringify({
+    schemaVersion: 2,
+    lineCommentDrafts: { a: 'keep', b: 42, c: null },
+  }))
+  expect(readRestoreState(p1)!.lineCommentDrafts).toEqual({ a: 'keep' })
+
+  const p2 = join(tmp, 'drafts-array.json')
+  writeFileSync(p2, JSON.stringify({ schemaVersion: 2, lineCommentDrafts: ['oops'] }))
+  expect(readRestoreState(p2)!.lineCommentDrafts).toBeUndefined()
+})

@@ -8,6 +8,8 @@ import { loadReviewDiffConfig } from './config.js'
 //   - config.scripts[] を picomatch でフィルタ
 //   - 並列起動 (Promise.all)、各 script の stdout/stderr を per-script buffer に貯める (混線回避)
 //   - timeout / spawn error / exit code を集計
+//   - script は detached spawn (process group) で起動し、timeout 時は group ごと kill。
+//     resolve は 'close' (完全 flush) と 'exit' + 猶予 (孫が pipe を握っても保証) の二重経路
 //   - 1 つでも failed があれば stderr にレポートを書き出して exit 1 を呼び側で立てる
 //   - 全 pass (skipped 含む) なら script-results.json を書いて exit 0
 //
@@ -18,6 +20,10 @@ export const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000
 // 末尾を残して fail 解析の手がかりを優先)。
 const BUFFER_LIMIT_BYTES = 5 * 1024 * 1024
 const TAIL_LINES = 50
+// 'exit' 受信から resolve までの flush 猶予。'close' は孫プロセスが pipe fd を継承・保持して
+// いると永遠に発火しないため、'exit' + この猶予を resolve の保証経路にする ('close' が猶予内に
+// 来ればそちらが先に finish して完全な tail が取れる)。
+const EXIT_FLUSH_GRACE_MS = 200
 
 export type RunScriptsArgs = {
   configPath: string | null | undefined
@@ -105,18 +111,40 @@ async function runOneScript(
     let timedOut = false
     let resolved = false
 
+    // detached: true で sh を process group leader にする。`cmd1 && cmd2` やテストランナーの
+    // ように孫プロセスを張る script では、sh 単体への kill だと孫が orphan として生き残り、
+    // 継承された pipe fd が 'close' の発火を永遠に妨げるため、timeout 時は -pid (process group)
+    // へ signal を送って孫ごと kill する。副作用として端末からの SIGINT はこの group に
+    // 伝播しなくなるが、script gate の停止手段は timeout 機構に一本化されているため問題ない。
     const child = spawn('sh', ['-c', script.command], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: envOverride ?? process.env,
       cwd: process.cwd(),
+      detached: true,
     })
 
+    // group 全体への signal 送信。group が既に消えている (ESRCH) 場合は直接 kill に
+    // フォールバックし、それも失敗したら握りつぶす (どのみち相手は死んでいる)。
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (child.pid == null) return
+      try {
+        process.kill(-child.pid, signal)
+      } catch {
+        try {
+          child.kill(signal)
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+
+    let escalation: NodeJS.Timeout | undefined
     const timer = setTimeout(() => {
       timedOut = true
-      // SIGTERM → 数秒後に SIGKILL fallback (子プロセスが trap している場合の保険)。
-      child.kill('SIGTERM')
-      setTimeout(() => {
-        if (!resolved) child.kill('SIGKILL')
+      killGroup('SIGTERM')
+      // sh 自身が SIGTERM を trap して 'exit' すら来ないケースの保険。
+      escalation = setTimeout(() => {
+        if (!resolved) killGroup('SIGKILL')
       }, 2000)
     }, timeoutMs)
 
@@ -150,10 +178,19 @@ async function runOneScript(
       })
     })
 
-    child.on('close', (code, signal) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       if (resolved) return
       resolved = true
       clearTimeout(timer)
+      if (escalation) clearTimeout(escalation)
+      // timeout した script の group には SIGTERM を無視する孫が残り得る。SIGTERM → 'exit' →
+      // ここ、という早い経路では上の +2s SIGKILL タイマーがまだ発火していない (resolve 後の
+      // process 終了で消える) ため、resolve 直前に無条件で SIGKILL を送って掃除する (冪等)。
+      if (timedOut) killGroup('SIGKILL')
+      // 孫プロセスが pipe の write 端を握り続けても、read 端を自プロセス側から閉じれば
+      // fd もイベントループへの参照も残らない (正常終了 + background daemon のケースを含む)。
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       const durationMs = Date.now() - start
       if (timedOut) {
         resolve({
@@ -176,6 +213,21 @@ async function runOneScript(
         stdoutTail: passed ? undefined : tail(stdout),
         stderrTail: passed ? undefined : tail(stderr),
       })
+    }
+
+    // fast path: stdio まで完全に閉じた合図。tail が欠けず取れる。
+    child.on('close', (code, signal) => finish(code, signal))
+    // 保証経路: 孫が pipe fd を保持していると 'close' は来ないため、'exit' + flush 猶予で
+    // 必ず resolve する。このタイマーを unref すると、run-scripts 全体が Promise.all 待ち
+    // だけの状態でイベントループが空になり、script-results.json 未書き込みのままプロセスが
+    // 正常終了してしまうので unref しない。
+    child.on('exit', (code, signal) => {
+      // プロセスは既に終了しており timeout 判定の対象が消えたため、ここで timer を止める。
+      // finish まで遅らせると、exit 直後〜flush 猶予満了の間に timer が発火して正常終了が
+      // timeout (failed) に誤判定され、完了済み script の group に signal まで飛んでしまう。
+      // timeout 経路 (SIGTERM → 'exit') では timer は発火済みなので、この clear は no-op。
+      clearTimeout(timer)
+      setTimeout(() => finish(code, signal), EXIT_FLUSH_GRACE_MS)
     })
   })
 }

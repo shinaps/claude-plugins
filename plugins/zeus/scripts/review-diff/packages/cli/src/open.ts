@@ -10,10 +10,11 @@ export function openUrl(url: string): void {
     )
     return
   }
-  try {
-    const child = spawn('open', [url], { detached: true, stdio: 'ignore' })
-    child.unref()
-  } catch {
+  const child = spawn('open', [url], { detached: true, stdio: 'ignore' })
+  // spawn の実行失敗 (ENOENT 等) は同期 throw ではなく 'error' イベントで届く。
+  // listener が無いと uncaught exception でプロセスごと落ちるため、ここで受けて警告に留める。
+  child.on('error', () => {
     process.stderr.write(`Warning: failed to auto-open browser. Open ${url} manually.\n`)
-  }
+  })
+  child.unref()
 }

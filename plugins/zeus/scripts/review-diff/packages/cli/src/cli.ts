@@ -5,7 +5,7 @@
 //                  [--config <path>] [--script-results <path>]
 //   - 部分 patch:   node "$CLI" extract-group-patch --summary <...> --diff <...> --group <gid>
 //   - スクリプトゲート: node "$CLI" run-scripts --config <...> --changed-files <...> --out <...>
-//   - outdated 判定:  node "$CLI" mark-outdated --restore-state <...> --before-sha <sha> --after-sha <sha> --changed-files <...>
+//   - outdated 判定:  node "$CLI" mark-outdated --restore-state <...> --changed-files <...>
 //
 // stdout / stderr 分離方針: 呼び出し側はサブプロセスの stdout を「結果」として丸ごとパースしたい。
 // 情報メッセージが stdout に混ざるとパースが詰むため、ログは確実に stderr へ送る。
@@ -114,9 +114,28 @@ async function main(): Promise<void> {
   }
 
   const diffText = readFileSync(values.diff as string, 'utf8')
-  const prMeta: PrMeta | null = values['pr-meta']
-    ? (JSON.parse(readFileSync(values['pr-meta'] as string, 'utf8')) as PrMeta)
-    : null
+  // summary.json と同水準の fail-fast。必須フィールドの欠損は PR ヘッダ表示から sources 取得
+  // まで UI 全域に波及するため、汎用 catch の "error:" に落とさず専用メッセージで即死させる。
+  let prMeta: PrMeta | null = null
+  if (values['pr-meta']) {
+    try {
+      const rawPr = JSON.parse(readFileSync(values['pr-meta'] as string, 'utf8')) as Partial<PrMeta>
+      if (
+        !rawPr || typeof rawPr !== 'object'
+        || typeof rawPr.number !== 'number'
+        || typeof rawPr.title !== 'string'
+        || typeof rawPr.body !== 'string'
+        // author は { login?: string } | string の union なので両形を受ける
+        || (typeof rawPr.author !== 'string' && (rawPr.author == null || typeof rawPr.author !== 'object'))
+      ) {
+        throw new Error('missing required fields (number/title/body/author)')
+      }
+      prMeta = rawPr as PrMeta
+    } catch (e) {
+      process.stderr.write(`failed to parse pr-meta.json: ${e instanceof Error ? e.message : String(e)}\n`)
+      process.exit(1)
+    }
+  }
 
   const lineCount = diffText.split('\n').length
   process.stderr.write(`[review-diff] parsing ${lineCount} diff lines (highlight runs in browser)...\n`)
@@ -140,6 +159,14 @@ async function main(): Promise<void> {
   } else if (summary.mode === 'pr' && prMeta) {
     sources = collectPrSourcesFromWorktree(allPanelPaths, baseSha)
     expandable = true
+  } else {
+    // mode と --pr-meta の不整合は SKILL.md 側の起動契約違反。空 sources のまま進むと
+    // range-symmetry が MAX_TAIL_FALLBACK 経由で緩く通過し、全 panel 空の UI が開いて
+    // しまうため、原因に辿り着ける形で即死させる。
+    process.stderr.write(
+      `[review-diff] summary.mode='${summary.mode}' is inconsistent with --pr-meta (${prMeta ? 'given' : 'missing'}): staged requires no pr-meta, pr requires it\n`,
+    )
+    process.exit(1)
   }
 
   // 5. coverage 厳格検証
@@ -316,8 +343,9 @@ async function main(): Promise<void> {
     /* noop */
   }
 
-  process.stdout.write(JSON.stringify(result) + '\n')
-  setTimeout(() => process.exit(0), 100)
+  // write の完了コールバックで exit する。stdout が pipe のとき同期 exit だと flush 前に
+  // 切れる恐れがあるが、コールバック契機なら flush 完了が決定的になり猶予タイマーが要らない。
+  process.stdout.write(JSON.stringify(result) + '\n', () => process.exit(0))
 }
 
 // extract-group-patch subcommand

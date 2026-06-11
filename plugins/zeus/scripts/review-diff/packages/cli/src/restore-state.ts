@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs'
 import type {
+  AgentAction,
   Comment,
   GroupDecision,
   RestoreStateV1,
@@ -45,8 +46,12 @@ export function readRestoreState(path: string | undefined): RestoreStateV2 | und
     }
     if (Object.keys(filtered).length > 0) out.groupComments = filtered
   }
-  if (r.lineCommentDrafts && typeof r.lineCommentDrafts === 'object') {
-    out.lineCommentDrafts = r.lineCommentDrafts as Record<string, string>
+  if (r.lineCommentDrafts && typeof r.lineCommentDrafts === 'object' && !Array.isArray(r.lineCommentDrafts)) {
+    const filtered: Record<string, string> = {}
+    for (const [k, v] of Object.entries(r.lineCommentDrafts)) {
+      if (typeof v === 'string') filtered[k] = v
+    }
+    if (Object.keys(filtered).length > 0) out.lineCommentDrafts = filtered
   }
   if (r.reviewKind === 'approve' || r.reviewKind === 'request-changes' || r.reviewKind === 'comment') {
     out.reviewKind = r.reviewKind as ReviewKind
@@ -77,10 +82,78 @@ export function readRestoreState(path: string | undefined): RestoreStateV2 | und
   return out
 }
 
-function parseThreadSnapshot(v: unknown): ThreadSnapshot | null {
+// ThreadScope の唯一の検証器。restore.json の v2 threads / v1 comments / mark-outdated の
+// read-modify-write がすべてここを通ることで、scope の防御水準を 1 箇所に集約する。
+// 既知フィールドのみで canonical オブジェクトを再構築して返すのは、未知フィールドの混入で
+// threadKey() の安定性が壊れるのを防ぐため。
+// line scope の file は空文字も許容する (v1 migration からの既存契約)。group / file scope の
+// id は空文字だと threadKey が他とぶつかり得るため非空必須。
+export function parseThreadScope(v: unknown): ThreadScope | null {
+  if (!v || typeof v !== 'object') return null
+  const s = v as Record<string, unknown>
+  if (s.type === 'line') {
+    if (typeof s.panelId !== 'string' || s.panelId === '') return null
+    if (s.side !== 'asIs' && s.side !== 'toBe') return null
+    if (typeof s.file !== 'string') return null
+    if (typeof s.line !== 'number') return null
+    return {
+      type: 'line',
+      panelId: s.panelId,
+      side: s.side,
+      file: s.file,
+      line: s.line,
+      ...(typeof s.endLine === 'number' ? { endLine: s.endLine } : {}),
+    }
+  }
+  if (s.type === 'group') {
+    if (typeof s.groupId !== 'string' || s.groupId === '') return null
+    return { type: 'group', groupId: s.groupId }
+  }
+  if (s.type === 'file') {
+    if (typeof s.file !== 'string' || s.file === '') return null
+    return { type: 'file', file: s.file }
+  }
+  if (s.type === 'review') {
+    return { type: 'review' }
+  }
+  return null
+}
+
+// agentAction は対応種別の表示メタデータで、欠けてもスレッド本文は成立する。
+// 不正なら undefined を返してメッセージ自体は残す (message ごと drop すると会話履歴が消える)。
+function parseAgentAction(v: unknown): AgentAction | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const a = v as Record<string, unknown>
+  if (a.kind === 'answer') return { kind: 'answer' }
+  if (a.kind === 'suggest') {
+    return { kind: 'suggest', ...(typeof a.diffSample === 'string' ? { diffSample: a.diffSample } : {}) }
+  }
+  if (a.kind === 'apply') {
+    if (!Array.isArray(a.files)) return undefined
+    const files: { path: string; summary: string }[] = []
+    for (const f of a.files) {
+      if (!f || typeof f !== 'object') continue
+      const ff = f as Record<string, unknown>
+      if (typeof ff.path !== 'string' || typeof ff.summary !== 'string') continue
+      files.push({ path: ff.path, summary: ff.summary })
+    }
+    return { kind: 'apply', files }
+  }
+  if (a.kind === 'expand') {
+    if (!Array.isArray(a.addedPanelIds)) return undefined
+    return { kind: 'expand', addedPanelIds: a.addedPanelIds.filter((p): p is string => typeof p === 'string') }
+  }
+  return undefined
+}
+
+// readRestoreState (v2 経路) と mark-outdated の双方から使う thread 検証器。
+// scope が判別できない thread は null を返す。呼び出し側の扱いは経路ごとに異なる:
+// readRestoreState は drop (UI に不正データを流さない)、mark-outdated は判定 skip + 原文温存。
+export function parseThreadSnapshot(v: unknown): ThreadSnapshot | null {
   if (!v || typeof v !== 'object') return null
   const o = v as Partial<ThreadSnapshot>
-  if (!o.scope || typeof o.scope !== 'object') return null
+  const scope = parseThreadScope(o.scope)
+  if (!scope) return null
   if (!Array.isArray(o.messages)) return null
   const messages: ThreadMessage[] = []
   for (const m of o.messages) {
@@ -89,15 +162,15 @@ function parseThreadSnapshot(v: unknown): ThreadSnapshot | null {
     if (typeof mm.id !== 'string' || typeof mm.body !== 'string') continue
     if (mm.author !== 'user' && mm.author !== 'agent') continue
     if (typeof mm.ts !== 'number') continue
+    const agentAction = parseAgentAction(mm.agentAction)
     messages.push({
       id: mm.id,
       author: mm.author,
       body: mm.body,
       ts: mm.ts,
-      agentAction: mm.agentAction,
+      ...(agentAction ? { agentAction } : {}),
     })
   }
-  const scope = o.scope as ThreadSnapshot['scope']
   return {
     scope,
     messages,
@@ -111,27 +184,11 @@ export function migrateCommentToThread(c: unknown): ThreadSnapshot | null {
   if (!c || typeof c !== 'object') return null
   const cc = c as Comment
   if (typeof cc.body !== 'string') return null
-  if (!cc.scope || typeof cc.scope !== 'object') return null
-  if (cc.scope.type === 'line') {
-    const s = cc.scope
-    if (typeof s.panelId !== 'string' || s.panelId === '') return null
-    if (s.side !== 'asIs' && s.side !== 'toBe') return null
-    if (typeof s.file !== 'string') return null
-    if (typeof s.line !== 'number') return null
-    return makeInitialThread(
-      { type: 'line', panelId: s.panelId, side: s.side, file: s.file, line: s.line, ...(s.endLine != null ? { endLine: s.endLine } : {}) },
-      cc.body,
-    )
-  }
-  if (cc.scope.type === 'group') {
-    if (typeof cc.scope.groupId !== 'string' || cc.scope.groupId === '') return null
-    return makeInitialThread({ type: 'group', groupId: cc.scope.groupId }, cc.body)
-  }
-  if (cc.scope.type === 'file') {
-    if (typeof cc.scope.file !== 'string' || cc.scope.file === '') return null
-    return makeInitialThread({ type: 'file', file: cc.scope.file }, cc.body)
-  }
-  return null
+  const scope = parseThreadScope(cc.scope)
+  // v1 Comment の scope は line / group / file の 3 種のみ (review thread は v5 で導入され
+  // v1 データには存在しない契約) なので、review は migrate 対象外として拒否する。
+  if (!scope || scope.type === 'review') return null
+  return makeInitialThread(scope, cc.body)
 }
 
 // 「migrate 直後のスレッド初期状態」のルールはここ 1 箇所に集約する。

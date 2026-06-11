@@ -40,12 +40,16 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
 }
 
-// </script> がデータ内に現れると script 要素が早期終了するため、確実にエスケープする。
+// JSON 内の `<` を一律 \u003c 形式の Unicode エスケープにする。`</script>` による要素の早期終了に加え、
+// `<!--` + `<script` の組で HTML tokenizer が script data double escaped state に入り、
+// #payload の本物の終端 </script> が呑み込まれて後続の inline script が全滅する (白画面)
+// 事故も `<` 全置換で同時に封じる。JSON で `<` は文字列リテラル内にしか現れないため、
+// 全置換しても JSON.parse の結果は不変で round-trip 安全。
 // U+2028 / U+2029 (LS/PS) は JSON では合法だが古い JS パーサーには改行扱いされるため、
 // \u エスケープに置換しておく (textContent 経由で取り出される時の保険)。
-function escapeJsonForScript(s: string): string {
+export function escapeJsonForScript(s: string): string {
   return s
-    .replace(/<\/(script)/gi, '<\\/$1')
+    .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
 }
