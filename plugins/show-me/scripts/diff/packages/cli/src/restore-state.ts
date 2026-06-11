@@ -13,8 +13,8 @@ import type {
   ThreadMessage,
   ThreadScope,
   ThreadSnapshot,
-} from '@zeus/review-diff-shared'
-import { threadKey } from '@zeus/review-diff-shared'
+} from '@show-me/diff-shared'
+import { threadKey } from '@show-me/diff-shared'
 
 // readRestoreState: v2 をそのまま読む + v1 (comments[]) を auto migrate して v2 に変換する。
 // 不明な field / 部分破損は黙って無視する (旧来の defensive 仕様維持)。
@@ -24,7 +24,7 @@ export function readRestoreState(path: string | undefined): RestoreStateV2 | und
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'))
   } catch (e) {
-    process.stderr.write(`[review-diff] restore-state read failed (ignored): ${e instanceof Error ? e.message : String(e)}\n`)
+    process.stderr.write(`[show-me:diff] restore-state read failed (ignored): ${e instanceof Error ? e.message : String(e)}\n`)
     return undefined
   }
   if (!raw || typeof raw !== 'object') return undefined

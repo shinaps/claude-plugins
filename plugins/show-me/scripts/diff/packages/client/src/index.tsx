@@ -16,7 +16,7 @@ import './globals.css'
 // バンドルを焼いた時点で esbuild の `define` で literal に置換される。
 // ブラウザでこのログが出ないなら、表示中のタブは古いセッション (cli を再起動していない / cache)。
 declare const __BUILD_ID__: string
-console.log('[review-diff] client bundle build:', typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'unknown')
+console.log('[show-me:diff] client bundle build:', typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'unknown')
 
 // Phase 0 diagnostic: Long Animation Frames API でメインスレッドの長期ブロックを記録する。
 // タブ切替で何が時間を消費しているか (script / layout / render / paint) を識別するため。
@@ -66,12 +66,12 @@ try {
       }
     })
     obs.observe({ type: 'long-animation-frame', buffered: true } as PerformanceObserverInit)
-    console.log('[review-diff] LoAF observer attached (Chrome 123+)')
+    console.log('[show-me:diff] LoAF observer attached (Chrome 123+)')
   } else {
-    console.log('[review-diff] LoAF not supported in this browser')
+    console.log('[show-me:diff] LoAF not supported in this browser')
   }
 } catch (e) {
-  console.warn('[review-diff] LoAF setup failed:', e)
+  console.warn('[show-me:diff] LoAF setup failed:', e)
 }
 
 const root = document.getElementById('root')

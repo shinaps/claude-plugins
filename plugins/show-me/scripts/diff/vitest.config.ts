@@ -1,7 +1,7 @@
 // server と client で environment が違う (node / happy-dom) ため test.projects で分離する。
 //
-// なぜ resolve.conditions に "@zeus/source" を入れるか:
-//   workspace の shared/server は package.json exports に "@zeus/source": "./src/index.ts"
+// なぜ resolve.conditions に "@show-me/source" を入れるか:
+//   workspace の shared/server は package.json exports に "@show-me/source": "./src/index.ts"
 //   を置いており、Vitest にもこの condition を通知しないと TS ソースを直接食えない。
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     projects: [
       {
-        resolve: { conditions: ['@zeus/source'] },
+        resolve: { conditions: ['@show-me/source'] },
         test: {
           name: 'server',
           environment: 'node',
@@ -23,7 +23,7 @@ export default defineConfig({
       },
       {
         plugins: [react()],
-        resolve: { conditions: ['@zeus/source'] },
+        resolve: { conditions: ['@show-me/source'] },
         test: {
           name: 'client',
           environment: 'happy-dom',

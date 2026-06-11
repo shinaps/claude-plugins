@@ -6,7 +6,7 @@
 // (Channels インフラ (/feedback, /events/*, /channel/inbox) は廃止済みなので関連テストは無い。)
 
 import { test, expect } from 'vitest'
-import { createTestApp, startServer } from '@zeus/review-diff-server'
+import { createTestApp, startServer } from '@show-me/diff-server'
 
 test('rejects requests without token via app.fetch (Host OK, token missing)', async () => {
   const { app, port } = createTestApp({ html: '<p>hi</p>' })

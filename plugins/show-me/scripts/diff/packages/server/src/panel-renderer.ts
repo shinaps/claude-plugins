@@ -24,7 +24,7 @@ import type {
   SideBySideRow,
   DisplayRange,
   SourcesUnavailable,
-} from '@zeus/review-diff-shared'
+} from '@show-me/diff-shared'
 import { langForPath } from './diff-parser'
 import type { SourcesMap } from './server'
 

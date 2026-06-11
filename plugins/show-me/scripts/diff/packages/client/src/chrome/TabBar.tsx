@@ -3,7 +3,7 @@
 //   - Guide   : panel ベースの stacked-group レビュー UI (主要ワークフロー)
 //   - Diff    : raw unified diff をそのまま表示 (グループ化無し、git diff の生コピー)
 
-import type { ProjectInfo } from '@zeus/review-diff-shared'
+import type { ProjectInfo } from '@show-me/diff-shared'
 
 type Tab = 'activity' | 'guide' | 'diff'
 

@@ -22,8 +22,8 @@
 //   - cross-file 移動 (asIs.file !== toBe.file かつ rename 関係でない) → hunks マッピング不可
 //   - EOL-only change → 文字通り context 不変なので検証不要
 
-import type { Panel } from '@zeus/review-diff-shared'
-import { unionRanges } from '@zeus/review-diff-shared'
+import type { Panel } from '@show-me/diff-shared'
+import { unionRanges } from '@show-me/diff-shared'
 import type { FileChange, Hunk } from './diff-parser'
 import type { SourcesMap } from './server'
 

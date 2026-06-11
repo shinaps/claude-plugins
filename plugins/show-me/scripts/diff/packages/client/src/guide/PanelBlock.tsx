@@ -12,7 +12,7 @@
 
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { RenderedPanel } from '@zeus/review-diff-shared'
+import type { RenderedPanel } from '@show-me/diff-shared'
 import { Panel } from './Panel'
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { useLazyHighlight } from '../lib/useLazyHighlight'

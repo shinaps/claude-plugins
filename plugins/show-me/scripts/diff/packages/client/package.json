@@ -1,11 +1,11 @@
 {
-  "name": "@zeus/review-diff-client",
+  "name": "@show-me/diff-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
-      "@zeus/source": "./src/index.tsx",
+      "@show-me/source": "./src/index.tsx",
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
@@ -18,7 +18,7 @@
   "dependencies": {
     "@shikijs/langs": "^4.2.0",
     "@shikijs/themes": "^4.2.0",
-    "@zeus/review-diff-shared": "workspace:*",
+    "@show-me/diff-shared": "workspace:*",
     "lucide-react": "^1.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

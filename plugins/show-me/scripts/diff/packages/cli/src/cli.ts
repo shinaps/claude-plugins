@@ -28,8 +28,8 @@ import type {
   RenderedGroup,
   RenderedPanel,
   ScriptResultsPayload,
-} from '@zeus/review-diff-shared'
-import { countLines } from '@zeus/review-diff-shared'
+} from '@show-me/diff-shared'
+import { countLines } from '@show-me/diff-shared'
 import {
   parseDiff,
   validateSummarySchema,
@@ -43,7 +43,7 @@ import {
   extractGroupPatch,
   SchemaError,
   type SourcesMap,
-} from '@zeus/review-diff-server'
+} from '@show-me/diff-server'
 import { buildHtml } from './template'
 import { openUrl } from './open'
 import { loadReviewDiffConfig } from './config.js'
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
   }
 
   const lineCount = diffText.split('\n').length
-  process.stderr.write(`[review-diff] parsing ${lineCount} diff lines (highlight runs in browser)...\n`)
+  process.stderr.write(`[show-me:diff] parsing ${lineCount} diff lines (highlight runs in browser)...\n`)
 
   // 2. diff parse → FileChange[]
   const changes = parseDiff(diffText)
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
     // range-symmetry が MAX_TAIL_FALLBACK 経由で緩く通過し、全 panel 空の UI が開いて
     // しまうため、原因に辿り着ける形で即死させる。
     process.stderr.write(
-      `[review-diff] summary.mode='${summary.mode}' is inconsistent with --pr-meta (${prMeta ? 'given' : 'missing'}): staged requires no pr-meta, pr requires it\n`,
+      `[show-me:diff] summary.mode='${summary.mode}' is inconsistent with --pr-meta (${prMeta ? 'given' : 'missing'}): staged requires no pr-meta, pr requires it\n`,
     )
     process.exit(1)
   }
@@ -220,23 +220,23 @@ async function main(): Promise<void> {
     editorPreset = loaded.editorPreset
     loadedConfig = loaded.config
   } catch (e) {
-    process.stderr.write(`[review-diff] config load failed (ignored): ${(e as Error).message}\n`)
+    process.stderr.write(`[show-me:diff] config load failed (ignored): ${(e as Error).message}\n`)
   }
   const editorAvailable = editorPreset !== null
   // config が無い / editor 未設定 / scripts 未設定 のときに stderr に明示的な hint を出す。
   // 「サイレントに機能 off」だとユーザーが editor link / script gate の存在に気付かないため。
   if (!values.config) {
-    process.stderr.write('[review-diff] no --config passed.\n')
-    process.stderr.write('[review-diff]   - Editor link icon will NOT be rendered (no editor preset)\n')
-    process.stderr.write('[review-diff]   - Pre-flight script gate is disabled\n')
-    process.stderr.write('[review-diff]   To enable: copy plugins/zeus/skills/review-diff/example.review-diff.config.json\n')
-    process.stderr.write('[review-diff]   to .claude/zeus/review-diff.config.json (= relative to repo root)\n')
+    process.stderr.write('[show-me:diff] no --config passed.\n')
+    process.stderr.write('[show-me:diff]   - Editor link icon will NOT be rendered (no editor preset)\n')
+    process.stderr.write('[show-me:diff]   - Pre-flight script gate is disabled\n')
+    process.stderr.write('[show-me:diff]   To enable: copy plugins/show-me/skills/diff/example.diff.config.json\n')
+    process.stderr.write('[show-me:diff]   to .claude/show-me/diff.config.json (= relative to repo root)\n')
   } else if (loadedConfig) {
     if (!editorAvailable) {
-      process.stderr.write('[review-diff] config has no editor.kind — editor link icon will NOT be rendered.\n')
+      process.stderr.write('[show-me:diff] config has no editor.kind — editor link icon will NOT be rendered.\n')
     }
     if (!loadedConfig.scripts || loadedConfig.scripts.length === 0) {
-      process.stderr.write('[review-diff] config has no scripts[] — pre-flight script gate is disabled.\n')
+      process.stderr.write('[show-me:diff] config has no scripts[] — pre-flight script gate is disabled.\n')
     }
   }
 
@@ -248,7 +248,7 @@ async function main(): Promise<void> {
       const raw = JSON.parse(readFileSync(scriptResultsPath, 'utf8')) as ScriptResultsPayload
       scriptResults = raw
     } catch (e) {
-      process.stderr.write(`[review-diff] script-results read failed (ignored): ${(e as Error).message}\n`)
+      process.stderr.write(`[show-me:diff] script-results read failed (ignored): ${(e as Error).message}\n`)
     }
   }
 
@@ -292,7 +292,7 @@ async function main(): Promise<void> {
     editorAvailable,
   })
 
-  const { startServer } = await import('@zeus/review-diff-server')
+  const { startServer } = await import('@show-me/diff-server')
   const started = await startServer({
     html,
     sources,
@@ -300,8 +300,8 @@ async function main(): Promise<void> {
     editorPreset,
   })
 
-  process.stderr.write(`[review-diff] URL: ${started.url}\n`)
-  process.stderr.write(`[review-diff] waiting for decision (tab close → auto exit via heartbeat)...\n`)
+  process.stderr.write(`[show-me:diff] URL: ${started.url}\n`)
+  process.stderr.write(`[show-me:diff] waiting for decision (tab close → auto exit via heartbeat)...\n`)
   openUrl(started.url)
 
   const startedAt = Date.now()
@@ -317,13 +317,13 @@ async function main(): Promise<void> {
       const now = Date.now()
       if (last === null) {
         if (now - startedAt < HEARTBEAT_BOOT_GRACE_MS) return
-        process.stderr.write(`[review-diff] no initial heartbeat within ${HEARTBEAT_BOOT_GRACE_MS}ms — exiting\n`)
+        process.stderr.write(`[show-me:diff] no initial heartbeat within ${HEARTBEAT_BOOT_GRACE_MS}ms — exiting\n`)
         clearInterval(interval)
         resolve(timeoutResult)
         return
       }
       if (now - last > HEARTBEAT_GRACE_MS) {
-        process.stderr.write(`[review-diff] heartbeat lost for ${Math.round((now - last) / 1000)}s — tab closed, exiting\n`)
+        process.stderr.write(`[show-me:diff] heartbeat lost for ${Math.round((now - last) / 1000)}s — tab closed, exiting\n`)
         clearInterval(interval)
         resolve(timeoutResult)
       }

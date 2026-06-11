@@ -14,8 +14,8 @@ import {
   buildLineMappings,
   type FileChange,
   type Hunk,
-} from '@zeus/review-diff-server'
-import type { Panel } from '@zeus/review-diff-shared'
+} from '@show-me/diff-server'
+import type { Panel } from '@show-me/diff-shared'
 
 function makeChange(overrides: Partial<FileChange> & { path: string }): FileChange {
   return {

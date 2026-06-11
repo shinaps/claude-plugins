@@ -10,7 +10,7 @@
 // O(全 row) の差分カウント集計も Diff タブ初回 mount まで一切走らない。
 
 import { memo, useMemo } from 'react'
-import type { RenderedPanel } from '@zeus/review-diff-shared'
+import type { RenderedPanel } from '@show-me/diff-shared'
 import { PanelBlock } from '../guide/PanelBlock'
 import type { FileCommentHandlers } from '../guide/PanelHeader'
 import type { LineCommentHandlers } from '../guide/useLineComments'

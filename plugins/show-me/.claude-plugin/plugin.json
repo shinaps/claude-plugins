@@ -1,0 +1,20 @@
+{
+  "name": "show-me",
+  "description": "staged diff / PR diff を Linear 風 stacked PR UI でブラウザに開き、人間が目で見て最終承認するゲートプラグイン。/show-me:diff は AI が組んだ「読書順の group / panel ナラティブ」に沿って差分をレビューでき、group 単位の Approve / Request Changes + 行コメント / スレッド返信を受け取る。Submit すると linear stack で先頭から approved group を 1 commit ずつ作成し、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。同梱 Node CLI (React + Hono + Shiki、bundle 済みで Node 20+ のみ要求) が coverage / range symmetry / panel exclusivity を検証。context+ ボタンは close-relaunch + state restore モデルで decision / コメント / 未保存 draft を再起動後に復元。zeus プラグインの旧 /zeus:review-diff を独立させたスタンドアロン構成で、どのリポジトリでもコミット前の人間ゲートとして使える。",
+  "version": "1.0.0",
+  "author": {
+    "name": "shinaps",
+    "email": "ryuta@shinaps.jp"
+  },
+  "homepage": "https://github.com/shinaps/claude-plugins",
+  "repository": "https://github.com/shinaps/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "diff",
+    "human-in-the-loop",
+    "approval-gate",
+    "stacked-pr",
+    "ui"
+  ]
+}

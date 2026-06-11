@@ -6,7 +6,7 @@
 //   - 同一 anchor の複数 body は 1 thread 内の連続 message として順序を維持する
 //   - trim 後空の body は捨てる。入力 threads は変更しない (非破壊)
 import { describe, expect, test } from 'vitest'
-import type { ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { ThreadSnapshot } from '@show-me/diff-shared'
 import { mergeGroupCommentsIntoThreads, mergeLineCommentsIntoThreads } from '../src/lib/merge-threads'
 import { lineCommentKey } from '../src/lib/state'
 

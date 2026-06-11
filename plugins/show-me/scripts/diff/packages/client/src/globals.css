@@ -1,5 +1,5 @@
 /*
- * review-diff client のグローバル CSS。
+ * show-me diff client のグローバル CSS。
  * Tailwind v4 + @tailwindcss/typography ベース、design token は @theme で宣言。
  *
  * このファイルに残しているのは「Tailwind utility では表現困難 / 表現すべきでない」もの:

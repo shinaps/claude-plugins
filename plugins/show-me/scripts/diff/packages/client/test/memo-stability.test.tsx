@@ -19,7 +19,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import type { ClientPayload, RenderedPanel } from '@zeus/review-diff-shared'
+import type { ClientPayload, RenderedPanel } from '@show-me/diff-shared'
 import { App } from '../src/App'
 
 const { panelBlockSpy } = vi.hoisted(() => ({

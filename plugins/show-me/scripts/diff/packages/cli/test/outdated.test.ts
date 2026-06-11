@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type { ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { ThreadSnapshot } from '@show-me/diff-shared'
 import {
   computeOutdated,
   extractChangedIntervals,

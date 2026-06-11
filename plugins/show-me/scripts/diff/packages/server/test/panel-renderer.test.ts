@@ -1,8 +1,8 @@
 // panel-renderer: AC-11 必須 5 ケース + ranges 不一致 + cross-file 異言語の計 7 ケース。
 
 import { test, expect } from 'vitest'
-import { renderPanel, type SourcesMap } from '@zeus/review-diff-server'
-import type { Panel } from '@zeus/review-diff-shared'
+import { renderPanel, type SourcesMap } from '@show-me/diff-server'
+import type { Panel } from '@show-me/diff-shared'
 
 function srcMap(entries: Array<[string, { before?: string; after?: string }]>): SourcesMap {
   const m: SourcesMap = new Map()

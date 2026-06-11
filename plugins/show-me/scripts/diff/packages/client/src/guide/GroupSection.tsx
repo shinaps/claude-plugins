@@ -8,7 +8,7 @@
 //   - context+ ボタンの regenPending は close-relaunch ループの同時発火防止に必須
 
 import { memo } from 'react'
-import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@show-me/diff-shared'
 import { GroupNav } from './GroupNav'
 import { PanelBlock } from './PanelBlock'
 import type { FileCommentHandlers } from './PanelHeader'

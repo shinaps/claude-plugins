@@ -6,7 +6,7 @@ import { test, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { parseDiff } from '@zeus/review-diff-server'
+import { parseDiff } from '@show-me/diff-server'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixturePath = (name: string) => resolve(__dirname, 'fixtures', name)

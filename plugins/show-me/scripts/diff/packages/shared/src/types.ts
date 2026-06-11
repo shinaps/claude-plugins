@@ -190,7 +190,7 @@ export type ScriptResultsPayload = {
   results: ScriptResult[]
 }
 
-// review-diff.config.json の scripts[] エントリ。
+// diff.config.json の scripts[] エントリ。
 //   - matchFiles : staged diff の変更ファイルと picomatch で照合、ヒットなしなら skip
 //   - timeoutMs  : SIGTERM 送信までの猶予 (未指定なら DEFAULT_SCRIPT_TIMEOUT_MS = 60000)
 export type ScriptConfig = {
@@ -216,7 +216,7 @@ export type EditorPreset = {
   urlScheme: string | null
 }
 
-// review-diff.config.json 全体スキーマ。
+// diff.config.json 全体スキーマ。
 //   - editor は省略可 (省略時はエディタリンク無効化 = ClientPayload.editorAvailable=false)
 //   - scripts は省略可 (省略時はゲートをスキップ)
 export type ReviewDiffConfig = {

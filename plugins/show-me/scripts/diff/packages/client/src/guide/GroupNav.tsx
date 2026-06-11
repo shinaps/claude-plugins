@@ -21,7 +21,7 @@
 
 import { useEffect, useState } from 'react'
 import { Plus, LoaderCircle, ChevronUp, ChevronDown, MessageSquare, X, Check } from 'lucide-react'
-import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { RenderedPanel, GroupDecision, ThreadSnapshot } from '@show-me/diff-shared'
 import { renderMarkdown } from '../lib/markdown'
 import { basename } from '../lib/path'
 import { cssEscape } from '../lib/css-escape'

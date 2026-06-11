@@ -16,7 +16,7 @@
 
 import type { FC, ReactNode } from 'react'
 import { memo, useMemo, useState } from 'react'
-import type { GroupDecision, RenderedPanel, ScriptResult, ScriptResultsPayload, ThreadMessage, ThreadSnapshot, AgentAction } from '@zeus/review-diff-shared'
+import type { GroupDecision, RenderedPanel, ScriptResult, ScriptResultsPayload, ThreadMessage, ThreadSnapshot, AgentAction } from '@show-me/diff-shared'
 import {
   Check, X, MinusCircle,
   ChevronDown, ChevronUp,

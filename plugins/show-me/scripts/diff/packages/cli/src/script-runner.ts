@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import picomatch from 'picomatch'
-import type { ScriptConfig, ScriptResult, ScriptResultsPayload } from '@zeus/review-diff-shared'
+import type { ScriptConfig, ScriptResult, ScriptResultsPayload } from '@show-me/diff-shared'
 import { loadReviewDiffConfig } from './config.js'
 
 // Phase 4.5 (script gate) を実行するための CLI 内部ロジック。
@@ -69,7 +69,7 @@ export async function runScripts(args: RunScriptsArgs): Promise<RunScriptsResult
 // 純粋関数として export しているのはテスト容易性のため (spawn を伴わず検証できる)。
 export function buildCommandAnnouncement(scripts: ScriptConfig[]): string {
   if (scripts.length === 0) return ''
-  const lines = [`[review-diff] script gate: ${scripts.length} script(s) configured:`]
+  const lines = [`[show-me:diff] script gate: ${scripts.length} script(s) configured:`]
   for (const s of scripts) {
     lines.push(`  - ${s.name}: ${s.command}`)
   }
@@ -240,7 +240,7 @@ function tail(text: string): string {
 
 function buildFailureReport(results: ScriptResult[]): string {
   const lines: string[] = []
-  lines.push('[review-diff] script gate FAILED:')
+  lines.push('[show-me:diff] script gate FAILED:')
   for (const r of results) {
     if (r.status === 'passed') {
       lines.push(`  ✅ ${r.name} (${formatDuration(r.durationMs)})`)
@@ -260,7 +260,7 @@ function buildFailureReport(results: ScriptResult[]): string {
     }
   }
   lines.push('')
-  lines.push('review-diff was not opened. Fix the failing script(s) and re-stage.')
+  lines.push('show-me:diff was not opened. Fix the failing script(s) and re-stage.')
   return lines.join('\n')
 }
 
@@ -296,7 +296,7 @@ export async function runScriptsCommand(): Promise<number> {
     }
     return 0
   } catch (e) {
-    process.stderr.write(`[review-diff] run-scripts crashed: ${(e as Error).message}\n`)
+    process.stderr.write(`[show-me:diff] run-scripts crashed: ${(e as Error).message}\n`)
     return 2
   }
 }

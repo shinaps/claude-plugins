@@ -22,8 +22,8 @@ import type {
   ResultJson,
   ReviewKind,
   ThreadSnapshot,
-} from '@zeus/review-diff-shared'
-import { threadKey } from '@zeus/review-diff-shared'
+} from '@show-me/diff-shared'
+import { threadKey } from '@show-me/diff-shared'
 import { TabBar } from './chrome/TabBar'
 import { GroupSection } from './guide/GroupSection'
 import { SubmitBar } from './chrome/SubmitBar'

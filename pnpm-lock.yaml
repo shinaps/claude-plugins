@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  plugins/zeus/scripts/review-diff:
+  plugins/show-me/scripts/diff:
     devDependencies:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
@@ -29,15 +29,15 @@ importers:
         specifier: ^4.0.0
         version: 4.1.8(@types/node@20.19.42)(happy-dom@20.10.2)(vite@6.4.3(@types/node@20.19.42)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
 
-  plugins/zeus/scripts/review-diff/packages/cli:
+  plugins/show-me/scripts/diff/packages/cli:
     dependencies:
-      '@zeus/review-diff-client':
+      '@show-me/diff-client':
         specifier: workspace:*
         version: link:../client
-      '@zeus/review-diff-server':
+      '@show-me/diff-server':
         specifier: workspace:*
         version: link:../server
-      '@zeus/review-diff-shared':
+      '@show-me/diff-shared':
         specifier: workspace:*
         version: link:../shared
       diff:
@@ -72,7 +72,7 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  plugins/zeus/scripts/review-diff/packages/client:
+  plugins/show-me/scripts/diff/packages/client:
     dependencies:
       '@shikijs/langs':
         specifier: ^4.2.0
@@ -80,7 +80,7 @@ importers:
       '@shikijs/themes':
         specifier: ^4.2.0
         version: 4.2.0
-      '@zeus/review-diff-shared':
+      '@show-me/diff-shared':
         specifier: workspace:*
         version: link:../shared
       lucide-react:
@@ -133,12 +133,12 @@ importers:
         specifier: ^0.1.24
         version: 0.1.24(@types/node@20.19.42)(esbuild@0.28.0)(happy-dom@20.10.2)(jiti@2.7.0)(tsx@4.22.4)(typescript@5.9.3)(vite@6.4.3(@types/node@20.19.42)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
 
-  plugins/zeus/scripts/review-diff/packages/server:
+  plugins/show-me/scripts/diff/packages/server:
     dependencies:
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
-      '@zeus/review-diff-shared':
+      '@show-me/diff-shared':
         specifier: workspace:*
         version: link:../shared
       diff:
@@ -164,7 +164,7 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  plugins/zeus/scripts/review-diff/packages/shared:
+  plugins/show-me/scripts/diff/packages/shared:
     devDependencies:
       typescript:
         specifier: ^5.6.0

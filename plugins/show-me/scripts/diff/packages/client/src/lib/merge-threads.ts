@@ -1,5 +1,5 @@
-import type { ThreadMessage, ThreadSnapshot } from '@zeus/review-diff-shared'
-import { threadKey } from '@zeus/review-diff-shared'
+import type { ThreadMessage, ThreadSnapshot } from '@show-me/diff-shared'
+import { threadKey } from '@show-me/diff-shared'
 import { parseLineCommentKey } from './state'
 
 // thread への user message 合成を担う純関数群。送信チャネルは threads に一本化されており、

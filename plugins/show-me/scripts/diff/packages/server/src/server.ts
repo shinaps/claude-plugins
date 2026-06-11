@@ -24,7 +24,7 @@ import { bodyLimit } from 'hono/body-limit'
 import { secureHeaders } from 'hono/secure-headers'
 import type { MiddlewareHandler } from 'hono'
 import { serve, type ServerType } from '@hono/node-server'
-import type { EditorPreset, ResultJson } from '@zeus/review-diff-shared'
+import type { EditorPreset, ResultJson } from '@show-me/diff-shared'
 
 const MAX_TOKEN_FAILURES = 20
 const RESULT_SETTLE_MS = 200 // POST のレスポンスを返し切ってから resolve するまでの猶予
@@ -222,7 +222,7 @@ export function createApp(opts: CreateAppOptions): Hono {
       })
       child.unref()
     } catch (e) {
-      process.stderr.write(`[review-diff] editor open failed: ${cmd}: ${(e as Error).message}\n`)
+      process.stderr.write(`[show-me:diff] editor open failed: ${cmd}: ${(e as Error).message}\n`)
       return c.json({ ok: false, reason: 'spawn failed' }, 500)
     }
     return c.json({ ok: true })

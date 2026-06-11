@@ -15,7 +15,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import type { ClientPayload, RenderedPanel, ResultJson } from '@zeus/review-diff-shared'
+import type { ClientPayload, RenderedPanel, ResultJson } from '@show-me/diff-shared'
 import { App } from '../src/App'
 
 function makePanel(panelId = 'p1'): RenderedPanel {

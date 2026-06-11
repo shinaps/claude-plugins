@@ -7,7 +7,7 @@
 //     (同じ file が複数 panel に出るケースは現状無いが defensive に dedupe する)
 //   - file change kind は (asIs/toBe の有無 + 同名/別名) の 4 値で discriminated union 的に分類
 
-import type { RenderedPanel } from '@zeus/review-diff-shared'
+import type { RenderedPanel } from '@show-me/diff-shared'
 import { basename } from '../lib/path'
 
 export type FileChangeKind = 'added' | 'modified' | 'deleted' | 'renamed'

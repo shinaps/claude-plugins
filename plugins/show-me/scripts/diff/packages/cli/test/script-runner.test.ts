@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
-import type { ScriptConfig } from '@zeus/review-diff-shared'
+import type { ScriptConfig } from '@show-me/diff-shared'
 import { buildCommandAnnouncement, runScripts } from '../src/script-runner.js'
 
 describe('buildCommandAnnouncement', () => {

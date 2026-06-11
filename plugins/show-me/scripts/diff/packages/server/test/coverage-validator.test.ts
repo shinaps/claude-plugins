@@ -1,8 +1,8 @@
 // coverage-validator.ts: asIs/toBe 別軸検証 + rename サジェスト + EOL-only skip + 構造変更検出。
 
 import { test, expect } from 'vitest'
-import { validateCoverage, type FileChange } from '@zeus/review-diff-server'
-import type { Panel } from '@zeus/review-diff-shared'
+import { validateCoverage, type FileChange } from '@show-me/diff-server'
+import type { Panel } from '@show-me/diff-shared'
 
 function makeChange(overrides: Partial<FileChange> & { path: string }): FileChange {
   return {

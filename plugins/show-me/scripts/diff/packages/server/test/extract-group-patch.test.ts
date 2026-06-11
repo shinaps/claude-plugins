@@ -6,8 +6,8 @@
 //   - 空 patch (= group が変更行を claim しない context-only) → 空文字列
 
 import { test, expect } from 'vitest'
-import { extractGroupPatch } from '@zeus/review-diff-server'
-import type { SummaryJson } from '@zeus/review-diff-shared'
+import { extractGroupPatch } from '@show-me/diff-server'
+import type { SummaryJson } from '@show-me/diff-shared'
 
 // helper: 最小 SummaryJson を組み立てる
 function makeSummary(groups: SummaryJson['groups']): SummaryJson {

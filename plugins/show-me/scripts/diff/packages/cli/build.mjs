@@ -17,9 +17,9 @@ const require = createRequire(import.meta.url)
 // なぜ Vite library mode の build 出力を読むか:
 //   client パッケージは vp build (vite-plus-core) で IIFE bundle を packages/client/dist/index.js に
 //   出力する。旧実装 (esbuild Step 1) を vite+ に置き換えることで、HMR / dev サーバを vite+ に統一する。
-// require.resolve("@zeus/review-diff-client/package.json") は pnpm workspace 経由で
+// require.resolve("@show-me/diff-client/package.json") は pnpm workspace 経由で
 //   packages/client/package.json を直接指すので、dirname() + dist/index.js で絶対パスが取れる。
-const clientPkg = require.resolve('@zeus/review-diff-client/package.json')
+const clientPkg = require.resolve('@show-me/diff-client/package.json')
 const clientDir = dirname(clientPkg)
 const CLIENT_JS = await readFile(resolve(clientDir, 'dist/index.js'), 'utf8')
 console.log(`client bundle: ${Buffer.byteLength(CLIENT_JS).toLocaleString()} bytes`)
@@ -74,11 +74,11 @@ try {
 } catch (err) {
   throw new Error(
     `${CSS_PATH} not found. client パッケージの build が先に走っている必要があります ` +
-      `(pnpm --filter @zeus/review-diff-client build を実行してください)。元エラー: ${err.message}`,
+      `(pnpm --filter @show-me/diff-client build を実行してください)。元エラー: ${err.message}`,
   )
 }
 
-// ---- Step 3: cli.ts を CJS bundle。conditions に "@zeus/source" を渡し、
+// ---- Step 3: cli.ts を CJS bundle。conditions に "@show-me/source" を渡し、
 //                shared/server の TS ソースを直接食わせる (build 不要構成)
 await build({
   entryPoints: [resolve(__dirname, 'src/cli.ts')],
@@ -90,9 +90,9 @@ await build({
   minify: true,
   legalComments: 'none',
   banner: { js: '#!/usr/bin/env node' },
-  // esbuild は package.json の exports conditions を解釈する。"@zeus/source" を最優先 condition に
+  // esbuild は package.json の exports conditions を解釈する。"@show-me/source" を最優先 condition に
   // 入れることで packages/shared/src/index.ts と packages/server/src/index.ts を TS のまま resolve できる。
-  conditions: ['@zeus/source', 'node', 'import', 'default'],
+  conditions: ['@show-me/source', 'node', 'import', 'default'],
   define: {
     __MARKED_JS__: JSON.stringify(MARKED_JS),
     __DOMPURIFY_JS__: JSON.stringify(DOMPURIFY_JS),
@@ -110,7 +110,7 @@ await writeFile(
 
 // ---- 配布物互換維持: ルートの dist/cli.js に複製
 // なぜ複製するか:
-//   SKILL.md は plugins/zeus/scripts/review-diff/dist/cli.js を literal path で参照する。
+//   SKILL.md は plugins/show-me/scripts/diff/dist/cli.js を literal path で参照する。
 //   monorepo 化後の実体は packages/cli/dist/cli.js だが、SKILL.md を変えずにパス互換を保つため、
 //   build 末尾で旧パスへ cp する。.gitattributes (eol=lf) も既存通り。
 const rootDist = resolve(__dirname, '../../dist')

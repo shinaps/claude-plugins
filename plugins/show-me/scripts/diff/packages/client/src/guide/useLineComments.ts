@@ -9,7 +9,7 @@
 //   依存値を持たないので useCallback の依存配列は空でよい。返却オブジェクトは useMemo で安定化。
 
 import { useCallback, useMemo, useState } from 'react'
-import type { Side } from '@zeus/review-diff-shared'
+import type { Side } from '@show-me/diff-shared'
 import { lineCommentKey } from '../lib/state'
 
 export type LineTarget = {

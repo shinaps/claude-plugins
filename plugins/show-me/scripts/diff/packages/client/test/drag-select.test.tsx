@@ -11,7 +11,7 @@
 import { render, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect, beforeEach, afterEach } from 'vitest'
-import type { RenderedPanel } from '@zeus/review-diff-shared'
+import type { RenderedPanel } from '@show-me/diff-shared'
 import { Panel } from '../src/guide/Panel'
 import type { LineCommentHandlers, LineTarget } from '../src/guide/useLineComments'
 

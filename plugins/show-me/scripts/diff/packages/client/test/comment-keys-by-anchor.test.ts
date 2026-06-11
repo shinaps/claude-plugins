@@ -8,7 +8,7 @@
 // 内部実装 (ヘルパー分割・ループ構造) を変えてもこのテストが通ることを保証する。
 
 import { describe, test, expect } from 'vitest'
-import type { ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { ThreadSnapshot } from '@show-me/diff-shared'
 import { buildCommentKeysByAnchor } from '../src/guide/Panel'
 import { lineCommentKey } from '../src/lib/state'
 

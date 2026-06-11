@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 export function openUrl(url: string): void {
   if (process.platform !== 'darwin') {
     process.stderr.write(
-      `Warning: review-diff officially supports macOS only. Open ${url} manually.\n`
+      `Warning: show-me:diff officially supports macOS only. Open ${url} manually.\n`
     )
     return
   }

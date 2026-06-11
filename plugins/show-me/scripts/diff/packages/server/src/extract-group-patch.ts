@@ -23,7 +23,7 @@
 //     決める (old 側開始行は位置決めに使われない) ため、full-diff 座標のままで害がない。
 
 import parseGitDiff from 'parse-git-diff'
-import type { SummaryJson, Panel, PanelSide, Group } from '@zeus/review-diff-shared'
+import type { SummaryJson, Panel, PanelSide, Group } from '@show-me/diff-shared'
 
 // parse-git-diff の AnyFile / AnyChunk / AnyChange は型 export されていないため独自定義 (diff-parser と同形)。
 type AnyChange = {

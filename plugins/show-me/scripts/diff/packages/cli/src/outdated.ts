@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { spawnSync } from 'node:child_process'
-import type { ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { ThreadSnapshot } from '@show-me/diff-shared'
 import { parseThreadSnapshot } from './restore-state.js'
 
 // mark-outdated subcommand:
@@ -169,10 +169,10 @@ export async function markOutdatedCommand(): Promise<number> {
       restoreStatePath,
       changedFilesPath,
     })
-    process.stderr.write(`[review-diff] mark-outdated: ${updated}/${totalThreads} threads updated\n`)
+    process.stderr.write(`[show-me:diff] mark-outdated: ${updated}/${totalThreads} threads updated\n`)
     return 0
   } catch (e) {
-    process.stderr.write(`[review-diff] mark-outdated crashed: ${(e as Error).message}\n`)
+    process.stderr.write(`[show-me:diff] mark-outdated crashed: ${(e as Error).message}\n`)
     return 2
   }
 }

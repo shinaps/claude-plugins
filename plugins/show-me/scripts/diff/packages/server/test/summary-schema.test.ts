@@ -1,7 +1,7 @@
 // summary-schema.ts: zod 検証 + legacy 検出 + panelId 補完 + 重複 suffix の 8 ケース。
 
 import { test, expect } from 'vitest'
-import { validateSummarySchema, SchemaError } from '@zeus/review-diff-server'
+import { validateSummarySchema, SchemaError } from '@show-me/diff-server'
 
 const validBase = {
   schemaVersion: 1 as const,

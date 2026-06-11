@@ -17,7 +17,7 @@
 //      - 無ければ owner として記録
 //   4. 全 conflict を集めて返す (early-exit せず AI 修正用に情報量最大化)
 
-import type { Panel } from '@zeus/review-diff-shared'
+import type { Panel } from '@show-me/diff-shared'
 import type { FileChange } from './diff-parser'
 
 export type ExclusivityConflict = {

@@ -16,7 +16,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react'
-import type { ReviewKind, ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { ReviewKind, ThreadSnapshot } from '@show-me/diff-shared'
 
 type Props = {
   approvedCount: number

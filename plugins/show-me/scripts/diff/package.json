@@ -1,11 +1,11 @@
 {
-  "name": "@zeus/review-diff",
+  "name": "@show-me/diff",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vp run -F @zeus/review-diff-cli... build",
-    "dev": "pnpm -F @zeus/review-diff-client dev",
+    "build": "vp run -F @show-me/diff-cli... build",
+    "dev": "pnpm -F @show-me/diff-client dev",
     "test": "vitest run",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/server --noEmit && tsc -p packages/client --noEmit && tsc -p packages/cli --noEmit",
     "clean": "pnpm -r --parallel exec rm -rf dist node_modules/.vite"

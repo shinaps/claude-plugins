@@ -1,7 +1,7 @@
 // React アプリが起動時に読む副作用ヘルパー。
 // useState 周りの state 型はそれぞれの component 内に閉じているので、ここには置かない。
 
-import type { ClientPayload, Side } from '@zeus/review-diff-shared'
+import type { ClientPayload, Side } from '@show-me/diff-shared'
 
 export function getPayload(): ClientPayload {
   const el = document.getElementById('payload')

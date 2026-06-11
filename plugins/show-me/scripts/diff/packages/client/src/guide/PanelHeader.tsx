@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from 'react'
 import { ChevronUp, ChevronDown, MessageSquare } from 'lucide-react'
-import type { RenderedPanel, ThreadSnapshot } from '@zeus/review-diff-shared'
+import type { RenderedPanel, ThreadSnapshot } from '@show-me/diff-shared'
 import { readDraft, writeDraft, removeDraft } from '../lib/drafts'
 
 // ファイル単位コメントの handler 束。App が threads state と addFileComment を束ねて

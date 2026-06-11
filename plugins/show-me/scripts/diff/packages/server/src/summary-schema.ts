@@ -16,7 +16,7 @@
 
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
-import type { Panel, SummaryJson } from '@zeus/review-diff-shared'
+import type { Panel, SummaryJson } from '@show-me/diff-shared'
 
 const DisplayRangeSchema = z
   .object({
@@ -93,10 +93,10 @@ export function validateSummarySchema(raw: unknown): ValidatedSummary {
   if (legacy.legacy) {
     const detail = legacy.reasons.map(r => `  - ${r}`).join('\n')
     throw new SchemaError(
-      'summary.json is in legacy format and is no longer supported by /zeus:review-diff.\n' +
+      'summary.json is in legacy format and is no longer supported by /show-me:diff.\n' +
       `Detected legacy fields:\n${detail}\n\n` +
       'Migration: replace "groups[].files: GroupFileRef[]" with "groups[].panels: Panel[]" ' +
-      '(see plugins/zeus/skills/review-diff/SKILL.md Phase 4 for the new schema).\n',
+      '(see plugins/show-me/skills/diff/SKILL.md Phase 4 for the new schema).\n',
     )
   }
   const parsed = SummarySchema.safeParse(raw)

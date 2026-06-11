@@ -2,7 +2,7 @@
 // 本番は CLI が renderPanel で segments を組み立てるが、dev では手書きで小さい panel を 2-3 件用意する。
 // レイアウト / drag-select / split↔unified トグル / Reviewed の確認用。
 
-import type { ClientPayload, SideBySideRow, RenderedPanel } from '@zeus/review-diff-shared'
+import type { ClientPayload, SideBySideRow, RenderedPanel } from '@show-me/diff-shared'
 
 function ctx(asIsLn: number, toBeLn: number, raw: string): SideBySideRow {
   return {
@@ -79,7 +79,7 @@ export const sampleData: ClientPayload = {
     ],
   },
   prMeta: null,
-  project: { name: 'review-diff-demo', branch: 'main' },
+  project: { name: 'show-me-demo', branch: 'main' },
   groups: [
     {
       groupId: 'g0',

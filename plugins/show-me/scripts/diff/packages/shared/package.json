@@ -1,17 +1,17 @@
 {
-  "name": "@zeus/review-diff-shared",
+  "name": "@show-me/diff-shared",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
-      "@zeus/source": "./src/index.ts",
+      "@show-me/source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     }
   },
   "scripts": {
-    "build": "echo 'shared: no build (types-only, consumers resolve via @zeus/source)'",
+    "build": "echo 'shared: no build (types-only, consumers resolve via @show-me/source)'",
     "clean": "true"
   },
   "devDependencies": {

@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { z } from 'zod'
-import type { EditorKind, EditorPreset, ReviewDiffConfig } from '@zeus/review-diff-shared'
+import type { EditorKind, EditorPreset, ReviewDiffConfig } from '@show-me/diff-shared'
 
-// review-diff.config.json の loader + EditorPreset 解決。
+// diff.config.json の loader + EditorPreset 解決。
 //   - editor.kind がプリセットなら EDITOR_PRESETS table から command / urlScheme を引く
 //   - user が editor.command / editor.urlScheme を書いていればプリセットを上書き
 //   - editor が未指定なら editorPreset = null (= EditorLinkTrigger を描画しない)
@@ -58,19 +58,19 @@ export function loadReviewDiffConfig(path?: string | null): LoadedConfig {
   try {
     raw = readFileSync(path, 'utf8')
   } catch (e) {
-    throw new Error(`review-diff.config.json not found at ${path}: ${(e as Error).message}`)
+    throw new Error(`diff.config.json not found at ${path}: ${(e as Error).message}`)
   }
 
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch (e) {
-    throw new Error(`review-diff.config.json is not valid JSON: ${(e as Error).message}`)
+    throw new Error(`diff.config.json is not valid JSON: ${(e as Error).message}`)
   }
 
   const result = ReviewDiffConfigSchema.safeParse(parsed)
   if (!result.success) {
-    throw new Error(`review-diff.config.json failed schema validation:\n${result.error.message}`)
+    throw new Error(`diff.config.json failed schema validation:\n${result.error.message}`)
   }
 
   const config = result.data as ReviewDiffConfig
@@ -82,7 +82,7 @@ function resolveEditorPreset(editor: ReviewDiffConfig['editor']): EditorPreset |
   if (!editor) return null
   if (editor.kind === 'custom') {
     if (!editor.command) {
-      throw new Error(`editor.kind='custom' requires editor.command in review-diff.config.json`)
+      throw new Error(`editor.kind='custom' requires editor.command in diff.config.json`)
     }
     return {
       kind: 'custom',

@@ -6,7 +6,7 @@
 //   全アセット (CSS / JS / データ) を 1 HTML に閉じ込めることで、配信物が分散せず
 //   再現性も高くなる (差分審査の現場で URL を渡すだけで全部見える)。
 
-import type { ClientPayload } from '@zeus/review-diff-shared'
+import type { ClientPayload } from '@show-me/diff-shared'
 import { CLIENT_JS, MARKED_JS, DOMPURIFY_JS, CSS_STRING } from './inline-assets'
 
 export type BuildHtmlInput = ClientPayload
@@ -15,7 +15,7 @@ export function buildHtml(payload: BuildHtmlInput): string {
   const dataJson = JSON.stringify(payload)
   // 複数プロジェクトのレビュータブを並行して開いたとき、ブラウザのタブ一覧だけで
   // どのリポジトリか判別できるよう、プロジェクト名をタイトル先頭に置く。
-  const title = payload.project ? `${payload.project.name} · review-diff` : 'review-diff'
+  const title = payload.project ? `${payload.project.name} · show-me` : 'show-me'
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>

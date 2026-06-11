@@ -12,8 +12,8 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { extractGroupPatch } from '@zeus/review-diff-server'
-import type { SummaryJson } from '@zeus/review-diff-shared'
+import { extractGroupPatch } from '@show-me/diff-server'
+import type { SummaryJson } from '@show-me/diff-shared'
 
 function makeSummary(groups: SummaryJson['groups']): SummaryJson {
   return { schemaVersion: 1, mode: 'staged', pr: null, overallSummary: '', groups }

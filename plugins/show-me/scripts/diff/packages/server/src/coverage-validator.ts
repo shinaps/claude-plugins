@@ -16,7 +16,7 @@
 //     asIs 軸の miss が確実に発生する。miss report に「old → new の rename だった、asIs を oldPath にしませんでしたか」
 //     サジェストを付ける。
 
-import type { Panel, DisplayRange } from '@zeus/review-diff-shared'
+import type { Panel, DisplayRange } from '@show-me/diff-shared'
 import type { FileChange } from './diff-parser'
 
 export type CoverageMiss = {

@@ -1,5 +1,5 @@
 {
-  "name": "@zeus/review-diff-cli",
+  "name": "@show-me/diff-cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@zeus/review-diff-client": "workspace:*",
-    "@zeus/review-diff-server": "workspace:*",
-    "@zeus/review-diff-shared": "workspace:*",
+    "@show-me/diff-client": "workspace:*",
+    "@show-me/diff-server": "workspace:*",
+    "@show-me/diff-shared": "workspace:*",
     "diff": "^7.0.0",
     "dompurify": "^3.4.9",
     "marked": "^18.0.2",

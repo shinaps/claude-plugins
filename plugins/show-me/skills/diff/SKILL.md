@@ -1,12 +1,12 @@
 ---
-name: review-diff
-description: 直前の staged diff または既存 PR の diff を Linear 風 stacked PR UI (split mode) でブラウザに開き、group 単位の Approve / Request Changes + コメントで人間ゲートする最終承認スキル。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。context+ ボタンは close-relaunch + state restore モデルで全 group の decision / コメント / 未保存 draft を再起動後に復元。/zeus:review (観点別分析) と責務が違い、こちらは「人間が目で見て承認する」動線
+name: diff
+description: 直前の staged diff または既存 PR の diff を Linear 風 stacked PR UI (split mode) でブラウザに開き、group 単位の Approve / Request Changes + コメントで人間ゲートする最終承認スキル。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes で打ち切って残りは un-commit のまま Claude に戻す。context+ ボタンは close-relaunch + state restore モデルで全 group の decision / コメント / 未保存 draft を再起動後に復元。AI による観点別の機械レビュー (zeus プラグインの /zeus:review 等) と責務が違い、こちらは「人間が目で見て承認する」動線
 argument-hint: <なし | PR番号>
 ---
 
 ## このスキルの位置付け
 
-`/zeus:review` が **観点別の機械レビュー** (security/logic/performance 等を AI に分析させる) なのに対し、
+AI に security/logic/performance 等を分析させる **観点別の機械レビュー** (zeus プラグインの `/zeus:review` 等) に対し、
 このスキルは **人間が目で見て最終承認する** ためのゲートです。
 diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** の Approve / Request Changes と自由コメントを返してもらいます。Submit すると linear stack で先頭から approved group を 1 commit ずつ作り、最初の request-changes 以降は un-commit のまま Claude に戻して修正ループに入ります。
 
@@ -18,9 +18,9 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 
 | 呼び出し | モード | 動作 |
 |---|---|---|
-| `/zeus:review-diff` | staged | `git diff --cached` をレビュー対象にする |
-| `/zeus:review-diff 123` | pr | `gh pr diff 123` をレビュー対象にする (PR 番号は整数のみ) |
-| `/zeus:review-diff <他>` | error | エラー終了 |
+| `/show-me:diff` | staged | `git diff --cached` をレビュー対象にする |
+| `/show-me:diff 123` | pr | `gh pr diff 123` をレビュー対象にする (PR 番号は整数のみ) |
+| `/show-me:diff <他>` | error | エラー終了 |
 
 引数判定:
 - 引数なし → staged モード
@@ -30,13 +30,13 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 ## ディレクトリ規約
 
 ```
-.claude/zeus/review-diffs/{YYYYMMDD-HHMMSS}-{slug}/
+.claude/show-me/diffs/{YYYYMMDD-HHMMSS}-{slug}/
 ├── summary.json     ← Write ツールで作成 (heredoc 禁止)
 ├── diff.patch       ← staged または gh pr diff の出力
 ├── pr-meta.json     ← PR モードのみ
 ├── result.json      ← CLI が stdout に出した結果のコピー (CLI 側で自動生成)
 ├── restore.json     ← regen-group 後の再起動で前回 state を復元するための中間 JSON
-└── trusted-config.json ← PR モードのみ。base ref から抽出した review-diff.config.json (Phase 4.5 参照)
+└── trusted-config.json ← PR モードのみ。base ref から抽出した diff.config.json (Phase 4.5 参照)
 ```
 
 ループカウンタ (rejectCount / regenCount / summaryRegenCount) は**メインエージェントの会話メモリで管理**し、ファイル永続化しない (上限値と確認タイミングは「動作原則」参照)。
@@ -95,7 +95,7 @@ fi
 TS=$(date +%Y%m%d-%H%M%S)
 # slug は staged なら変更ファイルから代表的な 1〜2 個、pr なら "pr-<N>"
 SLUG=...
-WORK_DIR=".claude/zeus/review-diffs/${TS}-${SLUG}"
+WORK_DIR=".claude/show-me/diffs/${TS}-${SLUG}"
 mkdir -p "$WORK_DIR"
 
 # Dogfooding 優先: 現在の git リポが claude-plugins 開発リポ自身なら、
@@ -103,17 +103,17 @@ mkdir -p "$WORK_DIR"
 # これによりローカル変更 (pnpm build 直後) を即反映できる。
 # 通常のユーザーは marketplace キャッシュ配下の dist/cli.js を使う。
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-REPO_CLI="${REPO_ROOT}/plugins/zeus/scripts/review-diff/dist/cli.js"
+REPO_CLI="${REPO_ROOT}/plugins/show-me/scripts/diff/dist/cli.js"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ] && [ -f "$REPO_CLI" ]; then
   CLI="$REPO_CLI"
 else
-  # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で zeus プラグインを ls で探す。
+  # ${CLAUDE_PLUGIN_ROOT} は空のことがあるため、キャッシュ配下で show-me プラグインを ls で探す。
   # owner 名 (cache/<owner>/) は glob で抽象化: marketplace fork や別 owner の配布にも対応するため
-  # ハードコードしない。同名 zeus が複数 owner にある場合は最終更新を ls -td で採用。
-  ZEUS_DIR=$(ls -td ~/.claude/plugins/cache/*/zeus/*/ 2>/dev/null | head -1)
-  CLI="${ZEUS_DIR}scripts/review-diff/dist/cli.js"
+  # ハードコードしない。同名 show-me が複数 owner にある場合は最終更新を ls -td で採用。
+  PLUGIN_DIR=$(ls -td ~/.claude/plugins/cache/*/show-me/*/ 2>/dev/null | head -1)
+  CLI="${PLUGIN_DIR}scripts/diff/dist/cli.js"
 fi
-[ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
+[ -f "$CLI" ] || { echo "show-me:diff CLI not found at $CLI"; exit 1; }
 ```
 
 ### Phase 3: diff 取得
@@ -141,20 +141,20 @@ BASE_OWNER=$(git remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/]+)/[^
 HEAD_NWO=$(jq -r '.headRepository.nameWithOwner // ""' "$WORK_DIR/pr-meta.json")
 HEAD_OWNER=$(echo "$HEAD_NWO" | cut -d/ -f1)
 if [ -n "$BASE_OWNER" ] && [ -n "$HEAD_OWNER" ] && [ "$BASE_OWNER" != "$HEAD_OWNER" ]; then
-  echo "[review-diff] PR #$PR is from forked repo ($HEAD_NWO). Forked PRs are not supported yet." >&2
+  echo "[show-me:diff] PR #$PR is from forked repo ($HEAD_NWO). Forked PRs are not supported yet." >&2
   exit 1
 fi
 
 # (3) dirty precheck (working tree clean 必須、stash は使わない)
 if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "[review-diff] working tree is dirty. PR mode requires clean state — commit/stash and re-run." >&2
+  echo "[show-me:diff] working tree is dirty. PR mode requires clean state — commit/stash and re-run." >&2
   exit 1
 fi
 
 # (4) 元ブランチ記録 (detached HEAD は弾く、復帰先が無いため)
 HEAD_BEFORE_CHECKOUT=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ "$HEAD_BEFORE_CHECKOUT" = "HEAD" ]; then
-  echo "[review-diff] detached HEAD detected; cannot safely restore after checkout." >&2
+  echo "[show-me:diff] detached HEAD detected; cannot safely restore after checkout." >&2
   exit 1
 fi
 echo "$HEAD_BEFORE_CHECKOUT" > "$WORK_DIR/head-before-checkout"
@@ -165,8 +165,8 @@ if git show-ref --verify --quiet "refs/heads/${HEAD_REF_NAME}"; then
   LOCAL_SHA=$(git rev-parse "${HEAD_REF_NAME}")
   REMOTE_SHA=$(jq -r '.headRefOid' "$WORK_DIR/pr-meta.json")
   if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-    echo "[review-diff] local branch '${HEAD_REF_NAME}' SHA does not match PR head (local=$LOCAL_SHA, remote=$REMOTE_SHA)." >&2
-    echo "[review-diff] aborting to avoid overwriting unpushed work. Please review the local branch first." >&2
+    echo "[show-me:diff] local branch '${HEAD_REF_NAME}' SHA does not match PR head (local=$LOCAL_SHA, remote=$REMOTE_SHA)." >&2
+    echo "[show-me:diff] aborting to avoid overwriting unpushed work. Please review the local branch first." >&2
     exit 2  # exit 2 = main agent に「ユーザー確認」を促すシグナル
   fi
 fi
@@ -366,8 +366,8 @@ pr モードの `pr` フィールドは現状 CLI からは参照されない (C
 
 ### Phase 4.5: スクリプトゲート (起動前ゲート)
 
-リポルートに `.claude/zeus/review-diff.config.json` があり `scripts[]` を設定している場合、
-review-diff CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
+リポルートに `.claude/show-me/diff.config.json` があり `scripts[]` を設定している場合、
+show-me:diff の CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
 test / typecheck などの「コミット前に通したい」検査を起動条件として強制する仕組み。
 
 **config の信頼境界 (最重要)**: PR モードでは config を **checkout 後の working tree から読まない**。
@@ -384,26 +384,26 @@ config 作成の誘導は **staged モード限定**。PR モードでは誘導�
 読み取り (base ref 限定) の対象にならず、誘導しても意味がない。config 設定は自分の staged
 レビュー時に行う。
 
-`.claude/zeus/review-diff.config.json` がリポに無いときは、`AskUserQuestion` で
+`.claude/show-me/diff.config.json` がリポに無いときは、`AskUserQuestion` で
 
 「スクリプトゲート (test / typecheck 等を起動前に走らせる) を設定しますか?」
 
 を 1 回だけ聞く。選択肢:
 
-- **設定する**: `example.review-diff.config.json` をベースに、ユーザーに具体的な command を AskUserQuestion で 1-3 項目だけ聞いて (例: typecheck / test / lint の中から実行したいもの)、`.claude/zeus/review-diff.config.json` を **Write ツール** で作成 → そのまま今回のレビューから使う
+- **設定する**: `example.diff.config.json` をベースに、ユーザーに具体的な command を AskUserQuestion で 1-3 項目だけ聞いて (例: typecheck / test / lint の中から実行したいもの)、`.claude/show-me/diff.config.json` を **Write ツール** で作成 → そのまま今回のレビューから使う
 - **今回はスキップ** (= config を作らない): 今回はゲートなしで Phase 5 に進む。次回も同じ確認が出る (= 永続的な opt-out は無い、変更したくなったら手動でファイル削除)
-- **永続的にスキップ** (= flag ファイル): `.claude/zeus/review-diff.no-config` を touch して、以後 review-diff 起動時に AskUserQuestion を出さない。flag ファイルを消せば再度誘導される
+- **永続的にスキップ** (= flag ファイル): `.claude/show-me/diff.no-config` を touch して、以後 /show-me:diff 起動時に AskUserQuestion を出さない。flag ファイルを消せば再度誘導される
 
 ```bash
 # config 誘導は staged モードのみ (PR モード判定は pr-meta.json の存在で行う。
 # $MODE のような shell 変数は Bash 呼び出しを跨いで揮発し、空に評価されると危険側に
 # 倒れるため、永続アーティファクトをシグナルにする)
 if [ ! -f "$WORK_DIR/pr-meta.json" ]; then
-  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
-  NO_CONFIG_FLAG="${REPO_ROOT}/.claude/zeus/review-diff.no-config"
+  CONFIG_FILE="${REPO_ROOT}/.claude/show-me/diff.config.json"
+  NO_CONFIG_FLAG="${REPO_ROOT}/.claude/show-me/diff.no-config"
   if [ ! -f "$CONFIG_FILE" ] && [ ! -f "$NO_CONFIG_FLAG" ]; then
     # → メインエージェントが AskUserQuestion を投げる (上記 3 択)
-    # 「設定する」を選んだ場合は example.review-diff.config.json を読んで、
+    # 「設定する」を選んだ場合は example.diff.config.json を読んで、
     # editor.kind / scripts[] を AskUserQuestion で詰めて Write
     # 「今回スキップ」を選んだ場合は何もしない (CONFIG_FILE は無いまま Phase 5 へ)
     # 「永続スキップ」を選んだ場合は flag ファイルを touch
@@ -428,14 +428,14 @@ editor 設定 (= toBe addition 行の hover で出るエディタリンク) も�
 if [ -f "$WORK_DIR/pr-meta.json" ]; then
   BASE_SHA=$(jq -r '.baseRefOid' "$WORK_DIR/pr-meta.json")
   CONFIG_FILE="$WORK_DIR/trusted-config.json"
-  if git show "${BASE_SHA}:.claude/zeus/review-diff.config.json" > "$CONFIG_FILE" 2>/dev/null \
+  if git show "${BASE_SHA}:.claude/show-me/diff.config.json" > "$CONFIG_FILE" 2>/dev/null \
      && [ -s "$CONFIG_FILE" ]; then
     :
   else
     rm -f "$CONFIG_FILE"  # base ref に config が無い (or 空) → config 不在として扱う
   fi
 else
-  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+  CONFIG_FILE="${REPO_ROOT}/.claude/show-me/diff.config.json"
 fi
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -457,7 +457,7 @@ if [ -f "$CONFIG_FILE" ]; then
   # stderr に出すので、成功時もここで何が実行されたかをメインエージェントが監査できる
   cat "$WORK_DIR/script-stderr.log" >&2
   if [ "$GATE_EXIT" -ne 0 ]; then
-    echo "[review-diff] Pre-flight script gate failed. UI not opened." >&2
+    echo "[show-me:diff] Pre-flight script gate failed. UI not opened." >&2
     exit 1
   fi
 fi
@@ -469,7 +469,7 @@ fi
 - 修正 → re-stage → スキル再起動でループが自然に回る
 - 設定 `scripts[]` の各エントリは `{ name, command, matchFiles, timeoutMs? }`。`matchFiles` (glob) が staged diff の変更ファイルにヒットしたものだけ実行
 
-設定例: `plugins/zeus/skills/review-diff/example.review-diff.config.json` を参照。CLI 側は config 無し / editor 未設定 / scripts 未設定の各状態を stderr にメッセージで通知する (= サイレントに機能 off にならない)。
+設定例: `plugins/show-me/skills/diff/example.diff.config.json` を参照。CLI 側は config 無し / editor 未設定 / scripts 未設定の各状態を stderr にメッセージで通知する (= サイレントに機能 off にならない)。
 
 ### Phase 5: CLI 起動 (background mode + TaskOutput 待ち)
 
@@ -479,7 +479,7 @@ CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskO
 
 ```bash
 # optional 引数:
-#   --config <path>          : review-diff.config.json (editor / scripts の設定)
+#   --config <path>          : diff.config.json (editor / scripts の設定)
 #   --script-results <path>  : Phase 4.5 のスクリプトゲート結果 (Activity タブ Pre-flight チップ用)
 #   --base-sha <sha>         : PR モードで base ref の SHA を渡す (なければ HEAD~1)
 # config の解決は Phase 4.5.2 と同じ信頼境界に従う。editor preset (editor.command も
@@ -487,7 +487,7 @@ CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskO
 if [ -f "$WORK_DIR/pr-meta.json" ]; then
   CONFIG_FILE="$WORK_DIR/trusted-config.json"
 else
-  CONFIG_FILE="${REPO_ROOT}/.claude/zeus/review-diff.config.json"
+  CONFIG_FILE="${REPO_ROOT}/.claude/show-me/diff.config.json"
 fi
 CONFIG_ARG=""
 [ -f "$CONFIG_FILE" ] && CONFIG_ARG="--config $CONFIG_FILE"
@@ -512,7 +512,7 @@ node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --r
 **起動手順 (メインがやること)**:
 
 1. 上記コマンドのいずれかを **`Bash(run_in_background: true)`** で起動 → task ID を取得
-2. 起動後 1〜2 秒待って `.output` を Read し、stderr の `[review-diff] URL: ...` を確認
+2. 起動後 1〜2 秒待って `.output` を Read し、stderr の `[show-me:diff] URL: ...` を確認
    - URL を出すまでは macOS の `open` で自動的にブラウザが立ち上がるので、通常は URL 取得すら不要
    - ブラウザが起動しない環境 (リモートなど) では URL をユーザーに案内する
 3. **`TaskOutput(task_id, block: true)`** で完了通知を待つ
@@ -522,7 +522,7 @@ node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --r
 
 CLI の挙動:
 - macOS では `open` が自動で立ち上がりブラウザに UI が出る
-- stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
+- stderr に `[show-me:diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
 - ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"submit"|"timeout"|"regen-group"|"comment-reply", ...}` (合否は groupDecisions の分布から判定)
@@ -622,12 +622,12 @@ for i in $(seq 0 $((GROUPS_LEN - 1))); do
   GROUP_ID="g${i}"
   DECISION=$(jq -r --arg id "$GROUP_ID" '.groupDecisions[$id] // "missing"' "$WORK_DIR/result.json")
   if [ "$DECISION" = "request-changes" ]; then
-    echo "[review-diff] stopped at $GROUP_ID (request-changes)"
+    echo "[show-me:diff] stopped at $GROUP_ID (request-changes)"
     break
   fi
   if [ "$DECISION" != "approved" ]; then
     # missing は許容しない (timeout でも groupDecisions は空、フローには来ない)
-    echo "[review-diff] unexpected decision for $GROUP_ID: $DECISION"
+    echo "[show-me:diff] unexpected decision for $GROUP_ID: $DECISION"
     break
   fi
   # 部分 patch 抽出 (--unidiff-zero 互換)
@@ -638,13 +638,13 @@ for i in $(seq 0 $((GROUPS_LEN - 1))); do
     > "$WORK_DIR/patch.${GROUP_ID}.diff" 2>/dev/null
   # 空 patch (context-only approved group) は commit skip
   if [ ! -s "$WORK_DIR/patch.${GROUP_ID}.diff" ]; then
-    echo "[review-diff] skipped empty group $GROUP_ID"
+    echo "[show-me:diff] skipped empty group $GROUP_ID"
     continue
   fi
   # index を初期化して当該 group のみ stage
   git restore --staged . 2>/dev/null || true
   if ! git apply --cached --unidiff-zero --recount "$WORK_DIR/patch.${GROUP_ID}.diff" 2>/dev/null; then
-    echo "[review-diff] FATAL: failed to apply patch for $GROUP_ID — aborting" >&2
+    echo "[show-me:diff] FATAL: failed to apply patch for $GROUP_ID — aborting" >&2
     git restore --staged .
     # 全 commit を諦め、ユーザーに状況を提示
     break
@@ -654,7 +654,7 @@ for i in $(seq 0 $((GROUPS_LEN - 1))); do
   git commit -m "$COMMIT_MSG_FOR_${GROUP_ID}"
   COMMIT_COUNT=$((COMMIT_COUNT + 1))
 done
-echo "[review-diff] created $COMMIT_COUNT commits"
+echo "[show-me:diff] created $COMMIT_COUNT commits"
 git log --oneline -n "$COMMIT_COUNT"
 ```
 
@@ -673,12 +673,12 @@ git log --oneline -n "$COMMIT_COUNT"
 1. **rejectCount をメインの会話メモリで +1**
 2. `threads` の open スレッド (resolved=false) の user messages を scope 別に提示し、どの指摘を反映するか合意を取る
 3. `rejectCount >= 3` の場合は **必ず `AskUserQuestion`** で「このまま続行 / 中止 / 方針見直し」を聞く
-4. 修正実装を行う (大きい変更なら `/zeus:dev` への橋渡しを提案)
+4. 修正実装を行う (大きい変更で zeus プラグイン導入済みなら `/zeus:dev` への橋渡しを提案)
 5. 修正完了後、Skill 自動再起動の **直前** に work-dir をクリーンアップ:
    ```bash
    rm -rf "$WORK_DIR"
    ```
-6. `Skill('zeus:review-diff', args)` で自動再起動
+6. `Skill('show-me:diff', args)` で自動再起動
 
 ##### mixed パスの「残った RC 以降」処理
 
@@ -686,7 +686,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
 
 1. ユーザーに「g${k} 以降は request-changes のため un-commit、コメントは以下: ...」を提示
 2. RC group に紐づく group / line scope の threads を要約して修正方針を提案
-3. ユーザー合意後に修正実装 → 残った変更を `git add` → `Skill('zeus:review-diff', args)` で再起動
+3. ユーザー合意後に修正実装 → 残った変更を `git add` → `Skill('show-me:diff', args)` で再起動
 4. 再起動側では、もう commit された変更は HEAD に取り込まれているので、`git diff --cached` は残った RC 部分 + 新しい修正だけが対象になる
 
 #### decision = 'regen-group'
@@ -724,16 +724,16 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
    - `groupComments`: `result.json.groupComments` (group textarea の書きかけ draft) から **regenGroup.groupId に該当する key を除外** してコピー
    - `threads`: `result.json.threads` をそのままコピー (会話履歴 + client が合成済みの保存済み行コメント。regen 対象 group の分もクリアしない — クリア対象は decision と textarea draft のみ)
    - `lineCommentDrafts`: そのままコピー
-6. **`Skill('zeus:review-diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
+6. **`Skill('show-me:diff', args)` で自動再起動**。args は通常起動と同じ (staged なら空、PR なら番号)。
    - 再起動側の Phase 2 で **既存 WORK_DIR がある場合はそれを再利用** (新規 timestamp dir を作らない)
    - Phase 5 の CLI 起動に `--restore-state "$WORK_DIR/restore.json"` を追加する
 7. Skill ツールが使えない環境では `AskUserQuestion` で「context を広げた summary.json で再 review するには
-   もう一度 /zeus:review-diff を手動実行してください (restore.json が work-dir に残っているので decision と
+   もう一度 /show-me:diff を手動実行してください (restore.json が work-dir に残っているので decision と
    コメントは維持されます)」と告げる。
 
 実装メモ:
 - regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
-  Phase 2 の `WORK_DIR` 決定ロジックで「直近の review-diff の work-dir に restore.json があれば再利用」する分岐を入れる。
+  Phase 2 の `WORK_DIR` 決定ロジックで「直近の /show-me:diff の work-dir に restore.json があれば再利用」する分岐を入れる。
 
 #### decision = 'comment-reply'
 
@@ -768,7 +768,7 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
      --restore-state "$WORK_DIR/restore.json" \
      --changed-files "$WORK_DIR/apply-changed-files.txt"
    ```
-6. **`Skill('zeus:review-diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
+6. **`Skill('show-me:diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
    - Activity タブの Conversation セクションに agent 返信が反映される
    - group スレッドは Guide タブの該当 group の decision section (textarea の上) にも会話履歴が表示される
    - outdated になったスレッドは Activity タブで折りたたみ表示される
@@ -792,7 +792,7 @@ stderr に違反内容を出して exit 1 する。SKILL.md 側の処理:
 2. `summaryRegenCount >= 3` で **AskUserQuestion** で「summary.json を再生成して続行 / panel 設計を手動見直し / 中止」を聞く
 3. stderr の違反内容を Read で把握 → summary.json を Write で再生成 (修正提案に従って ranges を調整、または exclusivity 違反の解消)
 4. **work-dir は維持** (summary.json だけ更新、restore.json があれば残す)
-5. `Skill('zeus:review-diff', args)` で自動再起動
+5. `Skill('show-me:diff', args)` で自動再起動
 
 ## 不明点があれば AskUserQuestion で聞く
 
