@@ -39,9 +39,7 @@ diff を Linear 風 stacked PR UI でブラウザに開き、**group 単位** �
 └── trusted-config.json ← PR モードのみ。base ref から抽出した review-diff.config.json (Phase 4.5 参照)
 ```
 
-**Reject カウンタ (rejectCount) はメインエージェントの会話メモリで管理**し、ファイル永続化しない。
-**regen-group カウンタ (regenCount) も同様に会話メモリで管理**し、5 回到達で AskUserQuestion で確認。
-**validator fail による summary 再生成カウンタ (summaryRegenCount) も会話メモリで管理**し、3 回到達で AskUserQuestion で確認。
+ループカウンタ (rejectCount / regenCount / summaryRegenCount) は**メインエージェントの会話メモリで管理**し、ファイル永続化しない (上限値と確認タイミングは「動作原則」参照)。
 
 `slug` の決め方:
 - staged モード: 変更ファイル名から代表的な 1〜2 個を kebab-case で繋ぐ
@@ -118,7 +116,7 @@ fi
 [ -f "$CLI" ] || { echo "review-diff CLI not found at $CLI"; exit 1; }
 ```
 
-### Phase 3: diff 取得 (v5 で PR mode を gh pr checkout 方式に変更)
+### Phase 3: diff 取得
 
 **staged モード**:
 
@@ -126,11 +124,11 @@ fi
 git diff --cached --no-color > "$WORK_DIR/diff.patch"
 ```
 
-**pr モード (v5: checkout 方式)**:
+**pr モード (checkout 方式)**:
 
-v5 では `gh pr diff` + lazy `gh api blob` 経路を廃止し、ローカル worktree に PR head ref を引いてから
-`git show <baseSha>:path` でソースを読む方式に切り替えた。エディタリンクの実ファイル指定が効くようにし、
-unchanged 行展開が rate limit を消費せず即時実行できるメリットがある。
+ローカル worktree に PR head ref を引いてから `git show <baseSha>:path` でソースを読む。
+`gh pr diff` + `gh api blob` で都度フェッチしない理由: エディタリンクの実ファイル指定が効き、
+unchanged 行展開が rate limit を消費せず即時実行できるため。
 
 ```bash
 # (1) PR メタ取得 (forked 検出 + base SHA 確定用)
@@ -138,12 +136,12 @@ gh pr view "$PR" \
   --json number,title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,headRepository,additions,deletions,changedFiles \
   > "$WORK_DIR/pr-meta.json"
 
-# (2) forked repo PR 検出 (Q25 で scope 外)
+# (2) forked repo PR 検出 (未対応のためエラー終了)
 BASE_OWNER=$(git remote get-url origin 2>/dev/null | sed -nE 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#p')
 HEAD_NWO=$(jq -r '.headRepository.nameWithOwner // ""' "$WORK_DIR/pr-meta.json")
 HEAD_OWNER=$(echo "$HEAD_NWO" | cut -d/ -f1)
 if [ -n "$BASE_OWNER" ] && [ -n "$HEAD_OWNER" ] && [ "$BASE_OWNER" != "$HEAD_OWNER" ]; then
-  echo "[review-diff] PR #$PR is from forked repo ($HEAD_NWO). v5.0.0 does not support forked PRs yet." >&2
+  echo "[review-diff] PR #$PR is from forked repo ($HEAD_NWO). Forked PRs are not supported yet." >&2
   exit 1
 fi
 
@@ -161,7 +159,7 @@ if [ "$HEAD_BEFORE_CHECKOUT" = "HEAD" ]; then
 fi
 echo "$HEAD_BEFORE_CHECKOUT" > "$WORK_DIR/head-before-checkout"
 
-# (5) 同名 local branch SHA 確認 (W-1: -f で未 push 作業を上書きする事故を防ぐ)
+# (5) 同名 local branch SHA 確認 (-f で未 push 作業を上書きする事故を防ぐ)
 HEAD_REF_NAME=$(jq -r '.headRefName' "$WORK_DIR/pr-meta.json")
 if git show-ref --verify --quiet "refs/heads/${HEAD_REF_NAME}"; then
   LOCAL_SHA=$(git rev-parse "${HEAD_REF_NAME}")
@@ -341,7 +339,7 @@ panel を持たせる)
 - 使える文字: `^[A-Za-z0-9 _-]*$` (英数字 + 空白 + アンダースコア + ハイフン、または空文字)。空白は CLI が `-` に自動正規化。空文字は前述の自動 hash 生成にフォールバックする
 - 同じ ID を 2 つの panel に付けると CLI が自動で `-1`, `-2` の suffix を付ける (warn は出ない)
 
-#### 網羅性厳格 (AC-3)
+#### 網羅性厳格
 
 全 panel の `asIs.ranges` (before 軸) / `toBe.ranges` (after 軸) を union したものが、
 `git diff` の **変更行集合** を完全に包含していないと **CLI が non-zero で exit する**。
@@ -362,16 +360,11 @@ Fix: extend asIs.ranges / toBe.ranges (or add a panel covering the file) in summ
 - **binary / rename-only / mode-only** 変更は「ファイル言及だけ」検証される (行 ranges は不要)
 - **EOL-only 変更** (末尾改行のみ) は warn が出るが fail しない (実用上意味がない粒度)
 
-#### 順序の使い方
-
-UI は summary.json の `groups[]` 順 / 各 group 内の `panels[]` 順 を **そのまま** 表示する。
-順序自体が AI からのナラティブ:
-- group は「読むべき順番」で並べる (抽象 → 具象、原因 → 結果、コア → 周辺)
-- 同じ group 内では「最初に読むべき panel」を先頭に
+#### pr フィールド (PR モードのみ)
 
 pr モードの `pr` フィールドは現状 CLI からは参照されない (CLI は `--pr-meta` フラグから直接読む archival 用途)。`null` でも `pr-meta.json` の内容をそのまま入れても挙動は変わらないが、後で `summary.json` だけ見て文脈を復元できるよう、PR モードでは入れておくことを推奨。
 
-### Phase 4.5: スクリプトゲート (v5 新設、起動前ゲート)
+### Phase 4.5: スクリプトゲート (起動前ゲート)
 
 リポルートに `.claude/zeus/review-diff.config.json` があり `scripts[]` を設定している場合、
 review-diff CLI を起動する **直前にスクリプトを実行** し、失敗していたら UI を開かずに修正に戻る。
@@ -485,7 +478,7 @@ CLI は **Bash の `run_in_background: true` で起動** し、完了は **TaskO
 タブを閉じれば CLI 側 heartbeat 検知で数秒以内に自発 exit するので zombie process も出ない。
 
 ```bash
-# v5 で追加された optional 引数:
+# optional 引数:
 #   --config <path>          : review-diff.config.json (editor / scripts の設定)
 #   --script-results <path>  : Phase 4.5 のスクリプトゲート結果 (Activity タブ Pre-flight チップ用)
 #   --base-sha <sha>         : PR モードで base ref の SHA を渡す (なければ HEAD~1)
@@ -530,7 +523,7 @@ node "$CLI" --summary "$WORK_DIR/summary.json" --diff "$WORK_DIR/diff.patch" --r
 CLI の挙動:
 - macOS では `open` が自動で立ち上がりブラウザに UI が出る
 - stderr に `[review-diff] URL: http://127.0.0.1:<port>/?token=...` が出るので、ブラウザが開かない環境ではこの URL を案内する
-- ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する (= 旧 9 分絶対値タイムアウトは撤廃)
+- ブラウザは 5 秒ごとに `/heartbeat` を打つ。CLI 側は最終 ping から 15 秒以上空くと「タブ閉じられた」と判断して **decision='timeout'** で exit する
 - 終了時に stdout に **1 行の JSON** が出る:
   `{"decision":"submit"|"timeout"|"regen-group"|"comment-reply", ...}` (合否は groupDecisions の分布から判定)
 
@@ -601,7 +594,7 @@ ResultJson 全体:
 
 stdout の JSON をパースして `decision` で分岐する。CLI 側で `${WORK_DIR}/result.json` にも自動保存されている。
 
-#### decision = 'submit' → linear-stack commit (新規)
+#### decision = 'submit' → linear-stack commit
 
 `groupDecisions` の分布から、まず全体合否を判定する:
 
@@ -625,13 +618,11 @@ RC=$(jq '[.groupDecisions[] | select(. == "request-changes")] | length' "$WORK_D
 # 代入すると "failed to change group ID: operation not permitted" で即失敗する。
 GROUPS_LEN=$(jq '.groups | length' "$WORK_DIR/summary.json")
 COMMIT_COUNT=0
-LAST_GROUP_ID=""
 for i in $(seq 0 $((GROUPS_LEN - 1))); do
   GROUP_ID="g${i}"
   DECISION=$(jq -r --arg id "$GROUP_ID" '.groupDecisions[$id] // "missing"' "$WORK_DIR/result.json")
   if [ "$DECISION" = "request-changes" ]; then
     echo "[review-diff] stopped at $GROUP_ID (request-changes)"
-    LAST_GROUP_ID="$GROUP_ID"
     break
   fi
   if [ "$DECISION" != "approved" ]; then
@@ -729,7 +720,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
      "lineCommentDrafts": { "draft:p1:asis:42": "..." }
    }
    ```
-   - `groupDecisions`: `result.json.groupDecisions` から **regenGroup.groupId に該当する key を削除** したもの (Q-3: 該当 group の decision のみクリア)
+   - `groupDecisions`: `result.json.groupDecisions` から **regenGroup.groupId に該当する key を削除** したもの (該当 group の decision のみクリア)
    - `groupComments`: `result.json.groupComments` (group textarea の書きかけ draft) から **regenGroup.groupId に該当する key を除外** してコピー
    - `threads`: `result.json.threads` をそのままコピー (会話履歴 + client が合成済みの保存済み行コメント。regen 対象 group の分もクリアしない — クリア対象は decision と textarea draft のみ)
    - `lineCommentDrafts`: そのままコピー
@@ -744,7 +735,7 @@ mixed パスで approved を全部 commit した後、最初の RC group 以降�
 - regen-group 後の再起動は **同じ WORK_DIR** を使う。新しい timestamp dir を作ると restore.json への参照が切れる。
   Phase 2 の `WORK_DIR` 決定ロジックで「直近の review-diff の work-dir に restore.json があれば再利用」する分岐を入れる。
 
-#### decision = 'comment-reply' (v5 新規)
+#### decision = 'comment-reply'
 
 ブラウザの SubmitBar で **Comment** ボタンを押すと `decision: 'comment-reply'` が返る。
 Claude が全 open スレッドに自動返信して再起動するルート。close-relaunch + state restore モデル。
