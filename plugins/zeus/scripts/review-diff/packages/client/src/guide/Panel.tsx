@@ -112,14 +112,14 @@ type FlatRow = {
   rowIndex: number
   isFirstOfSegment: boolean
   // 連続する addition / deletion ブロックを 1 chunk とした index。context / empty 行は -1。
-  // 「次の変更箇所」グローバル navigator が `[data-chunk-idx]` を querySelectorAll で集めて
-  // panel をまたぐ全 chunk リストを構築する anchor として使う。
+  // ↑↓ キーのグローバルジャンプ (useChunkKeyNav) が `[data-chunk-idx]` を querySelectorAll で
+  // 集めて panel をまたぐ全 chunk リストを構築する anchor として使う。
   chunkIdx: number
 }
 
 // chunk 検出: addition / deletion が連続する塊を 1 chunk としてまとめる。
 // context や empty が挟まれば chunk 境界。chunkIdx は panel scope (各 panel で 0 から)。
-// グローバル navigator は panel をまたいで「最初の chunk row」を順に並べることで全体 navigation を実現する。
+// useChunkKeyNav は panel をまたいで「最初の chunk row」を順に並べることで全体 navigation を実現する。
 function flattenWithChunks(panel: RenderedPanel): FlatRow[] {
   const flat: FlatRow[] = []
   panel.segments.forEach((seg, si) => {
@@ -187,7 +187,7 @@ export const Panel = memo(function Panel({
   const panelContainerRef = useRef<HTMLDivElement>(null)
 
   // chunk = 連続する addition/deletion 塊。SplitBody に flat を渡すために計算する。
-  // ナビゲーション本体は ChunkNavigator (左下 floating) が document 全体を querySelectorAll で
+  // ナビゲーション本体は useChunkKeyNav (↑↓ キー) が document 全体を querySelectorAll で
   // 走査して panel をまたいで動くので、ここでは「chunkIdx を code-row に乗せる」だけが責務。
   const flat = useMemo(() => flattenWithChunks(panel), [panel])
 

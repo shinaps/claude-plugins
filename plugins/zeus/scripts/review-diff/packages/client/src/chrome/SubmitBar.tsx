@@ -219,7 +219,7 @@ export function SubmitBar({ approvedCount, rcCount, totalGroups, onSubmit, submi
 
   return (
     // shadow は意図的に付けない: 高輝度モニターで暗色 shadow の halo が滲んで見えるため、
-    // 浮遊要素の区切りは border のみで表現する (ChunkNavigator も同じ方針)。
+    // 浮遊要素の区切りは border のみで表現する。
     <div
       className="fixed bottom-6 right-6 z-40 flex flex-col gap-2 p-3 w-[460px] bg-surface border border-border rounded-xl"
       role="toolbar"

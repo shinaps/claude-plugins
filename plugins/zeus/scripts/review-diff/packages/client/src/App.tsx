@@ -28,7 +28,7 @@ import { TabBar } from './chrome/TabBar'
 import { GroupSection } from './guide/GroupSection'
 import { PanelBlock } from './guide/PanelBlock'
 import { SubmitBar } from './chrome/SubmitBar'
-import { ChunkNavigator } from './chrome/ChunkNavigator'
+import { useChunkKeyNav } from './chrome/useChunkKeyNav'
 import { ActivityView } from './activity/ActivityView'
 import { shouldAutoCollapseFile } from './guide/auto-collapse'
 import { renderMarkdown, escapeHtml } from './lib/markdown'
@@ -240,7 +240,7 @@ export function App({ payload }: Props) {
   const [toast, setToast] = useState<string | null>(null)
 
   // v5: EditorLinkTrigger から Toast を呼ぶための window グローバルチャネルを設定。
-  // prop drilling (App → ChunkNavigator → PanelBlock → Panel → SideRow → EditorLinkTrigger) を避ける。
+  // prop drilling (App → PanelBlock → Panel → SideRow → EditorLinkTrigger) を避ける。
   useEffect(() => {
     if (typeof window === 'undefined') return
     window.__reviewDiffShowToast = (msg: string) => {
@@ -464,6 +464,11 @@ export function App({ payload }: Props) {
 
   const onNavResizerPointerDown = useNavResizer(containerRef)
 
+  // ↑↓ キーの「次/前の変更箇所」ジャンプ。Guide / Diff のみ有効 (Activity ではキーを奪わない)。
+  // 旧 ChunkNavigator (左下 floating UI) は GroupNav の decision ボタンに被る構造問題で廃止し、
+  // キーボード機能だけを残した (useChunkKeyNav 冒頭コメント参照)。
+  useChunkKeyNav(tab === 'guide' || tab === 'diff')
+
   const approvedCount = Object.values(groupDecisions).filter(d => d === 'approved').length
   const rcCount = Object.values(groupDecisions).filter(d => d === 'request-changes').length
   const totalGroups = groupsState.length
@@ -664,7 +669,7 @@ export function App({ payload }: Props) {
           display: none と違い render state を保持したまま「次回表示時のコストを最小化」する。
           ResizeObserver の一斉発火問題 (LoAF で計測された 6 秒級の主犯) も display:none 復帰時の
           0→実サイズ遷移が無くなるため抑制される。 */}
-      {/* .tab-pane は ChunkNavigator の chunk 走査スコープ (.tab-pane:not(.tab-hidden)) の目印。
+      {/* .tab-pane は useChunkKeyNav の chunk 走査スコープ (.tab-pane:not(.tab-hidden)) の目印。
           activity pane の mr-[420px] は sidebar (w-[420px]) の押し出し: overlay でコンテンツを
           隠すのではなく、レイアウトごと狭めて全文が読める状態を保つ。 */}
       {visitedTabs.has('activity') ? (
@@ -682,9 +687,6 @@ export function App({ payload }: Props) {
       {visitedTabs.has('diff') ? (
         <div className={tab === 'diff' ? 'tab-pane' : 'tab-pane tab-hidden'}>{diffContent}</div>
       ) : null}
-      {/* ChunkNavigator (左下): SubmitBar と対称配置で「全 diff 通しの chunk ジャンプ」を提供。
-          activity タブには diff が無くジャンプ先が存在しないので render しない。 */}
-      {tab === 'guide' || tab === 'diff' ? <ChunkNavigator activeTab={tab} /> : null}
       {/* SubmitBar は全タブで常時 mount (どこからでも Submit でき、note draft もタブをまたいで維持)。
           Activity では会話を主役にした右サイドバー、Guide / Diff ではコードを隠さない floating パネル。 */}
       <SubmitBar
