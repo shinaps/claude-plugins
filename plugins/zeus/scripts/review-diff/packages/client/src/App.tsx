@@ -478,6 +478,10 @@ export function App({ payload }: Props) {
       if (!g) return
       setRegenPending(true)
       submittingRef.current = true
+      // SubmitBar 側のボタンも disabled にする: submittingRef は同期ガード (クリックを no-op に
+      // する) だけで UI に出ないため、これを欠くと regen の fetch 窓中に「enabled に見えるのに
+      // 無反応」なボタンになる (ボタンは常時表示 + disabled で示す規約に反する)。
+      setSubmitInFlight(true)
       const currentRanges: Array<{
         panelId: string
         asIs?: { file: string; ranges: DisplayRange[] }
@@ -508,6 +512,7 @@ export function App({ payload }: Props) {
         cleanup: () => {
           setRegenPending(false)
           submittingRef.current = false
+          setSubmitInFlight(false)
         },
       })
     },
