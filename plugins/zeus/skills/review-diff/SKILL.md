@@ -767,13 +767,14 @@ Claude が全 open スレッドに自動返信して再起動するルート。c
    - `reviewKind: 'comment'` を載せる
 5. **apply の場合のみ、`mark-outdated` subcommand で outdated 自動判定**:
    ```bash
-   # apply 前後の HEAD SHA と変更ファイル一覧を渡して、interval 交叉で outdated を立てる
-   AFTER_SHA=$(git rev-parse HEAD)
-   git diff "$BEFORE_SHA..$AFTER_SHA" --name-only > "$WORK_DIR/apply-changed-files.txt"
+   # apply (Edit/Write) は commit も stage も作らないため、apply 差分 = 「index vs working tree」
+   # の git diff。CLI が内部で同じ基準の diff を取り、その before 側 (= レビュアーが見ていた
+   # toBe 表示の座標系) と thread anchor の交叉で outdated を立てる。
+   # 必ず apply 直後・いかなる git add よりも前に実行すること (add すると index が動き、
+   # apply 差分が消えて outdated が一切立たなくなる)。
+   git diff --name-only > "$WORK_DIR/apply-changed-files.txt"
    node "$CLI" mark-outdated \
      --restore-state "$WORK_DIR/restore.json" \
-     --before-sha "$BEFORE_SHA" \
-     --after-sha "$AFTER_SHA" \
      --changed-files "$WORK_DIR/apply-changed-files.txt"
    ```
 6. **`Skill('zeus:review-diff', args)` で自動再起動**。Phase 5 で `--restore-state "$WORK_DIR/restore.json"` を追加。
