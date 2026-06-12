@@ -295,12 +295,6 @@
     overflow: hidden;
   }
 
-  /* comment-bubble: state class (.is-editing) と :hover/.focus-within で actions を出す pseudo selector が必要 */
-  .comment-bubble:hover .comment-actions,
-  .comment-bubble:focus-within .comment-actions {
-    opacity: 1;
-  }
-
   /* sources-unavailable-banner: data-kind attribute で色切替 (utility では表現困難) */
   .sources-unavailable-banner[data-kind="unknown-file"] {
     background: rgba(250, 204, 21, 0.08);
