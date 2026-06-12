@@ -160,6 +160,12 @@
   .code-row-deletion { background: var(--color-del-bg); }
   .code-row-empty { background: rgba(255, 255, 255, 0.015); }
 
+  /* intra-line (char-level) diff の変更文字範囲。Shiki decorations が生成する span に当たる。
+     背景色のみを変える: padding / font / display を与えると split の ResizeObserver
+     行高同期 (Panel.tsx) が左右でズレるため、レイアウトに影響するプロパティは禁止 */
+  .char-add { background: var(--color-add-strong); }
+  .char-del { background: var(--color-del-strong); }
+
   /* cell-ln: test 依存 (drag-select.test の querySelector('.cell-ln[data-side=...]')) +
      sticky gutter + 動的合成 cell-ln-${sideClass}-${type} */
   .cell-ln {
