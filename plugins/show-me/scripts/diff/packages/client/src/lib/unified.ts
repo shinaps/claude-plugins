@@ -11,9 +11,13 @@ export type UnifiedRow =
   // context は old/new 両方の行番号を保持する。コメント anchor の lookup で
   // asIs(oldLine) と toBe(newLine) の両側を引く必要があるため (split では context 行も
   // 両 side にコメントが付けられる)。
+  //
+  // pairRaw: 同一 SideBySideRow でペアだった相手側 (addition ⇔ deletion) の raw。
+  // この変換は左右ペア情報を展開して捨てるため、intra-line (char-level) diff 用に
+  // ペアのテキストだけをここに残す。相手側が empty の余り行では付与しない。
   | { kind: 'context'; oldLine?: number; newLine?: number; raw: string }
-  | { kind: 'deletion'; oldLine?: number; raw: string }
-  | { kind: 'addition'; newLine?: number; raw: string }
+  | { kind: 'deletion'; oldLine?: number; raw: string; pairRaw?: string }
+  | { kind: 'addition'; newLine?: number; raw: string; pairRaw?: string }
 
 export function toUnifiedRows(rows: SideBySideRow[]): UnifiedRow[] {
   const out: UnifiedRow[] = []
@@ -48,6 +52,7 @@ export function toUnifiedRows(rows: SideBySideRow[]): UnifiedRow[] {
         kind: 'deletion',
         ...(row.asIs.line != null ? { oldLine: row.asIs.line } : {}),
         raw: row.asIs.raw,
+        ...(isAdd ? { pairRaw: row.toBe.raw } : {}),
       })
     }
     if (isAdd) {
@@ -55,6 +60,7 @@ export function toUnifiedRows(rows: SideBySideRow[]): UnifiedRow[] {
         kind: 'addition',
         ...(row.toBe.line != null ? { newLine: row.toBe.line } : {}),
         raw: row.toBe.raw,
+        ...(isDel ? { pairRaw: row.asIs.raw } : {}),
       })
     }
   }

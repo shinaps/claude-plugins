@@ -27,6 +27,7 @@ import { sideToAttr, attrToSide } from '@show-me/diff-shared'
 import { parseLineCommentKey, lineCommentKey, getToken } from '../lib/state'
 import { escapeHtml } from '../lib/markdown'
 import { highlightCode } from '../lib/highlight-code'
+import { intraLineDecorations } from '../lib/char-diff'
 import { PanelHeader, type FileCommentHandlers } from './PanelHeader'
 import { CommentRow, anchorMapKey, appendCommentKey, sortAnchorKeys } from './CommentRow'
 import { UnifiedBody } from './UnifiedBody'
@@ -727,10 +728,23 @@ function SideRow({
 } & RowHandlerProps) {
   const lang = side === 'asIs' ? (panel.asIsLanguage ?? 'plaintext') : (panel.toBeLanguage ?? 'plaintext')
   const cell = side === 'asIs' ? row.asIs : row.toBe
-  const html = useMemo(
-    () => highlight ? highlightCode(cell.raw, lang) : escapeHtml(cell.raw),
-    [highlight, cell.raw, lang],
-  )
+  // 同一 SideBySideRow に deletion と addition が同居している行だけが intra-line diff の対象
+  // (ブロック内位置対応ペア)。相手側が empty の余り行・context 行は対象外。
+  const pairRaw =
+    side === 'asIs'
+      ? (cell.type === 'deletion' && row.toBe.type === 'addition' ? row.toBe.raw : undefined)
+      : (cell.type === 'addition' && row.asIs.type === 'deletion' ? row.asIs.raw : undefined)
+  // deps に pairRaw を含める: 自分の raw が同じでも相手側が変われば変更文字範囲は変わるため
+  const html = useMemo(() => {
+    if (!highlight) return escapeHtml(cell.raw)
+    const decorations =
+      pairRaw != null
+        ? side === 'asIs'
+          ? intraLineDecorations(cell.raw, pairRaw, 'del')
+          : intraLineDecorations(pairRaw, cell.raw, 'add')
+        : undefined
+    return highlightCode(cell.raw, lang, decorations)
+  }, [highlight, cell.raw, lang, pairRaw, side])
 
   const anchorKeys = cell.line != null
     ? (commentKeysByAnchor.get(anchorMapKey(side, cell.line)) ?? [])

@@ -13,6 +13,7 @@ import { Fragment, useLayoutEffect, useMemo, useRef } from 'react'
 import type { RenderedPanel } from '@show-me/diff-shared'
 import { toUnifiedRows, type UnifiedRow } from '../lib/unified'
 import { highlightCode } from '../lib/highlight-code'
+import { intraLineDecorations } from '../lib/char-diff'
 import { escapeHtml } from '../lib/markdown'
 import { CommentRow, anchorMapKey, sortAnchorKeys } from './CommentRow'
 import type { LineCommentHandlers } from './useLineComments'
@@ -95,10 +96,19 @@ function UnifiedRowView({
   const lang = row.kind === 'deletion'
     ? (panel.asIsLanguage ?? 'plaintext')
     : (panel.toBeLanguage ?? 'plaintext')
-  const html = useMemo(
-    () => (highlight ? highlightCode(row.raw, lang) : escapeHtml(row.raw)),
-    [highlight, row.raw, lang],
-  )
+  // pairRaw が付くのは位置対応ペアの deletion/addition のみ (toUnifiedRows が付与)。
+  // deps に pairRaw を含める: 自分の raw が同じでも相手側が変われば変更文字範囲は変わるため
+  const pairRaw = row.kind === 'context' ? undefined : row.pairRaw
+  const html = useMemo(() => {
+    if (!highlight) return escapeHtml(row.raw)
+    const decorations =
+      pairRaw != null
+        ? row.kind === 'deletion'
+          ? intraLineDecorations(row.raw, pairRaw, 'del')
+          : intraLineDecorations(pairRaw, row.raw, 'add')
+        : undefined
+    return highlightCode(row.raw, lang, decorations)
+  }, [highlight, row.raw, lang, pairRaw, row.kind])
 
   // コメント anchor の lookup:
   //   - deletion 行 → asIs(oldLine)

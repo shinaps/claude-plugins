@@ -35,10 +35,10 @@ describe('toUnifiedRows', () => {
     ]
     expect(toUnifiedRows(rows)).toEqual([
       { kind: 'context', oldLine: 1, newLine: 1, raw: 'a' },
-      { kind: 'deletion', oldLine: 2, raw: 'old1' },
-      { kind: 'deletion', oldLine: 3, raw: 'old2' },
-      { kind: 'addition', newLine: 2, raw: 'new1' },
-      { kind: 'addition', newLine: 3, raw: 'new2' },
+      { kind: 'deletion', oldLine: 2, raw: 'old1', pairRaw: 'new1' },
+      { kind: 'deletion', oldLine: 3, raw: 'old2', pairRaw: 'new2' },
+      { kind: 'addition', newLine: 2, raw: 'new1', pairRaw: 'old1' },
+      { kind: 'addition', newLine: 3, raw: 'new2', pairRaw: 'old2' },
       { kind: 'context', oldLine: 4, newLine: 4, raw: 'b' },
     ])
   })
@@ -62,11 +62,11 @@ describe('toUnifiedRows', () => {
       addOnly(4, 'n3'),
     ]
     expect(toUnifiedRows(rows)).toEqual([
-      { kind: 'deletion', oldLine: 1, raw: 'o1' },
-      { kind: 'addition', newLine: 1, raw: 'n1' },
+      { kind: 'deletion', oldLine: 1, raw: 'o1', pairRaw: 'n1' },
+      { kind: 'addition', newLine: 1, raw: 'n1', pairRaw: 'o1' },
       { kind: 'context', oldLine: 2, newLine: 2, raw: 'mid' },
-      { kind: 'deletion', oldLine: 3, raw: 'o2' },
-      { kind: 'addition', newLine: 3, raw: 'n2' },
+      { kind: 'deletion', oldLine: 3, raw: 'o2', pairRaw: 'n2' },
+      { kind: 'addition', newLine: 3, raw: 'n2', pairRaw: 'o2' },
       { kind: 'addition', newLine: 4, raw: 'n3' },
     ])
   })
@@ -81,6 +81,16 @@ describe('toUnifiedRows', () => {
       { kind: 'context', oldLine: 1, newLine: 1, raw: 'a' },
       { kind: 'context', oldLine: 2, newLine: 2, raw: 'b' },
     ])
+  })
+
+  test('余り行 (相手側 empty) には pairRaw が付かない', () => {
+    // 消費側 (UnifiedRowView) は `pairRaw != null` で intra-line diff の有無を判定するため、
+    // 「プロパティが無い = undefined」が契約。toEqual は undefined プロパティを無視するので
+    // toBeUndefined で明示的に検証する
+    const rows = toUnifiedRows([delOnly(5, 'gone'), addOnly(7, 'born')])
+    for (const row of rows) {
+      expect((row as { pairRaw?: string }).pairRaw).toBeUndefined()
+    }
   })
 
   test('片側 panel (asIs のみ context) でも 1 行として出る', () => {
