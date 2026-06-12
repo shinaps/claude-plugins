@@ -275,9 +275,13 @@ describe('line scope スレッドの画面間同期', () => {
     // Guide タブに切り替えると、CommentRow (window.__reviewDiffThreads mirror 経由) に返信が見える。
     // この表示は「fileComments useMemo (deps: threads) の参照変化が Panel の memo を破る」連鎖に
     // 依存しており、本テストがその連鎖を contract として固定する (App.tsx / Panel.tsx のコメント参照)。
+    // タブ初訪問の mount 時点で最新 message が user (= 今打った返信) のため CommentRow は
+    // 折りたたみ初期表示になる。トグルで展開してから返信本文が届いていることを確認する。
     await user.click(screen.getByRole('tab', { name: 'Guide' }))
     const guidePane = document.querySelector('.tab-pane:not(.tab-hidden)')
     expect(guidePane).not.toBeNull()
+    const toggles = within(guidePane as HTMLElement).getAllByRole('button', { name: /Expand comment thread/ })
+    for (const btn of toggles) await user.click(btn)
     expect(within(guidePane as HTMLElement).getByText('reply on line 2')).toBeInTheDocument()
   })
 })

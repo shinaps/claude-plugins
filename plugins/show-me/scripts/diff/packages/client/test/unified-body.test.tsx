@@ -4,7 +4,7 @@
 //   - unified の context 行は asIs / toBe 両 anchor の既存スレッドを表示する
 //     (toBe だけ引くと asIs 側 context 行のスレッドがモバイルで不可視になる W7 回帰防止)
 
-import { render } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import type { RenderedPanel, ThreadSnapshot } from '@show-me/diff-shared'
 import { Panel } from '../src/guide/Panel'
@@ -91,8 +91,24 @@ describe('Panel unified/split mode', () => {
       'line:p1:toBe:3': lineThread('p1', 'toBe', 3, 'tobe-side-comment'),
     }
     render(<Panel panel={makePanel()} unified {...makeHandlers()} />)
+    // 最新 message が user のスレッドは折りたたみ初期表示なので、両 anchor のヘッダが
+    // 出ていることを確認した上で展開し、本文が両方表示されることを検証する
+    const toggles = screen.getAllByRole('button', { name: /Expand comment thread/ })
+    expect(toggles).toHaveLength(2)
+    toggles.forEach((btn) => fireEvent.click(btn))
     const text = document.body.textContent ?? ''
     expect(text).toContain('asis-side-comment')
     expect(text).toContain('tobe-side-comment')
+  })
+
+  test('unified mode collapses threads whose latest message is from user (FR-9 wiring)', () => {
+    window.__reviewDiffThreads = {
+      'line:p1:toBe:3': lineThread('p1', 'toBe', 3, 'waiting-for-agent'),
+    }
+    render(<Panel panel={makePanel()} unified {...makeHandlers()} />)
+    // body は非表示、ヘッダ (行 label + 件数) は視認できる
+    expect(document.body.textContent).not.toContain('waiting-for-agent')
+    expect(document.body.textContent).toContain('行 3')
+    expect(document.body.textContent).toContain('1 msg')
   })
 })
